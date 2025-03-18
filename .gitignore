@@ -1,0 +1,6 @@
+.env
+data
+project_log.log
+__pycache__
+db
+SD
