@@ -13,7 +13,7 @@ This is a FastAPI-based backend service designed to provide customer report gene
 Follow these steps to set up the project locally:
 
 1. **Clone the Repository**:
-git clone https://github.com/yourusername/customer-analytics-api.git
+git clone https://github.com/BlackPony32/SD_AI.git
 cd customer-analytics-api
 
 2. **Create and Activate a Virtual Environment**:
