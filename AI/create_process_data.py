@@ -47,7 +47,8 @@ def preprocess_orders(file_path):
     df = convert_to_datetime(df, datetime_cols)
     
     # Extract 'month' from 'createdAt'; timezone info is dropped, but UTC ensures correctness
-    df['month'] = df['createdAt'].dt.to_period('M')
+    df['month'] = df['createdAt'].dt.tz_localize(None).dt.to_period('M')
+
     
     # Convert financial columns to numeric, filling NaN with 0
     df["totalAmount"] = pd.to_numeric(df["totalAmount"], errors='coerce').fillna(0)

@@ -83,10 +83,24 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
             return f"${value:,.2f}"
         
         # Calculate metrics
-        # Basic Metrics
+        total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
+
+        total_discount_amount = orders['totalDiscountValue'].sum()
+        num_orders_with_discounts = (orders['totalDiscountValue'] > 0).sum()
+        percentage_orders_with_discounts = num_orders_with_discounts / len(orders) * 100
+        discount_distribution = orders.groupby('appliedDiscountsType').agg(
+            num_orders=('id', 'count'),
+            total_discount=('totalDiscountValue', 'sum')
+        ).reset_index()
+
+        total_delivery_fees = orders['deliveryFee'].sum()
+        num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
+        avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
+
+        # Key Metrics Calculations
         total_sales = orders['totalAmount'].sum()
-        total_orders = orders['id'].nunique()
-        avg_order_value = total_sales / total_orders if total_orders else 0
+        total_orders = len(orders)
+        avg_order_value = total_sales / total_orders if total_orders > 0 else 0
         
         # Delivery Metrics
         orders_with_delivery = orders[orders['deliveryFee'] > 0]
@@ -95,10 +109,6 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
         avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
         
         # Discount Analysis
-        discount_stats = orders.agg({
-            'totalDiscountValue': 'sum',
-            'id': lambda x: x[orders['totalDiscountValue'] > 0].nunique()
-        })
         
         # Product Analysis with correct revenue calculation
         merged_df['item_revenue'] = (merged_df['price'] - merged_df['itemDiscountAmount']) * merged_df['quantity']
@@ -109,14 +119,21 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
         product_stats['avg_selling_price'] = product_stats['total_revenue'] / product_stats['total_quantity']
         
         # Fulfillment Analysis
-        possible_delivery_statuses = ['FULFILLED', 'PARTIALLY_FULFILLED', 'UNFULFILLED', 'UNKNOWN']
-        fulfillment_counts = orders['deliveryStatus'].value_counts().reindex(possible_delivery_statuses, fill_value=0)
+        #-
+        existing_delivery_statuses = orders['deliveryStatus'].unique()
+        fulfillment_counts = orders['deliveryStatus'].value_counts()  # No reindex needed
         fulfillment_percent = (fulfillment_counts / total_orders * 100).round(1)
-        
+
         # Payment Status Analysis
-        possible_payment_statuses = ['PAID', 'PARTIALLY_PAID', 'UNPAID', 'PENDING', 'UNKNOWN']
-        payment_status_counts = orders['paymentStatus'].value_counts().reindex(possible_payment_statuses, fill_value=0)
-        payment_status_percent = (payment_status_counts / total_orders * 100).round(1)
+        # Get only the payment statuses that exist in the data
+        existing_payment_statuses = orders['paymentStatus'].unique()
+        try:
+            payment_status_counts = orders['paymentStatus'].value_counts()  # No reindex needed
+            payment_status_percent = (payment_status_counts / total_orders * 100).round(1)
+        except Exception as e:
+            print(e)
+            
+        
         
         # Salesperson Performance
         salesperson_stats = orders.groupby('salesDuplicate_name').agg(
@@ -133,6 +150,11 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
         ).sort_values('total_purchases', ascending=False)
         
         # Monthly Trends
+        orders['product'] = products['name'] + ' - ' + products['sku']
+
+        product_sales = orders.groupby(['month', 'product'])['totalAmount'].sum().reset_index()
+        top_products = product_sales.loc[product_sales.groupby('month')['totalAmount'].idxmax()]
+        
         monthly_sales = orders.groupby('month').agg(
             total_sales=('totalAmount', 'sum'),
             order_count=('id', 'nunique')
@@ -141,33 +163,59 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
         # Build Markdown Report
         md = []
         md.append("# Sales Performance Report\n")
+
+        md.append("## Total Sales by Payment and Delivery Status")
+        md.append("| Payment Status | Delivery Status | Total Sales |")
+        md.append("|----------------|-----------------|-------------|")
+
+        # Iterate over each row in total_sales_by_status and append it to the markdown list
+        for index, row in total_sales_by_status.iterrows():
+            md.append(f"| {row['paymentStatus']} | {row['deliveryStatus']} | {usd(row['totalAmount'])} |")
+
+        # Add a separator line after the table
         
         # Key Metrics
-        md.append("##  Key Metrics")
+        md.append("---\n")
+        md.append("## Key Metrics")
         md.append(f"- **Total Sales:** {usd(total_sales)}")
         md.append(f"- **Total Orders:** {total_orders}")
         md.append(f"- **Average Order Value:** {usd(avg_order_value)}")
-        md.append(f"- **Total Discounts Given:** {usd(discount_stats['totalDiscountValue'])}")
-        md.append(f"- **Orders with Discounts:** {discount_stats['id']} ({discount_stats['id']/total_orders:.1%})")
+        md.append(f"- **Total Discounts Given:** {usd(total_discount_amount)}")
         md.append(f"- **Total Delivery Fees:** {usd(total_delivery_fees)}")
-        md.append(f"- **Orders with Delivery Fees:** {num_orders_with_delivery} ({num_orders_with_delivery/total_orders:.1%})")
+        md.append(f"- **Orders with Delivery Fees:** {num_orders_with_delivery} ({num_orders_with_delivery / total_orders * 100:.1f}%)")
         md.append(f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}")
         md.append("---\n")
         
         # Payment Status Analysis
         md.append("## Payment Status Analysis")
-        for status in possible_payment_statuses:
+        for status in existing_payment_statuses:
             count = payment_status_counts[status]
             percent = payment_status_percent[status]
-            md.append(f"- **{status.title()}:** {count} orders ({percent:.1f}%)")
+            md.append(f"- **{status}:** {count} orders ({percent:.1f}%)")
         md.append("---\n")
+        
+        md.append("## Discount Distribution")
+        md.append(f"- **Orders with Discounts:** {num_orders_with_discounts} ({percentage_orders_with_discounts:.1f}%)")
+        md.append("| Discount Type          | Number of Orders | Total Discount |")
+        md.append("|------------------------|------------------|----------------|")
+
+        discount_distribution['appliedDiscountsType'] = discount_distribution['appliedDiscountsType'].replace('NONE', 'No Discount')
+        # Add each row to the markdown table
+        for index, row in discount_distribution.iterrows():
+            discount_type = row['appliedDiscountsType']
+            num_orders = row['num_orders']
+            total_discount = usd(row['total_discount'])
+            md.append(f"| {discount_type} | {num_orders} | {total_discount} |")
+
+        md.append("---")
         
         # Fulfillment Analysis
         md.append("## Fulfillment Analysis")
-        for status in possible_delivery_statuses:
+        for status in existing_delivery_statuses:
             count = fulfillment_counts[status]
             percent = fulfillment_percent[status]
-            md.append(f"- **{status.title()}:** {count} orders ({percent:.1f}%)")
+            md.append(f"- **{status}:** {count} orders ({percent:.1f}%)")
+
         if len(fulfillment_counts[fulfillment_counts > 0]) == 1:
             md.append("\n*Note: All orders have the same delivery status due to filtering conditions.*")
         md.append("---\n")
@@ -196,13 +244,14 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
             md.append(f"| {name} | {usd(row['total_purchases'])} | {row['order_count']} | {usd(row['avg_order_value'])} |")
         md.append("\n---\n")
         
-        # Monthly Trends
         md.append("## Monthly Sales Trends")
-        md.append("| Month | Total Sales | Orders | Avg Sales/Order |")
-        md.append("|-------|-------------|--------|-----------------|")
+        md.append("| Month | Total Sales | Orders | Avg Sales/Order | Top Product |")
+        md.append("|-------|-------------|--------|-----------------|-------------|")
         for _, row in monthly_sales.iterrows():
             avg = row['total_sales'] / row['order_count'] if row['order_count'] else 0
-            md.append(f"| {row['month']} | {usd(row['total_sales'])} | {row['order_count']} | {usd(avg)} |")
+            # Get the top product for this month
+            top_product = top_products[top_products['month'] == row['month']]['product'].values[0]
+            md.append(f"| {row['month']} | {usd(row['total_sales'])} | {row['order_count']} | {usd(avg)} | {top_product} |")
         md.append("\n---")
         
         # Recommendations
@@ -211,7 +260,6 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
         md.append("- **Investigate** reasons for partial/unfulfilled orders")
         md.append("- **Create incentives** for sales team members with lowest performance")
         md.append("- **Analyze** monthly trends for seasonal patterns")
-        
         return "\n".join(md)
         
     except Exception as e:
@@ -219,7 +267,7 @@ async def generate_sales_report(orders_path: str, products_path: str) -> str:
         return f"## ❌ Error\nReport generation failed: {str(e)}"
 
 #async def main():
-#    report = await generate_sales_report("ord.csv", "prod.csv")
+#    report = await generate_sales_report("data/test/work_ord.csv", "data/test/work_prod.csv")
 #    print(report)
 #
 #if __name__ == "__main__":

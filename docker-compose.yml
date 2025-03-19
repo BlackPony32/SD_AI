@@ -1,0 +1,11 @@
+version: '3.10'
+services:
+  fastapi-app:
+    build:
+      context: ./ 
+    command: sh -c "uvicorn main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app 
+    restart: always
