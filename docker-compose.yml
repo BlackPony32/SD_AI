@@ -1,11 +1,26 @@
-version: '3.10'
+version: '3.9'
 services:
   fastapi-app:
     build:
-      context: ./ 
+      context: .
+      dockerfile: Dockerfile
     command: sh -c "uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:
-      - .:/app 
+      - .:/app
     restart: always
+
+  gradio-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python gradio_app/app_gradio.py
+    ports:
+      - "7860:7860"
+    volumes:
+      - .:/app
+    restart: always
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+
