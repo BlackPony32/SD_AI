@@ -185,8 +185,6 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             return JSONResponse(status_code=200, content={"message": "Sales report generated successfully",
                                                           'file_path_product':products_path,
                                                           'file_path_orders':orders_path,
-                                                          #"orders_file_content":json_data1,
-                                                          #"products_file_content":json_data2,
                                                           "report": report})
         
         else:

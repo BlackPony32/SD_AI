@@ -11,12 +11,12 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 import logging
-log_file_path = "project_logg.log"
+log_file_path = "project_log.log"
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('project_logg.log'), logging.StreamHandler()]
+    handlers=[logging.FileHandler('project_log.log'), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 def generate_insights_plot(customer_id, selected_metrics):
@@ -194,7 +194,7 @@ def ask_ai(message, file_paths, customer_id):
         params = {
             "file_path_product": product_path,
             "file_path_orders": orders_path,
-            "customer_id": customer_id  # Add customer ID to params
+            "customer_id": customer_id
         }
         data = {
             "prompt": message
@@ -246,7 +246,6 @@ def create_interface():
         submit_btn = gr.Button("Send", variant="primary", visible=False)
         
         def handle_report(customer_id):
-            #logger.info(f'here: {customer_id}')
             p_path, o_path, report, success = generate_reports(customer_id)
             if success:
                 initial_chat = [{"role": "assistant", "content": report}]
@@ -264,7 +263,7 @@ def create_interface():
             else:
                 # Create empty figure instead of trying to read files
                 empty_fig = go.Figure()
-                empty_fig.add_annotation(text="No data available", showarrow=False, x=0.5, y=0.5)
+                empty_fig.add_annotation(text="No plots available", showarrow=False, x=0.5, y=0.5)
                 return (
                     report,
                     gr.update(visible=False),
