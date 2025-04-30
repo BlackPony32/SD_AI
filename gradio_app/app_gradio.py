@@ -1,24 +1,14 @@
 import gradio as gr
 import requests
-import pandas as pd
-import markdown
-from functools import partial
-import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import gradio as gr
+from functools import partial
+import markdown
+import pandas as pd
 import os
 from dotenv import load_dotenv
 load_dotenv()
-import logging
-log_file_path = "project_log.log"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('project_log.log'), logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
 def generate_insights_plot(customer_id, selected_metrics):
     # Dynamic file paths using customer_id
     products_path = f'data/{customer_id}/work_prod.csv'
@@ -98,9 +88,6 @@ def generate_insights_plot(customer_id, selected_metrics):
     
     return fig
 
-
-
-
 def plot_sales_treemap(customer_id):
     try:
         products_path = f'data/{customer_id}/work_prod.csv'
@@ -144,61 +131,51 @@ def plot_sales_treemap(customer_id):
         fig.add_annotation(text="No data available", showarrow=False, x=0.5, y=0.5)
         return fig
 
-API_BASE_URL = os.getenv('FAST_API_UPL')
 
+
+
+# Define custom green theme
 green_shades = gr.themes.Color(
     c50="#e6f4ea",
     c100="#c9e9d1",
     c200="#a3d9b1",
     c300="#7dc992",
     c400="#66bb6a",
-    c500="#409A65",  # Your exact color
+    c500="#409A65",
     c600="#358759",
     c700="#2a734b",
     c800="#1f5c3d",
     c900="#14462f",
     c950="#0a2d1f"
 )
-def generate_reports(customer_id: str):
-    try:
-        # Query parameters
-        params = {
-            "customer_id": customer_id,
-            "entity": 'orders'
-        }
-        logger.info(f'API_BASE_URL: {API_BASE_URL}')
-        #API_BASE_URL = 'http://sd_ai-fastapi-app-1:8000'
-        response = requests.post(f"{API_BASE_URL}/generate-reports/{customer_id}", params=params)
+custom_theme = gr.themes.Default(primary_hue=green_shades)
 
-        
-        logger.info(f'response: {response.status_code}')
+
+def generate_reports(customer_id: str, entity: str):
+    try:
+        params = {"customer_id": customer_id, "entity": entity}
+        API_BASE_URL = os.getenv('FAST_API_UPL')
+        response = requests.post(f"{API_BASE_URL}/generate-reports/{customer_id}", params=params)
         if response.ok:
             data = response.json()
             return (
                 data.get('file_path_product', ''),
                 data.get('file_path_orders', ''),
-                f"## Report Generated\n{data.get('report', '')}",
-                True  # Success flag
+                f"## Report Generated for {entity}\n{data.get('report', '')}",
+                True
             )
         else:
-            logger.error(f"Error: {response.status_code}, Response: {response.text}")
-        return '', '', f"Error: {response.text}", False
+            return '', '', f"Error: {response.text}", False
     except Exception as e:
-        logger.error(e)
         return '', '', "Cannot answer this question", False
 
 def ask_ai(message, file_paths, customer_id):
     product_path, orders_path = file_paths
     try:
+        API_BASE_URL = os.getenv('FAST_API_UPL')
         url = f"{API_BASE_URL}/Ask_ai"
-        params = {
-            "file_path_product": product_path,
-            "file_path_orders": orders_path,
-            "customer_id": customer_id
-        }
-        data = {
-            "prompt": message
-        }
+        params = {"file_path_product": product_path, "file_path_orders": orders_path, "customer_id": customer_id}
+        data = {"prompt": message}
         response = requests.post(url, params=params, json=data)
         if response.ok:
             data = response.json()
@@ -206,112 +183,153 @@ def ask_ai(message, file_paths, customer_id):
             return markdown.markdown(str(output))
         return f"API Error: {response.text}"
     except Exception as e:
-        return f"Connection error: {str(e)}"
+        return f"Can not answer on your question("
+
+def handle_chat(message, chat_history, paths, customer_id):
+    response = ask_ai(message, paths, customer_id)
+    chat_history = chat_history or []
+    chat_history.append({"role": "user", "content": message})
+    chat_history.append({"role": "assistant", "content": response})
+    return "", chat_history
 
 def create_interface():
-    custom_theme = gr.themes.Default(primary_hue=green_shades)
-    
-    with gr.Blocks(title="API Tester", theme=custom_theme) as demo:
+    with gr.Blocks(theme=custom_theme) as demo:
         file_paths = gr.State(('', ''))
         
-        gr.Markdown("# API Test Interface")
+        customer_id = gr.Textbox(label="Customer ID", interactive=True)
+        show_plots_checkbox = gr.Checkbox(label="Show plots for orders report", value=True)
         
         with gr.Row():
-            customer_id = gr.Textbox(label="Customer ID", interactive=True)
-            report_btn = gr.Button("Generate Reports", variant="primary")
+            orders_btn = gr.Button("Generate Orders Report", variant="primary")
+            activities_btn = gr.Button("Generate Activities Report", variant="primary")
         
         status = gr.Markdown()
+        chatbot = gr.Chatbot(visible=False, type="messages")
+        
+        with gr.Row():
+            suggest_buttons = [gr.Button(q, visible=False, variant="primary") for q in [
+                "What are the top-selling products?",
+                "What is the total revenue?",
+                "Top reorder periods?",
+                "Top customer visit time?"
+            ]]
+        
+        msg = gr.Textbox(label="Your Question", visible=False)
+        submit_btn = gr.Button("Send", variant="primary", visible=False)
+        
         metrics_filter = gr.CheckboxGroup(
             label="Select Metrics to Display",
             choices=["Total Quantity", "Total Sales", "Order Status"],
             value=["Total Quantity", "Total Sales"],
             visible=False
         )
-        # Add plot components that will be updated
         plot1 = gr.Plot()
         plot2 = gr.Plot()
         
-        chatbot = gr.Chatbot(visible=False, type="messages", min_width=80, max_height=500)
-        suggested_questions = [
-            "What are the top-selling products?",
-            "What is the total revenue?",
-            "Top reorder periods?",
-            "Top customer visit time?"
-        ]
-        
-        with gr.Row():
-            suggest_buttons = [gr.Button(q, visible=False) for q in suggested_questions]
-        
-        msg = gr.Textbox(label="Your Question", visible=False)
-        submit_btn = gr.Button("Send", variant="primary", visible=False)
-        
-        def handle_report(customer_id):
-            p_path, o_path, report, success = generate_reports(customer_id)
+        def handle_orders_report(customer_id, show_plots):
+            p_path, o_path, report, success = generate_reports(customer_id, 'orders')
             if success:
                 initial_chat = [{"role": "assistant", "content": report}]
+                if show_plots:
+                    fig1 = generate_insights_plot(customer_id, ["Total Quantity", "Total Sales"])
+                    fig2 = plot_sales_treemap(customer_id)
+                    plot1_update = gr.update(value=fig1, visible=True)
+                    plot2_update = gr.update(value=fig2, visible=True)
+                    metrics_update = gr.update(visible=True)
+                else:
+                    plot1_update = gr.update(visible=False)
+                    plot2_update = gr.update(visible=False)
+                    metrics_update = gr.update(visible=False)
                 return (
-                    "Reports generated. You can now ask questions below.",
+                    "Orders report generated. You can now ask questions below.",
                     gr.update(value=initial_chat, visible=True),
                     *[gr.update(visible=True) for _ in suggest_buttons],
                     gr.update(visible=True),
                     gr.update(visible=True),
                     (p_path, o_path),
-                    generate_insights_plot(customer_id, ["Total Quantity", "Total Sales"]),
-                    plot_sales_treemap(customer_id),
-                    gr.update(visible=True)  # For metrics filter
+                    plot1_update,
+                    plot2_update,
+                    metrics_update
                 )
             else:
-                # Create empty figure instead of trying to read files
                 empty_fig = go.Figure()
                 empty_fig.add_annotation(text="No plots available", showarrow=False, x=0.5, y=0.5)
                 return (
-                    report,
+                    "Can not create report due to incorrect customer id",
                     gr.update(visible=False),
                     *[gr.update(visible=False) for _ in suggest_buttons],
                     gr.update(visible=False),
                     gr.update(visible=False),
                     ('', ''),
-                    empty_fig,  # Return empty figure instead of generating from invalid path
-                    empty_fig,
+                    gr.update(value=empty_fig, visible=True),
+                    gr.update(value=empty_fig, visible=True),
                     gr.update(visible=False)
                 )
         
-        report_btn.click(
-            handle_report,
-            inputs=[customer_id],
-            outputs=[
-                status, chatbot, *suggest_buttons, msg, submit_btn, 
-                file_paths, plot1, plot2, metrics_filter
-            ]
+        def handle_activities_report(customer_id):
+            p_path, o_path, report, success = generate_reports(customer_id, 'activities')
+            if success:
+                initial_chat = [{"role": "assistant", "content": report}]
+                return (
+                    "Activities report generated.",
+                    gr.update(value=initial_chat, visible=True),
+                    *[gr.update(visible=False) for _ in suggest_buttons],
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    (p_path, o_path),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
+            else:
+                return (
+                    "Can not create report due to incorrect customer id",
+                    gr.update(visible=False),
+                    *[gr.update(visible=False) for _ in suggest_buttons],
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    ('', ''),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
+        
+        orders_btn.click(
+            handle_orders_report,
+            inputs=[customer_id, show_plots_checkbox],
+            outputs=[status, chatbot, *suggest_buttons, msg, submit_btn, file_paths, plot1, plot2, metrics_filter]
         )
         
-        # Add metrics filter update handler
+        activities_btn.click(
+            handle_activities_report,
+            inputs=[customer_id],
+            outputs=[status, chatbot, *suggest_buttons, msg, submit_btn, file_paths, plot1, plot2, metrics_filter]
+        )
+        
         metrics_filter.change(
             fn=generate_insights_plot,
             inputs=[customer_id, metrics_filter],
             outputs=plot1
         )
         
-        def handle_chat(message, chat_history, paths, customer_id):
-            response = ask_ai(message, paths, customer_id)
-            chat_history = chat_history or []
-            chat_history.append({"role": "user", "content": message})
-            chat_history.append({"role": "assistant", "content": response})
-            return "", chat_history
-        
         submit_btn.click(
             handle_chat,
             inputs=[msg, chatbot, file_paths, customer_id],
             outputs=[msg, chatbot]
         )
-
+        
         msg.submit(
             handle_chat,
             inputs=[msg, chatbot, file_paths, customer_id],
             outputs=[msg, chatbot]
         )
         
-        for btn, question in zip(suggest_buttons, suggested_questions):
+        for btn, question in zip(suggest_buttons, [
+            "What are the top-selling products?",
+            "What is the total revenue?",
+            "Top reorder periods?",
+            "Top customer visit time?"
+        ]):
             btn.click(
                 partial(handle_chat, question),
                 inputs=[chatbot, file_paths, customer_id],
@@ -320,6 +338,10 @@ def create_interface():
     
     return demo
 
+#if __name__ == "__main__":
+#    demo = create_interface()
+#    demo.launch()
+    
 if __name__ == "__main__":
     demo = create_interface()
     demo.launch(
