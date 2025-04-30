@@ -18,9 +18,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 #from db.database_reports import generate_customer_reports
-#from AI.First_summary__old import generate_statistics
+from AI.Activities_AI import process_ai_activities_request
 from AI.Order_analytics import generate_sales_report
 from AI.create_process_data import create_user_data
+from AI.Activities_analytics import analyze_activities
+from AI.Tasks_analytics import tasks_report
+from AI.Notes_analytics import notes_report
 
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
@@ -155,7 +158,7 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
     """
     try:
         if entity == "orders":
-            # Retrieve file contents for orders and order_products
+            # Retrieve file contents for orders and order_products 
             orders_file_content = get_exported_data(customer_id, "orders")
             products_file_content = get_exported_data(customer_id, "order_products")
             
@@ -164,7 +167,7 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             os.makedirs(orders_dir, exist_ok=True)
             orders_path = os.path.join(orders_dir, "orders.csv")
             products_path = os.path.join(orders_dir, "order_products.csv")
-            
+            #
             logger.info(f"Saving orders report for customer '{customer_id}' at {orders_path}")
             async with aiofiles.open(orders_path, "wb") as f:
                 await f.write(orders_file_content)
@@ -187,27 +190,74 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
                                                           'file_path_orders':orders_path,
                                                           "report": report})
         
-        else:
+        elif entity == "activities":
             #TODO For 'activities', 'notes', or 'tasks' different report func
-            file_content = get_exported_data(customer_id, entity)
+            notes = get_exported_data(customer_id, "notes")
+            tasks = get_exported_data(customer_id, "tasks")
+            activities = get_exported_data(customer_id, "activities")
+            
             # Build the directory path and file name for non-orders entities
-            dir_path = os.path.join("data", customer_id, entity)
+            dir_path = os.path.join("data", customer_id, 'activities')
             os.makedirs(dir_path, exist_ok=True)
-            file_path = os.path.join(dir_path, f"{entity}.csv")
             
-            logger.info(f"Saving report for customer '{customer_id}', entity '{entity}' at {file_path}")
-            async with aiofiles.open(file_path, "wb") as f:
-                await f.write(file_content)
+            file_path_notes = os.path.join(dir_path, "notes.csv")
+            file_path_tasks = os.path.join(dir_path, "tasks.csv")
+            file_path_activities = os.path.join(dir_path, "activities.csv")
             
-            return JSONResponse(status_code=200, content={"message": f"Report generated successfully", "file_path": file_path})
-    
+            logger.info(f"Saving report for customer '{customer_id}', entity 'notes' at {file_path_notes}")
+            async with aiofiles.open(file_path_notes, "wb") as f:
+                await f.write(notes)
+            
+            logger.info(f"Saving report for customer '{customer_id}', entity 'tasks' at {file_path_tasks}")
+            async with aiofiles.open(file_path_tasks, "wb") as f:
+                await f.write(tasks)
+            
+            logger.info(f"Saving report for customer '{customer_id}', entity 'activities' at {file_path_activities}")
+            async with aiofiles.open(file_path_activities, "wb") as f:
+                await f.write(activities)
+            
+            
+            ## Generate the sales report using the saved orders and products file paths
+            report_activities = await analyze_activities(file_path_notes, file_path_tasks, file_path_activities)
+            report_activities_dir = os.path.join("data", customer_id)
+            path_for_report = os.path.join(report_activities_dir, "report_activities.md")
+            async with aiofiles.open(path_for_report, "w") as f:
+                await f.write(report_activities)
+            
+            report_task = tasks_report(file_path_tasks)
+            #print(report_task)
+            report_activities_dir = os.path.join("data", customer_id)
+            path_for_report = os.path.join(report_activities_dir, "report_task.md")
+            async with aiofiles.open(path_for_report, "w") as f:
+                await f.write(report_task)
+            
+            report_notes = notes_report(file_path_notes)
+            report_activities_dir = os.path.join("data", customer_id)
+            path_for_notes = os.path.join(report_activities_dir, "report_notes.md")
+            async with aiofiles.open(path_for_notes, "w") as f:
+                await f.write(str(report_notes))
+            
+            report_text = await process_ai_activities_request(customer_id)
+            if report_text['model_answer'] == 'Could not analyze the activity of your customer.':
+                print("Analysis failed - check logs for details")
+            else:
+                print("Analysis succeeded:")
+            
+            return JSONResponse(status_code=200, content={"message": f"Report generated successfully", 
+                                                          "path_for_report": 'path_for_report',
+                                                          "report": report_text.get('model_answer')})
+
+        else:
+            raise HTTPException(status_code=406, detail='Incorrect entity: use "activities" or "orders" ')
+
     except Exception as e:
         logger.error(f"Error generating report: {e}")
-        raise HTTPException(status_code=406, detail=f"Error generating report: {e}")
+        raise HTTPException(status_code=406, detail=f"Error generating report due to incorrect customer id")
     
 
 from functools import partial
 
+#TODO rename Ask_AI to Ask_AI_orders
 async def Ask_AI(prompt: str, file_path_product, file_path_orders, customer_id):
     
     try:
@@ -232,7 +282,6 @@ async def Ask_AI(prompt: str, file_path_product, file_path_orders, customer_id):
         logger.error(f"Analysis failed: {e}")
         raise
 
-
 def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
     try:
         encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
@@ -256,6 +305,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             number_of_head_rows=5,
             max_iterations=5
         )
+        
         report_path = f'data//{customer_id}//report.md'
         with open(report_path, "r") as file:
             report = file.read()
@@ -325,7 +375,6 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
 
     except Exception as e:
         logger.error(f"Error in AI processing: {str(e)}")
-
 
 class ChatRequest(BaseModel):
     prompt: str

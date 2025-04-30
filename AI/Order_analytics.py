@@ -7,6 +7,7 @@ import asyncio
 import aiofiles
 from pathlib import Path
 from AI.create_process_data import create_user_data
+from AI.Activities_analytics import analyze_activities
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -483,6 +484,16 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 md.append(f"| {row['month']} | {usd(row['total_sales'])} | {row['order_count']} | {usd(avg)} | {top_product} |")
             md.append("---\n")
 
+            ## Step 7: Add activities metrics to Markdown Report
+            #try:
+            #    md.append("---\n")
+            #    activities = await analyze_activities()
+            #    #print(activities)
+            #    md.append(str(activities))
+            #    md.append("---\n")
+            #except Exception as e:
+            #    logger.error(f"Error generating activities report: {str(e)}")
+
             md.append("## Suggestions")
             if top_products_list:
                 md.append(f"- **Focus marketing efforts** on top products: {', '.join(top_products_list)}.")
@@ -555,9 +566,9 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
 ### Main Execution
 
-#async def main():
-#    report = await generate_sales_report("data/test/work_ord.csv", "data/test/work_prod.csv")
-#    print(report)
-#
-#if __name__ == "__main__":
-#    asyncio.run(main())
+async def main():
+    report = await generate_sales_report("data/test/work_ord.csv", "data/test/work_prod.csv", 'test')
+    print(report)
+
+if __name__ == "__main__":
+    asyncio.run(main())

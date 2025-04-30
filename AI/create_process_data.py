@@ -192,6 +192,6 @@ async def create_user_data(orders_df_path, products_df_path, folder_to_save):
             save_df(products_df, f'data/{folder_to_save}/work_prod.csv')
         )
     except Exception as e:
-        print("file creating", e)
+        logger.error("file creating", e)
     
     logger.info("Completed create_user_data")
