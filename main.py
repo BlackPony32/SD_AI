@@ -159,9 +159,15 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
     try:
         if entity == "orders":
             # Retrieve file contents for orders and order_products 
-            orders_file_content = get_exported_data(customer_id, "orders")
-            products_file_content = get_exported_data(customer_id, "order_products")
+            try:
+                orders_file_content = get_exported_data(customer_id, "orders")
+            except Exception as e:
+                logger.error(f"Error in get_exported_data orders: {e}")
             
+            try:
+                products_file_content = get_exported_data(customer_id, "order_products")
+            except Exception as e:
+                logger.error(f"Error in get_exported_data order_products: {e}")
             # Define directory and file paths for orders and order_products
             orders_dir = os.path.join("data", customer_id, "orders")
             os.makedirs(orders_dir, exist_ok=True)
@@ -177,7 +183,14 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
                 await f.write(products_file_content)
             
             # Generate the sales report using the saved orders and products file paths
-            report = await generate_sales_report(orders_path, products_path, customer_id)
+            try:
+                result  = await generate_sales_report(orders_path, products_path, customer_id)
+                report = result["full_report"]
+                #print(report)
+                report_sections = result["sections"] 
+            except Exception as e:
+                logger.error(f"Error in generate_sales_report: {e}")
+            
             
             report_dir = os.path.join("data", customer_id)
             path_for_report = os.path.join(report_dir, "report.md")
@@ -188,13 +201,18 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             return JSONResponse(status_code=200, content={"message": "Sales report generated successfully",
                                                           'file_path_product':products_path,
                                                           'file_path_orders':orders_path,
-                                                          "report": report})
+                                                          "report": report,
+                                                          "sections": report_sections})
         
         elif entity == "activities":
             #TODO For 'activities', 'notes', or 'tasks' different report func
-            notes = get_exported_data(customer_id, "notes")
-            tasks = get_exported_data(customer_id, "tasks")
-            activities = get_exported_data(customer_id, "activities")
+            try:
+                notes = get_exported_data(customer_id, "notes")
+                tasks = get_exported_data(customer_id, "tasks")
+                activities = get_exported_data(customer_id, "activities")
+            except Exception as e:
+                logger.error(f"Error in get_exported_data activities: {e}")
+            
             
             # Build the directory path and file name for non-orders entities
             dir_path = os.path.join("data", customer_id, 'activities')
@@ -218,30 +236,43 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             
             
             ## Generate the sales report using the saved orders and products file paths
-            report_activities = await analyze_activities(file_path_notes, file_path_tasks, file_path_activities)
-            report_activities_dir = os.path.join("data", customer_id)
-            path_for_report = os.path.join(report_activities_dir, "report_activities.md")
-            async with aiofiles.open(path_for_report, "w") as f:
-                await f.write(report_activities)
+            try:
+                report_activities = await analyze_activities(file_path_notes, file_path_tasks, file_path_activities)
+                report_activities_dir = os.path.join("data", customer_id)
+                path_for_report = os.path.join(report_activities_dir, "report_activities.md")
+                async with aiofiles.open(path_for_report, "w") as f:
+                    await f.write(report_activities)
+            except Exception as e:
+                logger.error(f"Error in analyze_activities: {e}")
+                
+            try:
+                report_task = tasks_report(file_path_tasks)
+                #print(report_task)
+                report_activities_dir = os.path.join("data", customer_id)
+                path_for_report = os.path.join(report_activities_dir, "report_task.md")
+                async with aiofiles.open(path_for_report, "w") as f:
+                    await f.write(report_task)
+            except Exception as e:
+                logger.error(f"Error in tasks_report: {e}")
+            try:    
+                report_notes = notes_report(file_path_notes)
+                report_activities_dir = os.path.join("data", customer_id)
+                path_for_notes = os.path.join(report_activities_dir, "report_notes.md")
+                async with aiofiles.open(path_for_notes, "w") as f:
+                    await f.write(str(report_notes))
+            except Exception as e:
+                logger.error(f"Error in notes_report: {e}")
+                
+            try:
+                report_text = await process_ai_activities_request(customer_id)
+                print(report_text.get('model_answer'))
+                if report_text['model_answer'] == 'Could not analyze the activity of your customer.':
+                    print("Analysis failed - check logs for details")
+                else:
+                    print("Analysis succeeded:")
+            except Exception as e:
+                logger.error(f"Error in process_ai_activities_request: {e}")
             
-            report_task = tasks_report(file_path_tasks)
-            #print(report_task)
-            report_activities_dir = os.path.join("data", customer_id)
-            path_for_report = os.path.join(report_activities_dir, "report_task.md")
-            async with aiofiles.open(path_for_report, "w") as f:
-                await f.write(report_task)
-            
-            report_notes = notes_report(file_path_notes)
-            report_activities_dir = os.path.join("data", customer_id)
-            path_for_notes = os.path.join(report_activities_dir, "report_notes.md")
-            async with aiofiles.open(path_for_notes, "w") as f:
-                await f.write(str(report_notes))
-            
-            report_text = await process_ai_activities_request(customer_id)
-            if report_text['model_answer'] == 'Could not analyze the activity of your customer.':
-                print("Analysis failed - check logs for details")
-            else:
-                print("Analysis succeeded:")
             
             return JSONResponse(status_code=200, content={"message": f"Report generated successfully", 
                                                           "path_for_report": 'path_for_report',
@@ -305,7 +336,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             number_of_head_rows=5,
             max_iterations=5
         )
-        
+         
         report_path = f'data//{customer_id}//report.md'
         with open(report_path, "r") as file:
             report = file.read()
