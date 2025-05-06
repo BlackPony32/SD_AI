@@ -449,6 +449,27 @@ async def get_last_n_log_lines(num_lines: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
     
+
+
+async def clean_directories(customer_id):
+    import shutil
+    loop = asyncio.get_event_loop()
+    
+    data_folder = f'data/{customer_id}'
+
+    if os.path.exists(data_folder):
+        await loop.run_in_executor(executor, shutil.rmtree, data_folder)
+    logger.info(f"Deleted user folder: {customer_id}")
+
+@app.get("/clean_chat/")
+async def download_pdf(user_folder: str, background_tasks: BackgroundTasks):
+    
+    # Schedule the cleanup task to run after the response is sent
+    background_tasks.add_task(clean_directories, user_folder)
+
+    return {"response": "Chat is cleaned successfully"}
+
+
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, port=8000, host='0.0.0.0')
