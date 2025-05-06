@@ -463,7 +463,7 @@ async def clean_directories(customer_id):
 
 @app.get("/clean_chat/")
 async def download_pdf(user_folder: str, background_tasks: BackgroundTasks):
-    # Schedule the cleanup task to run after the response is sent
+    # Schedule the cleanup task to run after the response is  sent
     background_tasks.add_task(clean_directories, user_folder)
 
     return {"response": "Chat is cleaned successfully"}

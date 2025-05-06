@@ -597,7 +597,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
 async def main():
     report = await generate_sales_report("data/64e30159-fe98-4e81-bfb8-b46c91d91349/work_ord.csv", "data/64e30159-fe98-4e81-bfb8-b46c91d91349/work_prod.csv", '64e30159-fe98-4e81-bfb8-b46c91d91349')
-    #print(report["full_report"])           # entire report
+    #print(report["full_report"])           #  entire report
     print(report["sections"])  # just the Key Metrics part
     print(report["full_report"])
 
