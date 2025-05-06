@@ -459,11 +459,10 @@ async def clean_directories(customer_id):
 
     if os.path.exists(data_folder):
         await loop.run_in_executor(executor, shutil.rmtree, data_folder)
-    logger.info(f"Deleted user folder: {customer_id}")
+    logger.info(f"Deleted user folder: {customer_id}" )
 
 @app.get("/clean_chat/")
 async def download_pdf(user_folder: str, background_tasks: BackgroundTasks):
-    
     # Schedule the cleanup task to run after the response is sent
     background_tasks.add_task(clean_directories, user_folder)
 
