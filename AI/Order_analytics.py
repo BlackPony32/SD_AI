@@ -572,6 +572,43 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             lines.append("- **Seasonal analysis**: review patterns over time.")
             add_section("suggestions", lines)
 
+    
+            #Additional reports
+            try:
+                contact_new, products_new = top_new_contact(orders, products)
+                contact_re, products_re = top_reorder_contact(orders, products)
+                visit_day, visit_time = peak_visit_time(orders)
+
+                # Format results
+                result = f"""
+                # Sales Optimization Insights
+
+                1.  **Top New Contact**: `{contact_new}`  
+                    *Top Products*: {', '.join(products_new) if products_new else 'N/A'}  
+                    *Rationale*: Highest number of successfully completed orders with consistent product preferences
+
+                2.  **Top Reorder Contact**: `{contact_re}`  
+                    *Top Products*: {', '.join(products_re) if products_re else 'N/A'}  
+                    *Rationale*: Most frequent repeat purchases with predictable ordering patterns
+
+                3.  **Peak Visit Time**: `{visit_day}, {visit_time}`  
+                    *Rationale*: Historical data shows maximum order creation during this timeframe
+                """
+                report_dir = os.path.join("data", customer_id)
+                path_for_report = os.path.join(report_dir, "additional_info.md")
+                async with aiofiles.open(path_for_report, "w") as f:
+                    await f.write(result)
+                
+                df_insights = customer_insights(orders, products)
+                #print(df_insights.to_markdown(index=False))
+                reorder = f"""Top visit time: {df_insights.to_markdown(index=False)}"""
+                
+                path_for_reorder = os.path.join(report_dir, "reorder.md")
+                async with aiofiles.open(path_for_reorder, "w") as f:
+                    await f.write(reorder)
+            except Exception as e:
+                logger.error(f"Error generating additional report: {str(e)}")
+            
             # Assemble
             full_report = "\n".join(full_md).strip()
             return {
@@ -585,7 +622,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "full_report": "**Oh no!** Something went wrong while creating the report.",
                 "sections": {}
             }
-
+        
     except Exception as e:
         logger.error(f"Report generation failed: {str(e)}")
         return {
