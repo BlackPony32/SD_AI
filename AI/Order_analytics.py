@@ -164,7 +164,8 @@ def preprocess_orders(orders_df: pd.DataFrame):
         # Convert and filter dates
         try:
             orders_df['createdAt'] = pd.to_datetime(orders_df['createdAt'], utc=True)
-            orders_df['month'] = orders_df['createdAt'].dt.to_period('M')
+            # Changed from .dt.to_period('M') to .dt.strftime('%m/%Y')
+            orders_df['month'] = orders_df['createdAt'].dt.strftime('%m/%Y')
             logger.info("Dates processed successfully")
         except Exception as e:
             logger.error(f"Error processing dates: {str(e)}")

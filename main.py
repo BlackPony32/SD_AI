@@ -265,7 +265,7 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
                 
             try:
                 report_text = await process_ai_activities_request(customer_id)
-                print(report_text.get('model_answer'))
+                #print(report_text.get('model_answer'))
                 if report_text['model_answer'] == 'Could not analyze the activity of your customer.':
                     print("Analysis failed - check logs for details")
                 else:
@@ -462,9 +462,9 @@ async def clean_directories(customer_id):
     logger.info(f"Deleted user folder: {customer_id}" )
 
 @app.get("/clean_chat/")
-async def download_pdf(user_folder: str, background_tasks: BackgroundTasks):
+async def download_pdf(customer_id: str, background_tasks: BackgroundTasks):
     # Schedule the cleanup task to run after the response is  sent
-    background_tasks.add_task(clean_directories, user_folder)
+    background_tasks.add_task(clean_directories, customer_id)
 
     return {"response": "Chat is cleaned successfully"}
 

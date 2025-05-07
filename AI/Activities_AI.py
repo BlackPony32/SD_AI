@@ -82,7 +82,7 @@ async def process_ai_activities_request(customer_id: str) -> dict:
         return error_response
 
     try:
-        llm = ChatOpenAI(model='o3-mini', verbose=True)
+        llm = ChatOpenAI(model='o3-mini', verbose=False)
     except Exception as e:
         logger.error(f"LLM initialization error: {str(e)}")
         return error_response
