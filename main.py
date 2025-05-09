@@ -402,7 +402,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         input_cost = (input_tokens / 1000) * 0.0025
         output_cost = (output_tokens / 1000) * 0.01
         total_cost = input_cost + output_cost
-        return {"output": result, "cost": total_cost}
+        return {"output": result.get('output'), "cost": total_cost}
 
     except Exception as e:
         logger.error(f"Error in AI processing: {str(e)}")
