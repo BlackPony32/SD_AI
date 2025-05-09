@@ -80,14 +80,16 @@ def get_exported_data(customer_id, entity):
 
     Raises:
         ValueError: If the entity value is invalid.
-        Exception: If the API request or file download fails.
+        Exception: If the API request or file download fails, including detailed error information.
     """
     # Define allowed entity values
     allowed_entities = ["orders", "order_products", "notes", "tasks", "activities"]
     if entity not in allowed_entities:
         raise ValueError(f"Invalid entity: {entity}. Must be one of {allowed_entities}")
 
-    SD_API_URL = os.getenv('SD_API_URL') 
+    SD_API_URL = os.getenv('SD_API_URL')
+    if not SD_API_URL:
+        raise Exception("SD_API_URL environment variable is not set")
     url = SD_API_URL
 
     # Query parameters
@@ -97,18 +99,30 @@ def get_exported_data(customer_id, entity):
     }
 
     x_api_key = os.getenv('X_API_KEY')
+    if not x_api_key:
+        raise Exception("X_API_KEY environment variable is not set")
     # Authentication header
     headers = {
         "x-api-key": x_api_key
     }
 
+    def _get_error_detail(resp: requests.Response) -> str:
+        """
+        Extracts detailed error message from the response, preferring JSON fields.
+        """
+        try:
+            err_json = resp.json()
+            for key in ("error", "message", "detail"):  # common keys
+                if key in err_json:
+                    return f"{key}: {err_json[key]}"
+            return str(err_json)
+        except ValueError:
+            return resp.text or "<no response body>"
+
     # Make the GET request to the API
     try:
         response = requests.get(url, params=params, headers=headers, timeout=10)
-        #print("Response object:", response)
-        #print("Status code:", response.status_code)
         print("Content-Type:", response.headers.get('Content-Type', 'Not specified'))
-        #print("Response content:", response.text)
     except requests.exceptions.RequestException as e:
         raise Exception(f"Request failed: {e}")
 
@@ -122,7 +136,8 @@ def get_exported_data(customer_id, entity):
             if not exported_url:
                 raise Exception("No 'fileUrl' found in response")
         except ValueError:
-            raise Exception("Response is not valid JSON")
+            detail = _get_error_detail(response)
+            raise Exception(f"Response is not valid JSON — {detail}")
 
         # Download the file from the exported URL
         try:
@@ -130,13 +145,16 @@ def get_exported_data(customer_id, entity):
             if file_response.status_code == 200:
                 return file_response.content
             else:
-                raise Exception(f"Failed to download file: {file_response.status_code}")
+                detail = _get_error_detail(file_response)
+                raise Exception(f"Failed to download file: HTTP {file_response.status_code} — {detail}")
         except requests.exceptions.RequestException as e:
             raise Exception(f"File download failed: {e}")
     elif response.status_code == 401:
-        raise Exception("Authentication error: invalid API key or insufficient permissions")
+        detail = _get_error_detail(response)
+        raise Exception(f"Authentication error (401): {detail}")
     else:
-        raise Exception(f"Error: {response.status_code}")
+        detail = _get_error_detail(response)
+        raise Exception(f"Error: HTTP {response.status_code} — {detail}")
 
 # Initialize at app startup
 @app.on_event("startup")
