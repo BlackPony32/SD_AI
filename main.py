@@ -34,6 +34,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Literal
+import shutil
 
 from concurrent.futures import ProcessPoolExecutor
 load_dotenv()
@@ -450,40 +451,63 @@ async def ask_ai_endpoint(
 
 @app.get("/logs/last/{num_lines}", response_class=PlainTextResponse)
 async def get_last_n_log_lines(num_lines: int):
+    """
+    Return the last `num_lines` from the log file.
+
+    Raises 404 if the file is missing or empty, 422 if `num_lines` is invalid, and 500 on unexpected errors.
+    """
+    LOG_FILE = "project_log.log"
+    # Validate input
+    if num_lines <= 0:
+        raise HTTPException(status_code=422, detail="`num_lines` must be a positive integer.")
     try:
-        LOG_FILE = "project_log.log"
         with open(LOG_FILE, "r") as file:
             lines = file.readlines()
 
         if not lines:
+            # No content in the log
             raise HTTPException(status_code=404, detail="Log file is empty.")
 
-        # Get the last `num_lines` lines
+        # Safely slice the last lines (if num_lines exceeds total lines, return all)
         last_lines = lines[-num_lines:]
         return "".join(last_lines)
 
+    except HTTPException:
+        # Re-raise HTTP errors so FastAPI handles them correctly
+        raise
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Log file not found.")
+        raise HTTPException(status_code=404, detail="Log file not found")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        # Unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
     
 
 
-async def clean_directories(customer_id):
-    import shutil
-    loop = asyncio.get_event_loop()
-    
-    data_folder = f'data/{customer_id}'
-
-    if os.path.exists(data_folder):
-        await loop.run_in_executor(executor, shutil.rmtree, data_folder)
-    logger.info(f"Deleted user folder: {customer_id}" )
+async def clean_directories(customer_id: str):
+    """
+    Remove the data directory for the given customer_id if it exists.
+    """
+    data_folder = os.path.join("data", customer_id)
+    # Only attempt removal if the folder exists
+    if os.path.isdir(data_folder):
+        loop = asyncio.get_event_loop()
+        try:
+            # Run shutil.rmtree in thread pool to avoid blocking
+            await loop.run_in_executor(executor, shutil.rmtree, data_folder)
+            logger.info(f"Deleted user folder: {data_folder}")
+        except Exception as e:
+            logger.error(f"Failed to delete {data_folder}: {e}")
+    else:
+        logger.info(f"No directory to delete for user {customer_id}")
 
 @app.get("/clean_chat/")
-async def download_pdf(customer_id: str, background_tasks: BackgroundTasks):
-    # Schedule the cleanup task to run after the response is  sent
-    background_tasks.add_task(clean_directories, customer_id)
+async def clean_chat(customer_id: str, background_tasks: BackgroundTasks):
+    """
+    Endpoint to schedule directory cleanup for a given customer_id.
 
+    This runs clean_directories in the background and immediately returns a success message.
+    """
+    background_tasks.add_task(clean_directories, customer_id)
     return {"response": "Chat is cleaned successfully"}
 
 
