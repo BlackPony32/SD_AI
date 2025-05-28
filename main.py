@@ -6,6 +6,8 @@ from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import BackgroundTasks
 from fastapi.responses import PlainTextResponse
+from fastapi import Body
+
 import pandas as pd
 import os
 import logging
@@ -17,7 +19,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-#from db.database_reports import generate_customer_reports
+#from db.database_reports import generate_customer_reports 
 from AI.Activities_AI import process_ai_activities_request
 from AI.Order_analytics import generate_sales_report
 from AI.create_process_data import create_user_data
@@ -283,7 +285,12 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
                 logger.error(f"Error in notes_report: {e}")
                 
             try:
-                report_text = await process_ai_activities_request(customer_id)
+                report_text, section_report = await process_ai_activities_request(customer_id)
+                try:
+                    full_report = report_text.get('model_answer')
+                except Exception as e:
+                    full_report = "Could not analyze the activity of your customer"
+                    
                 #print(report_text.get('model_answer'))
                 if report_text['model_answer'] == 'Could not analyze the activity of your customer.':
                     print("Analysis failed - check logs for details")
@@ -294,8 +301,9 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             
             
             return JSONResponse(status_code=200, content={"message": f"Report generated successfully", 
-                                                          "path_for_report": 'path_for_report',
-                                                          "report": report_text.get('model_answer')})
+                                                          #"path_for_report": 'path_for_report',
+                                                          "report": full_report,
+                                                          "section_report": section_report})
 
         else:
             raise HTTPException(status_code=406, detail='Incorrect entity: use "activities" or "orders" ')
@@ -356,15 +364,18 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             max_iterations=5
         )
          
-        report_path = f'data//{customer_id}//report.md'
+        #report_path = f'data//{customer_id}//report.md'
+        report_path = os.path.join('data', customer_id, 'report.md')
         with open(report_path, "r") as file:
             report = file.read()
         
-        additional_info_path = f'data//{customer_id}//additional_info.md'
+        #additional_info_path = f'data//{customer_id}//additional_info.md'
+        additional_info_path = os.path.join('data', customer_id, 'additional_info.md')
         with open(additional_info_path, "r") as file:
             additional_info = file.read()
         
-        reorder_path = f'data//{customer_id}//reorder.md'
+        #reorder_path = f'data//{customer_id}//reorder.md'
+        reorder_path = os.path.join('data', customer_id, 'reorder.md')
         with open(reorder_path, "r") as file:
             reorder = file.read()
         
