@@ -458,7 +458,7 @@ async def ask_ai_endpoint(
         answer = "Cannot answer this question"
         cost = 0.0
     
-    return {"response": answer, "prompt": prompt, "cost": cost}
+    return {"data": answer, "prompt": prompt, "cost": cost}
 
 @app.get("/logs/last/{num_lines}", response_class=PlainTextResponse)
 async def get_last_n_log_lines(num_lines: int):
