@@ -320,12 +320,16 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             # Discount Analysis
             total_discount_amount = orders['totalDiscountValue'].sum()
             num_orders_with_discounts = (orders['totalDiscountValue'] > 0).sum()
+            
+            # Create the new 'discount_category' column for case none type but some disc value
+            orders['discount_category'] = orders['appliedDiscountsType'].fillna('NONE')
+            orders.loc[(orders['discount_category'] == 'NONE') & (orders['totalDiscountValue'] > 0), 'discount_category'] = 'Other Discount'
+            
             percentage_orders_with_discounts = num_orders_with_discounts / len(orders) * 100
-            discount_distribution = orders.groupby('appliedDiscountsType', dropna=False).agg(
+            discount_distribution = orders.groupby('discount_category').agg(
                 num_orders=('id', 'count'),
                 total_discount=('totalDiscountValue', 'sum')
-            ).reset_index().fillna({'appliedDiscountsType': 'NONE'})
-
+            ).reset_index()
             # Delivery Analysis
             total_delivery_fees = orders['deliveryFee'].sum()
             num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
@@ -479,7 +483,9 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
             # 4) Discount Distribution
             dd = discount_distribution.copy()
-            dd['appliedDiscountsType'] = dd['appliedDiscountsType'].replace('NONE', 'No Discount')
+            dd['discount_category'] = dd['discount_category'].replace('NONE', 'No Discount')
+            
+            # Build the output lines
             lines = [
                 "## Discount Distribution",
                 f"- **Orders with Discounts:** {num_orders_with_discounts} "
@@ -488,7 +494,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "|---------------|------------------|----------------|",
             ]
             for _, row in dd.iterrows():
-                lines.append(f"| {row['appliedDiscountsType']} | {row['num_orders']} | {usd(row['total_discount'])} |")
+                lines.append(f"| {row['discount_category']} | {row['num_orders']} | {usd(row['total_discount'])} |")
             lines.append("---")
             add_section("discount_distribution", lines)
 
@@ -597,8 +603,10 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 """
                 report_dir = os.path.join("data", customer_id)
                 path_for_report = os.path.join(report_dir, "additional_info.md")
+                print(path_for_report)
                 async with aiofiles.open(path_for_report, "w") as f:
                     await f.write(result)
+                
                 
                 df_insights = customer_insights(orders, products)
                 #print(df_insights.to_markdown(index=False))
