@@ -444,6 +444,8 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 full_md.append("")  # blank line
 
             # ——— build each section exactly as before ———
+            def clean_number(n):
+                return int(n) if float(n).is_integer() else round(n, 2)
 
             # 1) Total Sales by Status
             lines = [
@@ -455,7 +457,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ]
             for _, row in total_sales_by_status.iterrows():
                 lines.append(f"| {row['paymentStatus']} | {row['deliveryStatus']} | {usd(row['totalAmount'])} |")
-            lines.append("---")
+            #lines.append("---")
             add_section("total_sales_by_status", lines)
 
             # 2) Key Metrics
@@ -469,7 +471,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 f"- **Orders with Delivery Fees:** {num_orders_with_delivery} "
                 f"({num_orders_with_delivery/total_orders*100:.1f}%)",
                 f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
-                "---",
+                #"---",
             ]
             add_section("key_metrics", lines)
 
@@ -478,7 +480,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for status in existing_payment_statuses:
                 lines.append(f"- **{status}:** {payment_status_counts[status]} "
                              f"orders ({payment_status_percent[status]:.1f}%)")
-            lines.append("---")
+            #lines.append("---")
             add_section("payment_status_analysis", lines)
 
             # 4) Discount Distribution
@@ -490,12 +492,13 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "## Discount Distribution",
                 f"- **Orders with Discounts:** {num_orders_with_discounts} "
                 f"({percentage_orders_with_discounts:.1f}%)",
+                "",  # optional blank line for spacing
                 "| Discount Type | Number of Orders | Total Discount |",
                 "|---------------|------------------|----------------|",
             ]
             for _, row in dd.iterrows():
                 lines.append(f"| {row['discount_category']} | {row['num_orders']} | {usd(row['total_discount'])} |")
-            lines.append("---")
+            #lines.append("---")
             add_section("discount_distribution", lines)
 
             # 5) Fulfillment Analysis
@@ -503,19 +506,19 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for status in existing_delivery_statuses:
                 lines.append(f"- **{status}:** {fulfillment_counts[status]} "
                              f"orders ({fulfillment_percent[status]:.1f}%)")
-            lines.append("---")
+            #lines.append("---")
             add_section("fulfillment_analysis", lines)
 
             # 6) Top Performing Products
             lines = [
-                "## Top Performing Products",
+                "## Top 10 Performing Products",
                 "| SKU | Quantity Sold | Avg Selling Price | Total Revenue |",
                 "|-----|---------------|-------------------|---------------|",
             ]
             for sku, row in product_stats.head(10).iterrows():
-                lines.append(f"| {sku} | {row['total_quantity']} | "
+                lines.append(f"| {sku} | {clean_number(row['total_quantity'])} | "
                              f"{usd(row['avg_selling_price'])} | {usd(row['total_revenue'])} |")
-            lines.append("---")
+            #lines.append("---")
             add_section("top_products", lines)
 
             # 7) Sales Team Performance
@@ -526,8 +529,8 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ]
             for name, row in salesperson_stats.iterrows():
                 lines.append(f"| {name} | {usd(row['total_sales'])} | "
-                             f"{row['order_count']} | {usd(row['avg_order_value'])} |")
-            lines.append("---")
+                             f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
+            #lines.append("---")
             add_section("sales_team_performance", lines)
 
             # 8) Customer Purchase Analysis
@@ -538,8 +541,8 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ]
             for name, row in customer_stats.head(10).iterrows():
                 lines.append(f"| {name} | {usd(row['total_purchases'])} | "
-                             f"{row['order_count']} | {usd(row['avg_order_value'])} |")
-            lines.append("---")
+                             f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
+            #lines.append("---")
             add_section("customer_purchase_analysis", lines)
 
             # 9) Monthly Sales Trends
@@ -553,7 +556,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 top_product = top_products[top_products['month'] == row['month']]['product'].values[0]
                 lines.append(f"| {row['month']} | {usd(row['total_sales'])} | "
                              f"{row['order_count']} | {usd(avg)} | {top_product} |")
-            lines.append("---")
+            #lines.append("---")
             add_section("monthly_sales_trends", lines)
 
             # 10) Suggestions
@@ -603,7 +606,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 """
                 report_dir = os.path.join("data", customer_id)
                 path_for_report = os.path.join(report_dir, "additional_info.md")
-                print(path_for_report)
+                #print(path_for_report)
                 async with aiofiles.open(path_for_report, "w") as f:
                     await f.write(result)
                 

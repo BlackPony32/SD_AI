@@ -44,7 +44,7 @@ load_dotenv()
 
 
 app = FastAPI()
-AllowedEntity = Literal["orders", "order_products", "notes", "tasks", "activities"]
+AllowedEntity = Literal["orders", "activities"]
 
 
 app.add_middleware(
@@ -169,13 +169,20 @@ async def startup_event():
 async def shutdown_event():
     app.state.process_executor.shutdown(wait=True)
 
+from pydantic import BaseModel
+
+class ReportRequest(BaseModel):
+    entity: AllowedEntity
+
+
 @app.post("/generate-reports/{customer_id}")
-async def create_reports(customer_id: str, entity: AllowedEntity):
+async def create_reports(customer_id: str, request: ReportRequest):
+    entity = request.entity
     """
     Endpoint to generate and save a report for a given customer and entity.
     
     - For 'orders', it generates two files (orders and order_products) and then creates a sales report.
-    - For other entities, it saves the corresponding file.
+    - For 'activities' it generates activities (+task, notes) report.
     """
     try:
         if entity == "orders":
@@ -218,7 +225,7 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             async with aiofiles.open(path_for_report, "w") as f:
                 await f.write(report)
                 
-
+            #print(report)
             return JSONResponse(status_code=200, content={"message": "Sales report generated successfully",
                                                           'file_path_product':products_path,
                                                           'file_path_orders':orders_path,
@@ -226,7 +233,6 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
                                                           "sections": report_sections})
         
         elif entity == "activities":
-            #TODO For 'activities', 'notes', or 'tasks' different report func
             try:
                 notes = get_exported_data(customer_id, "notes")
                 tasks = get_exported_data(customer_id, "tasks")
@@ -301,9 +307,10 @@ async def create_reports(customer_id: str, entity: AllowedEntity):
             
             
             return JSONResponse(status_code=200, content={"message": f"Report generated successfully", 
-                                                          #"path_for_report": 'path_for_report',
+                                                          "file_path_activities": file_path_activities,
+                                                          "file_path_tasks": file_path_tasks,
                                                           "report": full_report,
-                                                          "section_report": section_report})
+                                                          "sections": section_report})
 
         else:
             raise HTTPException(status_code=406, detail='Incorrect entity: use "activities" or "orders" ')
@@ -333,7 +340,7 @@ async def Ask_AI(prompt: str, file_path_product, file_path_orders, customer_id):
             app.state.process_executor,
             process_func
         )
-        
+        logger.info(f"User prompt: {prompt}")
         return result
     
     except Exception as e:
@@ -365,27 +372,47 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         )
          
         #report_path = f'data//{customer_id}//report.md'
-        report_path = os.path.join('data', customer_id, 'report.md')
-        with open(report_path, "r") as file:
-            report = file.read()
+        try:
+            report_path = os.path.join('data', customer_id, 'report.md')
+            with open(report_path, "r") as file:
+                report = file.read()
+        except Exception as e:
+            report = 'No data given'
+            logger.warning(f"Can not read report.md due to {e} ")
         
-        #additional_info_path = f'data//{customer_id}//additional_info.md'
-        additional_info_path = os.path.join('data', customer_id, 'additional_info.md')
-        with open(additional_info_path, "r") as file:
-            additional_info = file.read()
+        try:
+            additional_info_path = os.path.join('data', customer_id, 'additional_info.md')
+            with open(additional_info_path, "r") as file:
+                additional_info = file.read()
+        except Exception as e:
+            additional_info = 'No data given'
+            logger.warning(f"Can not read additional_info.md due to {e} ")
         
-        #reorder_path = f'data//{customer_id}//reorder.md'
-        reorder_path = os.path.join('data', customer_id, 'reorder.md')
-        with open(reorder_path, "r") as file:
-            reorder = file.read()
+        try:
+            reorder_path = os.path.join('data', customer_id, 'reorder.md')
+            with open(reorder_path, "r") as file:
+                reorder = file.read()
+        except Exception as e:
+            reorder = 'No data given'
+            logger.warning(f"Can not read reorder.md due to {e} ")
+         
+        
+        try:
+            report_activities_path = os.path.join('data', customer_id, 'report_activities.md')
+            with open(report_activities_path, "r") as file:
+                report_activities = file.read()
+        except Exception as e:
+            report_activities = 'No data given'
+            logger.warning(f"Can not read report_activities.md due to {e} ")
         
         formatted_prompt = f"""
         You are an AI assistant providing business insights based on two related datasets:  
-        - **df1** (Orders) contains critical order-related data.  
-        - **df2** (Products) contains details about products within each order.  
+        - **df1** (Orders) contains critical order-related data or can be user activities data.  
+        - **df2** (Products) contains details about products within each order or can be user tasks data.  
 
         Also you can use some report that i gain from data: {report}
         Useful additional data: {additional_info}
+        Report activities additional data: {report_activities}
         And useful additional reorder data: {reorder}
         
         **Important Rules to Follow:**  
