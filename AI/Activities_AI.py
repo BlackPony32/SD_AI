@@ -43,13 +43,13 @@ def parse_report(report_text):
         # Map headers to keys based on keywords
         key = None
         if 'task' in header:
-            key = 'Task'
+            key = 'task'
         elif 'note' in header:
-            key = 'Note'
+            key = 'note'
         elif 'activit' in header:  # Covers "activity" or "activities"
-            key = 'Activities'
+            key = 'activities'
         elif 'conclusion' in header or 'recommendation' in header:
-            key = 'Recommendations'
+            key = 'recommendations'
         
         if key:
             report_dict[key] = content
