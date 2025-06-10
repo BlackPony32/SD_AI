@@ -244,52 +244,49 @@ def preprocess_products(products_df: pd.DataFrame):
         return pd.DataFrame(), "Something went wrong while processing the products data. Please try another file."
 
 ### Analysis Function
-
 async def generate_sales_report(orders_path: str, products_path: str, customer_id: str) -> str:
     """Generate comprehensive sales report in markdown format with soft error handling."""
     try:
-        #Step 0 - process data
+        # Step 0 - process data
         try:
             await create_user_data(orders_path, products_path, customer_id)
-            
             orders = pd.read_csv(f'data/{customer_id}/work_ord.csv')
             products = pd.read_csv(f'data/{customer_id}/work_prod.csv')
-            
-            
         except Exception as e:
-            logger.error(f"create work data error: {e}") #TODO error change)
-        
+            logger.error(f"create work data error: {e}")
+
         # Step 1: Load data
         try:
             if orders.empty or products.empty:
                 return {
-                "full_report": "There is not enough information to generate the metrics",
-                "sections": {}
+                    "full_report": "There is not enough information to generate the metrics",
+                    "sections": {}
                 }
             else:
                 logger.info(f"Loaded {len(orders)} orders and {len(products)} products")
-                
         except FileNotFoundError as e:
             logger.warning(f"File not found: {str(e)}")
             return {
                 "full_report": "**Oops!** We were unsuccessful in processing your data.",
                 "sections": {}
-                }
+            }
         except pd.errors.ParserError as e:
             logger.warning(f"Error parsing CSV: {str(e)}")
             return {
                 "full_report": "**Hmm,** there was a problem reading orders or products info. Please check the data and try again",
                 "sections": {}
-                }
+            }
         except Exception as e:
             logger.error(f"Unexpected error loading data: {str(e)}")
             return {
                 "full_report": "**Hmm,** there was a problem reading orders or products info. Please check the data and try again.",
                 "sections": {}
-                }
+            }
+
         # Step 2: Preprocess data
         orders = preprocess_orders(orders)
         products = preprocess_products(products)
+
         # Step 3: Merge datasets
         try:
             merged_df = products.merge(
@@ -307,11 +304,23 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             return {
                 "full_report": "**Hmm,** we couldn’t combine the orders and products data. Please make sure the data match up correctly",
                 "sections": {}
-                }
-        # Helper formatting function
-        def usd(value: float) -> str:
-            return f"${value:,.2f}"
+            }
 
+        # Helper formatting functions
+        def usd(value: float) -> str:
+            if value.is_integer():
+                return f"${value:,.0f}"
+            return f"${value:,.2f}"
+        
+
+        def format_status(status: str) -> str:
+            return status.replace('_', ' ')
+
+        def format_percentage(value: float) -> str:
+            if value.is_integer():
+                return f"{int(value)}%"
+            return f"{value:.1f}%"
+        
         # Step 4: Calculate metrics
         try:
             # Total sales by payment and delivery status
@@ -320,16 +329,14 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             # Discount Analysis
             total_discount_amount = orders['totalDiscountValue'].sum()
             num_orders_with_discounts = (orders['totalDiscountValue'] > 0).sum()
-            
-            # Create the new 'discount_category' column for case none type but some disc value
             orders['discount_category'] = orders['appliedDiscountsType'].fillna('NONE')
             orders.loc[(orders['discount_category'] == 'NONE') & (orders['totalDiscountValue'] > 0), 'discount_category'] = 'Other Discount'
-            
             percentage_orders_with_discounts = num_orders_with_discounts / len(orders) * 100
             discount_distribution = orders.groupby('discount_category').agg(
                 num_orders=('id', 'count'),
                 total_discount=('totalDiscountValue', 'sum')
             ).reset_index()
+
             # Delivery Analysis
             total_delivery_fees = orders['deliveryFee'].sum()
             num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
@@ -387,7 +394,8 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             return {
                 "full_report": "**Oh no!** We hit a snag while calculating the sales stats. This might be due to missing or incorrect data.",
                 "sections": {}
-                }
+            }
+
         # Step 5: Generate recommendations
         try:
             # Top Products
@@ -417,36 +425,41 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             # Fulfillment Issues
             fulfillment_rec = None
             if 'UNFULFILLED' in fulfillment_percent and fulfillment_percent['UNFULFILLED'] > 10:
-                fulfillment_rec = f"Improve the fulfillment process to reduce unfulfilled orders (currently {fulfillment_percent['UNFULFILLED']:.1f}%)."
+                fulfillment_rec = f"Improve the fulfillment process to reduce unfulfilled orders (currently {format_percentage(fulfillment_percent['UNFULFILLED'])})."
 
             # Payment Issues
             payment_rec = None
             if 'UNPAID' in payment_status_percent and payment_status_percent['UNPAID'] > 10:
-                payment_rec = f"Enhance payment collection to address unpaid orders (currently {payment_status_percent['UNPAID']:.1f}%)."
-
+                payment_rec = f"Enhance payment collection to address unpaid orders (currently {format_percentage(payment_status_percent['UNPAID'])})."
+            
             logger.info("Recommendations generated successfully")
         except Exception as e:
             logger.error(f"Error generating recommendations: {str(e)}")
             return {
                 "full_report": "**Hmm,** we couldn’t generate suggestions this time. There might not be enough data or the data might be incomplete. Please check your data and try again.",
                 "sections": {}
-                }
+            }
+
         # Step 6: Build Markdown Report
         try:
             full_md = []
             sections = {}
 
             def add_section(name, lines):
-                # store the mini-report
                 sections[name] = "\n".join(lines)
-                # add to the full report
                 full_md.extend(lines)
-                full_md.append("")  # blank line
+                full_md.append("")
 
-            # ——— build each section exactly as before ———
             def clean_number(n):
                 return int(n) if float(n).is_integer() else round(n, 2)
 
+            def format_month(month: str) -> str:
+                """Convert MM/YYYY to MM/YY"""
+                parts = month.split('/')
+                if len(parts) == 2:
+                    return f"{parts[0]}/{parts[1][-2:]}"
+                return month
+    
             # 1) Total Sales by Status
             lines = [
                 "# Sales Performance Report",
@@ -456,8 +469,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "|----------------|-----------------|-------------|",
             ]
             for _, row in total_sales_by_status.iterrows():
-                lines.append(f"| {row['paymentStatus']} | {row['deliveryStatus']} | {usd(row['totalAmount'])} |")
-            #lines.append("---")
+                lines.append(f"| {format_status(row['paymentStatus'])} | {format_status(row['deliveryStatus'])} | {usd(row['totalAmount'])} |")
             add_section("total_sales_by_status", lines)
 
             # 2) Key Metrics
@@ -469,44 +481,39 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 f"- **Total Discounts Given:** {usd(total_discount_amount)}",
                 f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
                 f"- **Orders with Delivery Fees:** {num_orders_with_delivery} "
-                f"({num_orders_with_delivery/total_orders*100:.1f}%)",
+                f"({format_percentage(num_orders_with_delivery/total_orders*100)})",
                 f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
-                #"---",
             ]
             add_section("key_metrics", lines)
 
             # 3) Payment Status Analysis
             lines = ["## Payment Status Analysis"]
             for status in existing_payment_statuses:
-                lines.append(f"- **{status}:** {payment_status_counts[status]} "
-                             f"orders ({payment_status_percent[status]:.1f}%)")
-            #lines.append("---")
+                lines.append(f"- **{format_status(status)}:** {payment_status_counts[status]} "
+                             f"orders ({format_percentage(payment_status_percent[status])})")
+            
             add_section("payment_status_analysis", lines)
 
             # 4) Discount Distribution
             dd = discount_distribution.copy()
             dd['discount_category'] = dd['discount_category'].replace('NONE', 'No Discount')
-            
-            # Build the output lines
             lines = [
                 "## Discount Distribution",
                 f"- **Orders with Discounts:** {num_orders_with_discounts} "
-                f"({percentage_orders_with_discounts:.1f}%)",
-                "",  # optional blank line for spacing
+                f"({format_percentage(percentage_orders_with_discounts)})",
+                "",
                 "| Discount Type | Number of Orders | Total Discount |",
                 "|---------------|------------------|----------------|",
             ]
             for _, row in dd.iterrows():
-                lines.append(f"| {row['discount_category']} | {row['num_orders']} | {usd(row['total_discount'])} |")
-            #lines.append("---")
+                lines.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
             add_section("discount_distribution", lines)
 
             # 5) Fulfillment Analysis
             lines = ["## Fulfillment Analysis"]
             for status in existing_delivery_statuses:
-                lines.append(f"- **{status}:** {fulfillment_counts[status]} "
-                             f"orders ({fulfillment_percent[status]:.1f}%)")
-            #lines.append("---")
+                lines.append(f"- **{format_status(status)}:** {fulfillment_counts[status]} "
+                             f"orders ({format_percentage(fulfillment_percent[status])})")
             add_section("fulfillment_analysis", lines)
 
             # 6) Top Performing Products
@@ -518,7 +525,6 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for sku, row in product_stats.head(10).iterrows():
                 lines.append(f"| {sku} | {clean_number(row['total_quantity'])} | "
                              f"{usd(row['avg_selling_price'])} | {usd(row['total_revenue'])} |")
-            #lines.append("---")
             add_section("top_products", lines)
 
             # 7) Sales Team Performance
@@ -530,7 +536,6 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for name, row in salesperson_stats.iterrows():
                 lines.append(f"| {name} | {usd(row['total_sales'])} | "
                              f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
-            #lines.append("---")
             add_section("sales_team_performance", lines)
 
             # 8) Customer Purchase Analysis
@@ -542,7 +547,6 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for name, row in customer_stats.head(10).iterrows():
                 lines.append(f"| {name} | {usd(row['total_purchases'])} | "
                              f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
-            #lines.append("---")
             add_section("customer_purchase_analysis", lines)
 
             # 9) Monthly Sales Trends
@@ -554,9 +558,8 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for _, row in monthly_sales.iterrows():
                 avg = row['total_sales'] / row['order_count'] if row['order_count'] else 0
                 top_product = top_products[top_products['month'] == row['month']]['product'].values[0]
-                lines.append(f"| {row['month']} | {usd(row['total_sales'])} | "
+                lines.append(f"| {format_month(row['month'])} | {usd(row['total_sales'])} | "
                              f"{row['order_count']} | {usd(avg)} | {top_product} |")
-            #lines.append("---")
             add_section("monthly_sales_trends", lines)
 
             # 10) Suggestions
@@ -582,45 +585,34 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             lines.append("- **Seasonal analysis**: review patterns over time.")
             add_section("suggestions", lines)
 
-    
-            #Additional reports
+            # Additional reports
             try:
                 contact_new, products_new = top_new_contact(orders, products)
                 contact_re, products_re = top_reorder_contact(orders, products)
                 visit_day, visit_time = peak_visit_time(orders)
-
-                # Format results
                 result = f"""
                 # Sales Optimization Insights
-
                 1.  **Top New Contact**: `{contact_new}`  
                     *Top Products*: {', '.join(products_new) if products_new else 'N/A'}  
                     *Rationale*: Highest number of successfully completed orders with consistent product preferences
-
                 2.  **Top Reorder Contact**: `{contact_re}`  
                     *Top Products*: {', '.join(products_re) if products_re else 'N/A'}  
                     *Rationale*: Most frequent repeat purchases with predictable ordering patterns
-
                 3.  **Peak Visit Time**: `{visit_day}, {visit_time}`  
                     *Rationale*: Historical data shows maximum order creation during this timeframe
                 """
                 report_dir = os.path.join("data", customer_id)
                 path_for_report = os.path.join(report_dir, "additional_info.md")
-                #print(path_for_report)
                 async with aiofiles.open(path_for_report, "w") as f:
                     await f.write(result)
-                
-                
                 df_insights = customer_insights(orders, products)
-                #print(df_insights.to_markdown(index=False))
                 reorder = f"""Top visit time: {df_insights.to_markdown(index=False)}"""
-                
                 path_for_reorder = os.path.join(report_dir, "reorder.md")
                 async with aiofiles.open(path_for_reorder, "w") as f:
                     await f.write(reorder)
             except Exception as e:
                 logger.error(f"Error generating additional report: {str(e)}")
-            
+
             # Assemble
             full_report = "\n".join(full_md).strip()
             return {
@@ -634,20 +626,20 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "full_report": "**Oh no!** Something went wrong while creating the report.",
                 "sections": {}
             }
-        
+
     except Exception as e:
         logger.error(f"Report generation failed: {str(e)}")
         return {
-                "full_report": "**Oh no!** Something unexpected happened while generating the report. Please try again or contact support.",
-                "sections": {}
-            }
+            "full_report": "**Oh no!** Something unexpected happened while generating the report. Please try again or contact support.",
+            "sections": {}
+        }
         
 ### Main Execution
 
 async def main():
     report = await generate_sales_report("data/64e30159-fe98-4e81-bfb8-b46c91d91349/work_ord.csv", "data/64e30159-fe98-4e81-bfb8-b46c91d91349/work_prod.csv", '64e30159-fe98-4e81-bfb8-b46c91d91349')
     #print(report["full_report"])           #  entire report
-    print(report["sections"])  # just the Key Metrics part
+    #print(report["sections"])  # just the Key Metrics part
     print(report["full_report"])
 
 if __name__ == "__main__":
