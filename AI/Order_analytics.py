@@ -308,7 +308,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
         # Helper formatting functions
         def usd(value: float) -> str:
-            if value.is_integer():
+            if float(value).is_integer():
                 return f"${value:,.0f}"
             return f"${value:,.2f}"
         
@@ -317,7 +317,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             return status.replace('_', ' ')
 
         def format_percentage(value: float) -> str:
-            if value.is_integer():
+            if float(value).is_integer():
                 return f"{int(value)}%"
             return f"{value:.1f}%"
         
