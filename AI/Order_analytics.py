@@ -585,6 +585,134 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             lines.append("- **Seasonal analysis**: review patterns over time.")
             add_section("suggestions", lines)
 
+            # 11) Suggestions (as HTML)
+            lines = []
+            if top_products_list:
+                lines.append(f"<li><strong>Focus marketing efforts</strong> on top products: {', '.join(top_products_list)}.</li>")
+            if top_salesperson:
+                lines.append(f"<li><strong>Leverage success</strong> of {top_salesperson}.</li>")
+            if bottom_salespeople:
+                lines.append(f"<li><strong>Support underperformers</strong>: training for {', '.join(bottom_salespeople)}.</li>")
+            if top_customers:
+                lines.append(f"<li><strong>Reward loyalty</strong>: deals for {', '.join(top_customers)}.</li>")
+
+            trend_map = {
+                "increasing": "<li><strong>Sales trending up</strong>: increase inventory or staff.</li>",
+                "decreasing": "<li><strong>Sales trending down</strong>: investigate causes; consider promotions.</li>",
+                "fluctuating": "<li><strong>Fluctuating sales</strong>: analyze external factors.</li>",
+            }
+            lines.append(trend_map.get(trend, "<li><strong>Trend analysis</strong>: insufficient data; keep monitoring.</li>"))
+
+            if fulfillment_rec:
+                lines.append(f"<li>{fulfillment_rec}</li>")
+            if payment_rec:
+                lines.append(f"<li>{payment_rec}</li>")
+
+            lines.append("<li><strong>Seasonal analysis</strong>: review patterns over time.</li>")
+
+            # Wrap in HTML structure
+            html_suggestions = f"""
+            <div id="suggestions">
+              <h2>Suggestions</h2>
+              <ul>
+                {''.join(lines)}
+              </ul>
+            </div>
+            """
+
+            # Pass this to your response logic
+            result = sections['suggestions_html_1'] = "".join(html_suggestions)
+            #from bs4 import BeautifulSoup
+
+            #soup = BeautifulSoup(result, "html.parser")
+            #print(result)
+
+
+            lines = []
+
+            # Product Strategy
+            if top_products_list:
+                suggestion = f"Boost marketing for top products: {', '.join(top_products_list)}."
+                lines.append(f"""
+                <div>
+                  <h3>Product Strategy</h3>
+                  <p>{suggestion}</p>
+                </div>""")
+
+            # Sales Team Success
+            if top_salesperson:
+                suggestion = f"Replicate {top_salesperson}’s strategies across the team."
+                lines.append(f"""
+                <div>
+                  <h3>Sales Team Success</h3>
+                  <p>{suggestion}</p>
+                </div>""")
+
+            # Underperformer Support
+            if bottom_salespeople:
+                suggestion = f"Train underperformers: {', '.join(bottom_salespeople)}."
+                lines.append(f"""
+                <div>
+                  <h3>Underperformer Support</h3>
+                  <p>{suggestion}</p>
+                </div>""")
+
+            # Customer Engagement
+            if top_customers:
+                suggestion = f"Offer loyalty deals to {', '.join(top_customers)}."
+                lines.append(f"""
+                <div>
+                  <h3>Customer Engagement</h3>
+                  <p>{suggestion}</p>
+                </div>""")
+
+            # Sales Trend
+            trend_suggestions = {
+                "increasing": "Sales trending up: boost inventory or staffing.",
+                "decreasing": "Sales trending down: explore promotions.",
+                "fluctuating": "Sales fluctuating: analyze external factors."
+            }
+            suggestion = trend_suggestions.get(trend, "Monitor trends; data insufficient.")
+            lines.append(f"""
+            <div>
+              <h3>Sales Trend</h3>
+              <p>{suggestion}</p>
+            </div>""")
+
+            # Fulfillment Efficiency
+            if fulfillment_rec:
+                lines.append(f"""
+                <div>
+                  <h3>Fulfillment Efficiency</h3>
+                  <p>{fulfillment_rec}</p>
+                </div>""")
+
+            # Payment Process
+            if payment_rec:
+                lines.append(f"""
+                <div>
+                  <h3>Payment Process</h3>
+                  <p>{payment_rec}</p>
+                </div>""")
+
+            # Seasonal Planning
+            lines.append(f"""
+            <div>
+              <h3>Seasonal Planning</h3>
+              <p>Analyze seasonal patterns for inventory adjustments.</p>
+            </div>""")
+
+            # Final HTML structure
+            html_suggestions = f"""
+            <div id="suggestions">
+              <h2>Suggestions</h2>
+              {''.join(lines)}
+            </div>
+            """
+
+            # Assign to result
+            result2 = sections['suggestions_html_2'] = "".join(html_suggestions)
+            #print(result2)
             # Additional reports
             try:
                 contact_new, products_new = top_new_contact(orders, products)
@@ -637,7 +765,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 ### Main Execution
 
 async def main():
-    report = await generate_sales_report("data/64e30159-fe98-4e81-bfb8-b46c91d91349/work_ord.csv", "data/64e30159-fe98-4e81-bfb8-b46c91d91349/work_prod.csv", '64e30159-fe98-4e81-bfb8-b46c91d91349')
+    report = await generate_sales_report("data/aaea5465-b48e-429b-946a-0f6ddc3dd66d/work_ord.csv", "data/aaea5465-b48e-429b-946a-0f6ddc3dd66d/work_prod.csv", 'aaea5465-b48e-429b-946a-0f6ddc3dd66d')
     #print(report["full_report"])           #  entire report
     #print(report["sections"])  # just the Key Metrics part
     print(report["full_report"])
