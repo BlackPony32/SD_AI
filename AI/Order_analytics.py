@@ -583,7 +583,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             if payment_rec:
                 lines.append(f"- {payment_rec}")
             lines.append("- **Seasonal analysis**: review patterns over time.")
-            add_section("suggestions", lines)
+            #add_section("suggestions", lines)
 
             # 11) Suggestions (as HTML)
             
@@ -594,12 +594,9 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 f"{content}\n"
                 "\n</div>"
             )
-
+            add_section("suggestions", [html_suggestions])
             # Pass this to your response logic
             result = sections['suggestions_div'] = "".join(html_suggestions)
-            #from bs4 import BeautifulSoup
-
-            #soup = BeautifulSoup(result, "html.parser")
             #print(result)
 
             # Additional reports
