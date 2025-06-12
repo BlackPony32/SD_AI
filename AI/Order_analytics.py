@@ -590,7 +590,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             content = "\n".join(lines)
 
             html_suggestions = (
-                "<div id=\"suggestions\">\n\n"
+                "<div id=\"suggestions-block\">\n\n"
                 f"{content}\n"
                 "\n</div>"
             )
