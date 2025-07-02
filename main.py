@@ -20,12 +20,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 #from db.database_reports import generate_customer_reports 
-from AI.Activities_AI import process_ai_activities_request
-from AI.Order_analytics import generate_sales_report
-from AI.create_process_data import create_user_data
-from AI.Activities_analytics import analyze_activities
-from AI.Tasks_analytics import tasks_report
-from AI.Notes_analytics import notes_report
+from AI.single_customer_analyze.Activities_AI import process_ai_activities_request
+from AI.single_customer_analyze.Order_analytics import generate_sales_report
+from AI.single_customer_analyze.create_process_data import create_user_data
+from AI.single_customer_analyze.Activities_analytics import analyze_activities
+from AI.single_customer_analyze.Tasks_analytics import tasks_report
+from AI.single_customer_analyze.Notes_analytics import notes_report
 
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
@@ -435,31 +435,58 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         **Question:**  
         {prompt}"""
 
+        
         logger.info("\n===== Metadata =====")
+        MODEL_RATES = {
+            "gpt-4.1":      {"prompt": 2.00,   "completion": 8.00},
+            "gpt-4.1-mini": {"prompt": 0.40,   "completion": 1.60},
+            "gpt-4.1-nano": {"prompt": 0.10,   "completion": 0.40},
+            "gpt-4o":       {"prompt": 2.50,   "completion": 10.00},
+            "gpt-4o-mini":  {"prompt": 0.15,   "completion": 0.60},
+            "gpt-4.5":      {"prompt": 75.00,  "completion": 150.00},
+            "o3":           {"prompt": 2.00,   "completion": 8.00},
+            "o3-mini":      {"prompt": 1.10,   "completion": 4.40},
+            "o4-mini":      {"prompt": 1.10,   "completion": 4.40},
+        }
+        
+        def calculate_cost(model_name, prompt_tokens, completion_tokens):
+            rates = MODEL_RATES.get(model_name)
+            if not rates:
+                raise ValueError(f"Unknown model: {model_name}")
+            # assume rates are $ per 1 000 000 tokens:
+            cost_per_prompt_token     = rates["prompt"]     / 1_000_000
+            cost_per_completion_token = rates["completion"] / 1_000_000
+        
+            input_cost  = prompt_tokens    * cost_per_prompt_token
+            output_cost = completion_tokens * cost_per_completion_token
+            total_cost  = input_cost + output_cost
+            return total_cost, input_cost, output_cost
+        
         with get_openai_callback() as cb:
             agent.agent.stream_runnable = False
             start_time = time.time()
             result = agent.invoke({"input": formatted_prompt})
             execution_time = time.time() - start_time
-            
+        
+            in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
+            cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
+        
+            logger.info(f"Input Cost:  ${in_cost:.6f}")
+            logger.info(f"Output Cost: ${out_cost:.6f}")
+            logger.info(f"Total Cost:  ${cost:.6f}")
+        
             result['metadata'] = {
-                'total_tokens': cb.total_tokens,
-                'prompt_tokens': cb.prompt_tokens,
-                'completion_tokens': cb.completion_tokens,
+                'total_tokens': in_toks+out_toks,
+                'prompt_tokens': in_toks,
+                'completion_tokens': out_toks,
                 'execution_time': f"{execution_time:.2f} seconds",
                 'model': llm.model_name,
             }
 
         
-        for k, v in result['metadata'].items():
+        for k, v in result['metadata'].items(): 
             logger.info(f"{k.replace('_', ' ').title()}: {v}")
-            
-        input_tokens = result['metadata'].get('prompt_tokens')
-        output_tokens = result['metadata'].get('completion_tokens')
-        input_cost = (input_tokens / 1000) * 0.0025
-        output_cost = (output_tokens / 1000) * 0.01
-        total_cost = input_cost + output_cost
-        return {"output": result.get('output'), "cost": total_cost}
+        return {"output": result.get('output'), "cost": cost}
 
     except Exception as e:
         logger.error(f"Error in AI processing: {str(e)}")

@@ -6,8 +6,8 @@ import logging
 import asyncio
 import aiofiles
 from pathlib import Path
-from AI.create_process_data import create_user_data
-from AI.Activities_analytics import analyze_activities
+from AI.single_customer_analyze.create_process_data import create_user_data
+from AI.single_customer_analyze.Activities_analytics import analyze_activities
 
 # Set up logging
 logger = logging.getLogger(__name__)
