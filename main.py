@@ -553,6 +553,7 @@ async def clean_directories(customer_id: str):
     """
     data_folder = os.path.join("data", customer_id)
     # Only attempt removal if the folder exists
+    
     if os.path.isdir(data_folder):
         loop = asyncio.get_event_loop()
         try:
