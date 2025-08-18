@@ -15,7 +15,7 @@ import asyncio
 import aiofiles
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.concurrency import run_in_threadpool
-import uuid
+from uuid import uuid4
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -26,6 +26,10 @@ from AI.single_customer_analyze.create_process_data import create_user_data
 from AI.single_customer_analyze.Activities_analytics import analyze_activities
 from AI.single_customer_analyze.Tasks_analytics import tasks_report
 from AI.single_customer_analyze.Notes_analytics import notes_report
+from AI.group_customer_analyze.many_customer import save_customer_data, get_exported_data_many
+from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
+from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
+from AI.utils import get_logger, extract_customer_id
 
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
@@ -55,17 +59,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-log_file_path = "project_log.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file_path),
-        logging.StreamHandler()
-    ]
-)
 
-logger = logging.getLogger(__name__)
+
+
+logger1 = get_logger("logger1", "project_log.log", False)
+logger2 = get_logger("logger2", "project_log_many.log", False)
+
 executor = ThreadPoolExecutor()
 
 import requests
@@ -76,7 +75,7 @@ def get_exported_data(customer_id, entity):
 
     Args:
         customer_id (str): The customer's UUID.
-        entity (str): The type of data to export ('orders', 'order_products', 'notes', 'tasks', or 'activities').
+        entity (str): The type of data to export ('orders', 'order_products', 'notes', 'tasks', 'customer', or 'activities').
 
     Returns:
         bytes: The content of the exported data file.
@@ -86,7 +85,7 @@ def get_exported_data(customer_id, entity):
         Exception: If the API request or file download fails, including detailed error information.
     """
     # Define allowed entity values
-    allowed_entities = ["orders", "order_products", "notes", "tasks", "activities"]
+    allowed_entities = ["orders", "order_products", 'customer', "notes", "tasks", "activities"]
     if entity not in allowed_entities:
         raise ValueError(f"Invalid entity: {entity}. Must be one of {allowed_entities}")
 
@@ -190,23 +189,23 @@ async def create_reports(customer_id: str, request: ReportRequest):
             try:
                 orders_file_content = get_exported_data(customer_id, "orders")
             except Exception as e:
-                logger.error(f"Error in get_exported_data orders: {e}")
-            
+                logger1.error(f"Error in get_exported_data orders: {e}")
+             
             try:
                 products_file_content = get_exported_data(customer_id, "order_products")
             except Exception as e:
-                logger.error(f"Error in get_exported_data order_products: {e}")
+                logger1.error(f"Error in get_exported_data order_products: {e}")
             # Define directory and file paths for orders and order_products
             orders_dir = os.path.join("data", customer_id, "orders")
             os.makedirs(orders_dir, exist_ok=True)
             orders_path = os.path.join(orders_dir, "orders.csv")
             products_path = os.path.join(orders_dir, "order_products.csv")
             #
-            logger.info(f"Saving orders report for customer '{customer_id}' at {orders_path}")
+            logger1.info(f"Saving orders report for customer '{customer_id}' at {orders_path}")
             async with aiofiles.open(orders_path, "wb") as f:
                 await f.write(orders_file_content)
             
-            logger.info(f"Saving order products report for customer '{customer_id}' at {products_path}")
+            logger1.info(f"Saving order products report for customer '{customer_id}' at {products_path}")
             async with aiofiles.open(products_path, "wb") as f:
                 await f.write(products_file_content)
             
@@ -217,7 +216,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
                 #print(report)
                 report_sections = result["sections"] 
             except Exception as e:
-                logger.error(f"Error in generate_sales_report: {e}")
+                logger1.error(f"Error in generate_sales_report: {e}")
             
             
             report_dir = os.path.join("data", customer_id)
@@ -238,7 +237,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
                 tasks = get_exported_data(customer_id, "tasks")
                 activities = get_exported_data(customer_id, "activities")
             except Exception as e:
-                logger.error(f"Error in get_exported_data activities: {e}")
+                logger1.error(f"Error in get_exported_data activities: {e}")
             
             
             # Build the directory path and file name for non-orders entities
@@ -249,15 +248,15 @@ async def create_reports(customer_id: str, request: ReportRequest):
             file_path_tasks = os.path.join(dir_path, "tasks.csv")
             file_path_activities = os.path.join(dir_path, "activities.csv")
             
-            logger.info(f"Saving report for customer '{customer_id}', entity 'notes' at {file_path_notes}")
+            logger1.info(f"Saving report for customer '{customer_id}', entity 'notes' at {file_path_notes}")
             async with aiofiles.open(file_path_notes, "wb") as f:
                 await f.write(notes)
             
-            logger.info(f"Saving report for customer '{customer_id}', entity 'tasks' at {file_path_tasks}")
+            logger1.info(f"Saving report for customer '{customer_id}', entity 'tasks' at {file_path_tasks}")
             async with aiofiles.open(file_path_tasks, "wb") as f:
                 await f.write(tasks)
             
-            logger.info(f"Saving report for customer '{customer_id}', entity 'activities' at {file_path_activities}")
+            logger1.info(f"Saving report for customer '{customer_id}', entity 'activities' at {file_path_activities}")
             async with aiofiles.open(file_path_activities, "wb") as f:
                 await f.write(activities)
             
@@ -270,7 +269,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
                 async with aiofiles.open(path_for_report, "w") as f:
                     await f.write(report_activities)
             except Exception as e:
-                logger.error(f"Error in analyze_activities: {e}")
+                logger1.error(f"Error in analyze_activities: {e}")
                 
             try:
                 report_task = tasks_report(file_path_tasks)
@@ -280,7 +279,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
                 async with aiofiles.open(path_for_report, "w") as f:
                     await f.write(report_task)
             except Exception as e:
-                logger.error(f"Error in tasks_report: {e}")
+                logger1.error(f"Error in tasks_report: {e}")
             try:    
                 report_notes = notes_report(file_path_notes)
                 report_activities_dir = os.path.join("data", customer_id)
@@ -288,7 +287,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
                 async with aiofiles.open(path_for_notes, "w") as f:
                     await f.write(str(report_notes))
             except Exception as e:
-                logger.error(f"Error in notes_report: {e}")
+                logger1.error(f"Error in notes_report: {e}")
                 
             try:
                 report_text, section_report = await process_ai_activities_request(customer_id)
@@ -303,7 +302,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
                 else:
                     print("Analysis succeeded:")
             except Exception as e:
-                logger.error(f"Error in process_ai_activities_request: {e}")
+                logger1.error(f"Error in process_ai_activities_request: {e}")
             
             
             return JSONResponse(status_code=200, content={"message": f"Report generated successfully", 
@@ -316,7 +315,7 @@ async def create_reports(customer_id: str, request: ReportRequest):
             raise HTTPException(status_code=406, detail='Incorrect entity: use "activities" or "orders" ')
 
     except Exception as e:
-        logger.error(f"Error generating report: {e}")
+        logger1.error(f"Error generating report: {e}")
         raise HTTPException(status_code=406, detail=f"Error generating report due to incorrect customer id")
     
 
@@ -340,11 +339,11 @@ async def Ask_AI(prompt: str, file_path_product, file_path_orders, customer_id):
             app.state.process_executor,
             process_func
         )
-        logger.info(f"User prompt: {prompt}")
+        logger1.info(f"User prompt: {prompt}")
         return result
     
     except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+        logger1.error(f"Analysis failed: {e}")
         raise
 
 def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
@@ -356,7 +355,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
                 df2 = pd.read_csv(file_path_orders, encoding=encoding, low_memory=False)
                 break
             except UnicodeDecodeError:
-                logger.warning(f"Failed decoding attempt with encoding: {encoding}")
+                logger1.warning(f"Failed decoding attempt with encoding: {encoding}")
         #df = df1.merge(df2, on="orderId", how="left")
         #df.to_csv('data.csv',index=False)
         llm = ChatOpenAI(model='o3-mini') #model='o3-mini'
@@ -378,7 +377,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
                 report = file.read()
         except Exception as e:
             report = 'No data given'
-            logger.warning(f"Can not read report.md due to {e} ")
+            logger1.warning(f"Can not read report.md due to {e} ")
         
         try:
             additional_info_path = os.path.join('data', customer_id, 'additional_info.md')
@@ -386,7 +385,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
                 additional_info = file.read()
         except Exception as e:
             additional_info = 'No data given'
-            logger.warning(f"Can not read additional_info.md due to {e} ")
+            logger1.warning(f"Can not read additional_info.md due to {e} ")
         
         try:
             reorder_path = os.path.join('data', customer_id, 'reorder.md')
@@ -394,7 +393,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
                 reorder = file.read()
         except Exception as e:
             reorder = 'No data given'
-            logger.warning(f"Can not read reorder.md due to {e} ")
+            logger1.warning(f"Can not read reorder.md due to {e} ")
          
         
         try:
@@ -403,7 +402,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
                 report_activities = file.read()
         except Exception as e:
             report_activities = 'No data given'
-            logger.warning(f"Can not read report_activities.md due to {e} ")
+            logger1.warning(f"Can not read report_activities.md due to {e} ")
         
         formatted_prompt = f"""
         You are an AI assistant providing business insights based on two related datasets:  
@@ -436,7 +435,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         {prompt}"""
 
         
-        logger.info("\n===== Metadata =====")
+        logger1.info("\n===== Metadata =====")
         MODEL_RATES = {
             "gpt-4.1":      {"prompt": 2.00,   "completion": 8.00},
             "gpt-4.1-mini": {"prompt": 0.40,   "completion": 1.60},
@@ -471,9 +470,9 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
             cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
         
-            logger.info(f"Input Cost:  ${in_cost:.6f}")
-            logger.info(f"Output Cost: ${out_cost:.6f}")
-            logger.info(f"Total Cost:  ${cost:.6f}")
+            logger1.info(f"Input Cost:  ${in_cost:.6f}")
+            logger1.info(f"Output Cost: ${out_cost:.6f}")
+            logger1.info(f"Total Cost:  ${cost:.6f}")
         
             result['metadata'] = {
                 'total_tokens': in_toks+out_toks,
@@ -485,11 +484,11 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
 
         
         for k, v in result['metadata'].items(): 
-            logger.info(f"{k.replace('_', ' ').title()}: {v}")
+            logger1.info(f"{k.replace('_', ' ').title()}: {v}")
         return {"output": result.get('output'), "cost": cost}
 
     except Exception as e:
-        logger.error(f"Error in AI processing: {str(e)}")
+        logger1.error(f"Error in AI processing: {str(e)}")
 
 class ChatRequest(BaseModel):
     prompt: str
@@ -508,7 +507,7 @@ async def ask_ai_endpoint(
         answer = response.get('output')
         cost = response.get('cost', 0.0)
     except Exception as e:
-        logger.error(f"Error executing LLM: {str(e)}")
+        logger1.error(f"Error executing LLM: {str(e)}")
         answer = "Cannot answer this question"
         cost = 0.0
     
@@ -559,11 +558,11 @@ async def clean_directories(customer_id: str):
         try:
             # Run shutil.rmtree in thread pool to avoid blocking
             await loop.run_in_executor(executor, shutil.rmtree, data_folder)
-            logger.info(f"Deleted user folder: {data_folder}")
+            logger1.info(f"Deleted user folder: {data_folder}")
         except Exception as e:
-            logger.error(f"Failed to delete {data_folder}: {e}")
+            logger1.error(f"Failed to delete {data_folder}: {e}")
     else:
-        logger.info(f"No directory to delete for user {customer_id}")
+        logger1.info(f"No directory to delete for user {customer_id}")
 
 @app.get("/clean_chat/")
 async def clean_chat(customer_id: str, background_tasks: BackgroundTasks):
@@ -575,6 +574,122 @@ async def clean_chat(customer_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(clean_directories, customer_id)
     return {"response": "Chat is cleaned successfully"}
 
+
+class ReportRequest(BaseModel):
+    customer_ids: list[str]  # List of customer IDs
+    entity: AllowedEntity    # Single entity, restricted to AllowedEntity values
+
+sem = asyncio.Semaphore(10)
+async def fetch_data_with_sem(customer_id: str, entity: str):
+    """
+    Fetch data with semaphore to limit concurrency.
+    """
+    async with sem:
+        try:
+            result = await get_exported_data_many(customer_id, entity)
+            return (customer_id, entity, result)
+        except Exception as e:
+            logger2.error(f"Error fetching data for customer {customer_id}, entity {entity}: {e}")
+            return (customer_id, entity, None)
+
+@app.post("/generate-reports")
+async def create_group_reports(request: ReportRequest = Body(...)):
+    customer_ids = request.customer_ids
+    uuid = str(uuid4())
+    await clean_directories('uuid')
+
+    # Create tasks for all customer-entity pairs
+    entities = ['orders', 'order_products', 'customer']
+    tasks = [fetch_data_with_sem(customer_id, entity) for customer_id in customer_ids for entity in entities]
+    results = await asyncio.gather(*tasks)
+
+    # Process results into separate dictionaries
+    data_orders = {}
+    data_products = {}
+    data_customer = {}
+    customer_names = {}
+
+    for customer_id, entity, payload in results:
+        if payload:
+            if entity == 'orders':
+                data_orders[customer_id] = payload["file"]
+            elif entity == 'order_products':
+                data_products[customer_id] = payload["file"]
+            elif entity == 'customer':
+                data_customer[customer_id] = payload["file"]
+            customer_names[customer_id] = payload["customer_name"]
+        else:
+            if entity == 'orders':
+                data_orders[customer_id] = None
+            elif entity == 'order_products':
+                data_products[customer_id] = None
+            elif entity == 'customer':
+                data_customer[customer_id] = None
+            customer_names[customer_id] = customer_names.get(customer_id, None)
+
+    # Save data for all entities
+    save_results_orders = await save_customer_data(customer_ids, 'orders', data_orders, 'uuid', customer_names)
+    save_results_products = await save_customer_data(customer_ids, 'order_products', data_products, 'uuid', customer_names)
+    save_results_customer = await save_customer_data(customer_ids, 'customer', data_customer, 'uuid', customer_names)
+
+    # Check for successful saves across all entities
+    success_count = sum(
+        1 for customer_id in customer_ids
+        if (save_results_orders[customer_id].endswith(".csv") and
+            save_results_products[customer_id].endswith(".csv") and
+            save_results_customer[customer_id].endswith(".csv"))
+    )
+
+    # Identify failed customers
+    #print(customer_names)
+    failed_customer_names = [
+        customer_names.get(customer_id, f"Unknown ({customer_id})")
+        for customer_id in customer_ids
+        if not (save_results_orders[customer_id].endswith(".csv") and
+                save_results_products[customer_id].endswith(".csv") and
+                save_results_customer[customer_id].endswith(".csv"))
+    ]
+    #print(failed_customer_names)
+    if success_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="All customers failed processing. Report cannot be generated."
+        )
+
+    logger2.info(f"Saved data for: {uuid}")
+
+    # Generate file paths
+    ord_path = [f"data/uuid/{customer_id}/orders/orders.csv" for customer_id in customer_ids]
+    prod_path = [f"data/uuid/{customer_id}/order_products/order_products.csv" for customer_id in customer_ids]
+    customer_path = [f"data/uuid/{customer_id}/customer/customer.csv" for customer_id in customer_ids]
+
+    # Generate report
+    try:
+        create_user_data_bool, all_empty_files = await create_group_user_data(ord_path, prod_path, "test", "uuid")
+        if create_user_data_bool:
+            customer_names_empty = [
+                customer_names.get(extract_customer_id(i)) for i in all_empty_files
+            ] if all_empty_files else []
+
+            full_report, sectioned_report = await generate_analytics_report('data/uuid')
+            with open("data/uuid/full_report.txt", "w", encoding="utf-8") as f:
+                f.write(full_report)
+
+            return {
+                "message": f"Reports generated and saved for {success_count} of {len(customer_ids)} customers",
+                "failed customers": failed_customer_names + list(set(customer_names_empty)),
+                "sectioned_report": sectioned_report,
+                "full_report": full_report,
+                "uuid": uuid
+            }
+        else:
+            return {
+                "message": "Report cannot be generated due to a data error.",
+                "uuid": uuid
+            }
+    except Exception as e:
+        logger2.error(f"Error generating report: {e}")
+        raise HTTPException(status_code=404, detail="Report cannot be generated due to a data error.")
 
 if __name__ == '__main__':
     import uvicorn
