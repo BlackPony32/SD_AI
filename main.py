@@ -544,7 +544,7 @@ async def get_last_n_log_lines(num_lines: int):
     except Exception as e:
         # Unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
-    
+
 
 
 async def clean_directories(customer_id: str):

@@ -7,6 +7,7 @@ import aiofiles
 from pathlib import Path
 from pprint import pprint
 
+
 from AI.group_customer_analyze.preprocess_data_group_c import load_data, concat_customer_csv
 from AI.group_customer_analyze.statistics_group_c import format_status, usd, top_new_contact, top_reorder_contact, peak_visit_time, \
   customer_insights, format_percentage

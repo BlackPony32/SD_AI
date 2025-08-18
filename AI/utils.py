@@ -6,7 +6,7 @@ import re
 def extract_customer_id(file_path: str) -> str:
     parts = file_path.replace("\\", "/").split("/")
     uuid_pattern = re.compile(r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$", re.I)
-    
+
     for part in parts:
         if uuid_pattern.match(part):
             return part

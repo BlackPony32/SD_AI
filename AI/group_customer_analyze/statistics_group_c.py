@@ -5,7 +5,6 @@ import aiofiles
 from datetime import datetime
 
 
-
 from AI.utils import get_logger
 logger2 = get_logger("logger2", "project_log_many.log", False)
 

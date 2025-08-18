@@ -253,4 +253,3 @@ def tasks_report(file_path_tasks):
         
     except Exception as e:
         print(f"Unexpected error in main execution: {e}")
-

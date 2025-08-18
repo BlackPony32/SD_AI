@@ -170,7 +170,7 @@ def preprocess_products(file_path):
 async def create_user_data(orders_df_path, products_df_path, folder_to_save):
     """Processes order and product data asynchronously and saves the cleaned results."""
     logger.info("Starting create_user_data")
-    
+
     # Run preprocessing functions in separate threads asynchronously
     orders_df, products_df = await asyncio.gather(
         asyncio.to_thread(preprocess_orders, orders_df_path),

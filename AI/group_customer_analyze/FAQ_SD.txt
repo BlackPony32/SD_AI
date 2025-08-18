@@ -31,7 +31,6 @@ Recipients of item or “other” discounts can be tracked to see if they become
 
 
 
-
 Overall Total Sales by Payment and Delivery Status advice block list:
 Sales Recovery & Revenue Capture Insights
 1) Convert “PENDING” Sales into Paid and Delivered

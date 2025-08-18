@@ -16,7 +16,6 @@ import io
 import aiofiles
 from typing import Dict, List
 
-
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.utils import get_logger
 

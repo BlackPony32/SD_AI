@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def parse_report(report_text):
     sections = report_text.strip().split('\n---\n')
     report_dict = {}
-    
+
     for section in sections:
         lines = section.strip().split('\n')
         if not lines:

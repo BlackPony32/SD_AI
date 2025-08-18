@@ -12,6 +12,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+
 # Define a custom exception for critical data loading errors
 class DataLoadError(Exception):
     pass
