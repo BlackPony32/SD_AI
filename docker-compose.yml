@@ -11,16 +11,4 @@ services:
       - .:/app
     restart: always
 
-  gradio-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: python gradio_app/app_gradio.py
-    ports:
-      - "7860:7860"
-    volumes:
-      - .:/app
-    restart: always
-    environment:
-      - GRADIO_SERVER_NAME=0.0.0.0
 

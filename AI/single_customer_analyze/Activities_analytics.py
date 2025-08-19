@@ -83,21 +83,10 @@ async def load_data(filepath):
         if missing:
             raise DataLoadError(f"Missing required columns: {', '.join(missing)}")
         
-        # Convert timestamps, coercing invalid values to NaT
-        
-        #with warnings.catch_warnings():
-        #    warnings.simplefilter("ignore")
-            #df['createdAt'] = pd.to_datetime(df['createdAt'], utc=True, errors='coerce')
-        #df['createdAt'] = pd.to_datetime(df['createdAt'], utc=True, format='mixed')
+
         df = convert_to_datetime(df, ["createdAt"])
-        #with warnings.catch_warnings():
-        #    warnings.simplefilter("ignore")
-        #df['updatedAt'] = pd.to_datetime(df['updatedAt'], utc=True, format='mixed')
         df = convert_to_datetime(df, ["updatedAt"])
-        # Filter out rows with invalid 'createdAt'
-        #df = df.dropna(subset=['createdAt'])
-        
-        # Map 'type' to 'activity_type' with a fallback for unmapped values
+
         activity_names = {
             'CHECKED_IN': 'Check-ins',
             'ORDER_ADDED': 'Order Activities',

@@ -27,6 +27,35 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def parse_report(report_text):
+    sections = report_text.strip().split('\n---\n')
+    report_dict = {}
+    
+    for section in sections:
+        lines = section.strip().split('\n')
+        if not lines:
+            continue
+        
+        # Extract and clean the header
+        header = lines[0].replace('### ', '').strip().lower()
+        content = '\n'.join(lines[1:]).strip()
+        
+        # Map headers to keys based on keywords
+        key = None
+        if 'task' in header:
+            key = 'task'
+        elif 'note' in header:
+            key = 'note'
+        elif 'activit' in header:  # Covers "activity" or "activities"
+            key = 'activities'
+        elif 'conclusion' in header or 'recommendation' in header:
+            key = 'recommendations'
+        
+        if key:
+            report_dict[key] = content
+    
+    return report_dict
+
 async def read_file_async(file_path: str) -> str:
     try:
         async with aiofiles.open(file_path, 'r') as file:
@@ -65,7 +94,7 @@ async def process_ai_activities_request(customer_id: str) -> dict:
             response = {
             'model_answer': "Sorry, we were unable to analyze the activity due to not enough data."
             }
-            return response
+            return response, {}
 
 
         # Process report_notes
@@ -79,13 +108,13 @@ async def process_ai_activities_request(customer_id: str) -> dict:
         
     except Exception as e:
         logger.error(f"File read error: {str(e)}")
-        return error_response
+        return error_response, {}
 
     try:
-        llm = ChatOpenAI(model='o3-mini', verbose=True)
+        llm = ChatOpenAI(model='o3-mini', verbose=False)
     except Exception as e:
         logger.error(f"LLM initialization error: {str(e)}")
-        return error_response
+        return error_response, {}
 
     formatted_prompt = f"""
         Use these 3 files and build a conclusion useful for your sales business based on them.
@@ -180,7 +209,7 @@ async def process_ai_activities_request(customer_id: str) -> dict:
         answer = await run_in_threadpool(llm.invoke, formatted_prompt)
     except Exception as e:
         logger.error(f"LLM invocation error: {str(e)}")
-        return error_response
+        return error_response, {}
 
     try:
         execution_time = time.time() - start_time
@@ -195,11 +224,12 @@ async def process_ai_activities_request(customer_id: str) -> dict:
             'model_answer': answer.content
         }
         #print(answer.content)
-        return response
+        section_report = parse_report(response.get('model_answer'))
+        return response, section_report
         
     except AttributeError as e:
         logger.error(f"Response parsing error: {str(e)}")
-        return error_response
+        return error_response, {}
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return error_response
+        return error_response, {}
