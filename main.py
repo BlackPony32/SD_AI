@@ -29,6 +29,7 @@ from AI.single_customer_analyze.Notes_analytics import notes_report
 from AI.group_customer_analyze.many_customer import save_customer_data, get_exported_data_many
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
+from AI.group_customer_analyze.Ask_ai_many_customers import Ask_ai_many_customers
 from AI.utils import get_logger, extract_customer_id
 
 from langchain_experimental.agents import create_pandas_dataframe_agent
@@ -593,12 +594,18 @@ async def fetch_data_with_sem(customer_id: str, entity: str):
             logger2.error(f"Error fetching data for customer {customer_id}, entity {entity}: {e}")
             return (customer_id, entity, None)
 
+
 @app.post("/generate-reports")
 async def create_group_reports(request: ReportRequest = Body(...)):
+    import time
+    start = time.perf_counter()
     customer_ids = request.customer_ids
     uuid = str(uuid4())
     await clean_directories('uuid')
 
+    folder_path = os.path.join('data', 'uuid', 'work_data_folder')
+    os.makedirs(folder_path, exist_ok=True)
+    
     # Create tasks for all customer-entity pairs
     entities = ['orders', 'order_products', 'customer']
     tasks = [fetch_data_with_sem(customer_id, entity) for customer_id in customer_ids for entity in entities]
@@ -640,7 +647,7 @@ async def create_group_reports(request: ReportRequest = Body(...)):
             save_results_products[customer_id].endswith(".csv") and
             save_results_customer[customer_id].endswith(".csv"))
     )
-
+    print("Step 1 - saved customer data:", time.perf_counter() - start)
     # Identify failed customers
     #print(customer_names)
     failed_customer_names = [
@@ -660,10 +667,10 @@ async def create_group_reports(request: ReportRequest = Body(...)):
     logger2.info(f"Saved data for: {uuid}")
 
     # Generate file paths
-    ord_path = [f"data/uuid/{customer_id}/orders/orders.csv" for customer_id in customer_ids]
-    prod_path = [f"data/uuid/{customer_id}/order_products/order_products.csv" for customer_id in customer_ids]
-    customer_path = [f"data/uuid/{customer_id}/customer/customer.csv" for customer_id in customer_ids]
-
+    ord_path = [f"data/uuid/raw_data/{customer_id}/orders/orders.csv" for customer_id in customer_ids]
+    prod_path = [f"data/uuid/raw_data/{customer_id}/order_products/order_products.csv" for customer_id in customer_ids]
+    customer_path = [f"data/uuid/raw_data/{customer_id}/customer/customer.csv" for customer_id in customer_ids]
+    print("Step 2 - saved all data:", time.perf_counter() - start)
     # Generate report
     try:
         create_user_data_bool, all_empty_files = await create_group_user_data(ord_path, prod_path, "test", "uuid")
@@ -671,11 +678,11 @@ async def create_group_reports(request: ReportRequest = Body(...)):
             customer_names_empty = [
                 customer_names.get(extract_customer_id(i)) for i in all_empty_files
             ] if all_empty_files else []
-
+            print("Step 3 - before generate report:", time.perf_counter() - start)
             full_report, sectioned_report = await generate_analytics_report('data/uuid')
             with open("data/uuid/full_report.txt", "w", encoding="utf-8") as f:
                 f.write(full_report)
-
+            print("Step 4 - after generate report:", time.perf_counter() - start)
             return {
                 "message": f"Reports generated and saved for {success_count} of {len(customer_ids)} customers",
                 "failed customers": failed_customer_names + list(set(customer_names_empty)),
@@ -691,6 +698,30 @@ async def create_group_reports(request: ReportRequest = Body(...)):
     except Exception as e:
         logger2.error(f"Error generating report: {e}")
         raise HTTPException(status_code=404, detail="Report cannot be generated due to a data error.")
+
+
+class AI_Request(BaseModel):
+    uuid: str
+    prompt: str
+    
+@app.post("/Ask_ai_many_customers")
+async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
+    user_uuid = request.uuid
+    prompt = request.prompt
+
+    try:
+        # use AI function to get response
+        response = await Ask_ai_many_customers(prompt, user_uuid)
+        
+        answer = response.get('output')
+        cost = response.get('cost', 0.0)
+    except Exception as e:
+        logger2.error(f"Error executing LLM: {str(e)}")
+        answer = "Cannot answer this question"
+        cost = 0.0
+    
+    return {"AI_answer": answer, "cost": cost}
+
 
 if __name__ == '__main__':
     import uvicorn

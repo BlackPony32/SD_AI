@@ -84,37 +84,82 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     
     # Key Metrics
     try:
-        # Existing Metrics
+        # Calculate combined statistics for all customers
         total_delivery_fees = orders['deliveryFee'].sum()
         num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
         avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
-
+    
         total_sales = orders['totalAmount'].sum()
         total_orders = len(orders)
         avg_order_value = total_sales / total_orders if total_orders > 0 else 0
         total_discount_amount = orders['totalDiscountValue'].sum()
-
+    
         # Metric: Standard Deviation of Order Values
-        std_order_value = orders['totalAmount'].std() if total_orders > 1 else 0  # std requires at least 2 values
-        std_fees_value = orders['deliveryFee'].std() if total_orders > 1 else 0  # std requires at least 2 values
-
-        # Formatting lines for output
-        lines = [
+        std_order_value = orders['totalAmount'].std() if total_orders > 1 else 0
+        std_fees_value = orders['deliveryFee'].std() if total_orders > 1 else 0
+    
+        # Formatting lines for overall output
+        lines_combined = [
             "## Key Metrics",
             f"- **Total Sales:** {usd(total_sales)}",
             f"- **Total Orders:** {total_orders}",
             f"- **Average Order Value:** {usd(avg_order_value)}",
-            f"- **Standard Deviation of Order Value:** {usd(std_order_value)}",  # Added metric
+            f"- **Standard Deviation of Order Value:** {usd(std_order_value)}",
             f"- **Total Discounts Given:** {usd(total_discount_amount)}",
             f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
             f"- **Orders with Delivery Fees:** {num_orders_with_delivery} "
             f"({format_percentage(num_orders_with_delivery/total_orders*100)})",
             f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
-            f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}",  # Added metric
+            f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}",
         ]
-
-        add_section("Key Metrics", lines)
-        add_section("Key Metrics", lines, True)
+    
+        add_section("Key Metrics", lines_combined, True)
+    
+        # Calculate per-customer metrics
+        customer_metrics = {}
+        for customer_name, customer_orders in orders.groupby('customer_name'):
+            # Calculate metrics for each customer
+            cust_total_delivery = customer_orders['deliveryFee'].sum()
+            cust_num_delivery = (customer_orders['deliveryFee'] > 0).sum()
+            cust_avg_delivery = cust_total_delivery / cust_num_delivery if cust_num_delivery > 0 else 0
+    
+            cust_total_sales = customer_orders['totalAmount'].sum()
+            cust_total_orders = len(customer_orders)
+            cust_avg_order = cust_total_sales / cust_total_orders if cust_total_orders > 0 else 0
+            cust_total_discount = customer_orders['totalDiscountValue'].sum()
+    
+            cust_std_order = customer_orders['totalAmount'].std() if cust_total_orders > 1 else 0
+            cust_std_fees = customer_orders['deliveryFee'].std() if cust_total_orders > 1 else 0
+    
+            # Store customer metrics
+            customer_metrics[customer_name] = {
+                'total_sales': cust_total_sales,
+                'total_orders': cust_total_orders,
+                'avg_order_value': cust_avg_order,
+                'std_order_value': cust_std_order,
+                'total_discount': cust_total_discount,
+                'total_delivery_fees': cust_total_delivery,
+                'num_orders_with_delivery': cust_num_delivery,
+                'avg_delivery_fee': cust_avg_delivery,
+                'std_delivery_fee': cust_std_fees
+            }
+    
+        # Generate individual customer reports
+        for customer_name, metrics in customer_metrics.items():
+            lines_customer = [
+                f"## Key Metrics for customer: - {customer_name}",
+                f"- **Total Sales:** {usd(metrics['total_sales'])}",
+                f"- **Total Orders:** {metrics['total_orders']}",
+                f"- **Average Order Value:** {usd(metrics['avg_order_value'])}",
+                f"- **Standard Deviation of Order Value:** {usd(metrics['std_order_value'])}",
+                f"- **Total Discounts Given:** {usd(metrics['total_discount'])}",
+                f"- **Total Delivery Fees:** {usd(metrics['total_delivery_fees'])}",
+                f"- **Orders with Delivery Fees:** {metrics['num_orders_with_delivery']} "
+                + (f"({format_percentage(metrics['num_orders_with_delivery']/metrics['total_orders']*100)})" if metrics['total_orders'] > 0 else "0%"),
+                f"- **Average Delivery Fee:** {usd(metrics['avg_delivery_fee'])}",
+                f"- **Standard Deviation of Delivery Fee:** {usd(metrics['std_delivery_fee'])}",
+            ]
+            add_section(f"Key Metrics - {customer_name}", lines_customer)
     except Exception as e:
         logger2.warning(f"Error in the calculation of key metrics: {e}")
     
@@ -261,44 +306,86 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     
     # Delivery Fees - Fulfillment Analysis
     try:
-      # Calculate total number of orders
-      total_orders = len(orders)
-  
-      # Delivery fee statistics
-      total_delivery_fees = orders['deliveryFee'].sum()
-      num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
-      avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
-  
-      # Fulfillment analysis
-      orders['deliveryStatus'] = orders['deliveryStatus'].fillna('Unknown')  # Handle missing statuses
-      existing_delivery_statuses = orders['deliveryStatus'].unique()
-      fulfillment_counts = orders['deliveryStatus'].value_counts()
-      fulfillment_percent = (fulfillment_counts / total_orders * 100).round(1)
-  
-      # Generate markdown report lines
-      lines = []
-  
-      # Add delivery fees section
-      lines.append("## Delivery Fees Analysis")
-      lines.append(f"- **Total Delivery Fees:** {usd(total_delivery_fees)}")
-      lines.append(f"- **Orders with Delivery Fees:** {num_orders_with_delivery}")
-      lines.append(f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}")
-      lines.append(f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}")
-      lines.append("")  # Empty line for separation
-  
-      # Assuming add_section or a similar function exists to process the lines
-      add_section("Delivery Fees Analysis", lines, True)
-      add_section("Delivery Fees Analysis", lines)
-      lines = []
-      # Add fulfillment analysis section
-      lines.append("## Fulfillment Analysis")
-      for status in existing_delivery_statuses:
-          lines.append(f"- **{format_status(status)}:** {fulfillment_counts[status]} orders ({format_percentage(fulfillment_percent[status])})")
-  
-  
-      # Assuming add_section or a similar function exists to process the lines
-      add_section("Fulfillment Analysis", lines, True)
-      add_section("Fulfillment Analysis", lines)
+        # Calculate overall statistics for all customers
+        total_orders = len(orders)
+        total_delivery_fees = orders['deliveryFee'].sum()
+        num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
+        avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
+        std_fees_value = orders['deliveryFee'].std() if total_orders > 1 else 0
+
+        # Fulfillment analysis for all customers
+        orders['deliveryStatus'] = orders['deliveryStatus'].fillna('Unknown')
+        fulfillment_counts = orders['deliveryStatus'].value_counts()
+        fulfillment_percent = (fulfillment_counts / total_orders * 100).round(1)
+
+        # Generate overall delivery fees section
+        lines_delivery_combined = [
+            "## Delivery Fees Analysis",
+            f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
+            f"- **Orders with Delivery Fees:** {num_orders_with_delivery}",
+            f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
+            f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}"
+        ]
+
+        # Generate overall fulfillment analysis section
+        lines_fulfillment_combined = ["## Fulfillment Analysis"]
+        for status in fulfillment_counts.index:
+            lines_fulfillment_combined.append(
+                f"- **{format_status(status)}:** {fulfillment_counts[status]} orders ({format_percentage(fulfillment_percent[status])})"
+            )
+
+        # Add overall sections
+        add_section("Delivery Fees Analysis", lines_delivery_combined, True)
+        add_section("Fulfillment Analysis", lines_fulfillment_combined, True)
+
+        # Calculate per-customer statistics
+        customer_delivery_data = {}
+
+        for customer_name, customer_orders in orders.groupby('customer_name'):
+            # Delivery fee statistics for customer
+            cust_total_orders = len(customer_orders)
+            cust_total_delivery = customer_orders['deliveryFee'].sum()
+            cust_num_delivery = (customer_orders['deliveryFee'] > 0).sum()
+            cust_avg_delivery = cust_total_delivery / cust_num_delivery if cust_num_delivery > 0 else 0
+            cust_std_fees = customer_orders['deliveryFee'].std() if cust_total_orders > 1 else 0
+
+            # Fulfillment analysis for customer
+            cust_fulfillment_counts = customer_orders['deliveryStatus'].value_counts()
+            cust_fulfillment_percent = (cust_fulfillment_counts / cust_total_orders * 100).round(1)
+
+            # Store customer data
+            customer_delivery_data[customer_name] = {
+                'total_orders': cust_total_orders,
+                'total_delivery': cust_total_delivery,
+                'num_delivery': cust_num_delivery,
+                'avg_delivery': cust_avg_delivery,
+                'std_fees': cust_std_fees,
+                'fulfillment_counts': cust_fulfillment_counts,
+                'fulfillment_percent': cust_fulfillment_percent
+            }
+
+        # Generate individual customer reports
+        for customer_name, data in customer_delivery_data.items():
+            # Delivery fees section for customer
+            lines_delivery_customer = [
+                f"## Delivery Fees Analysis - {customer_name}",
+                f"- **Total Delivery Fees:** {usd(data['total_delivery'])}",
+                f"- **Orders with Delivery Fees:** {data['num_delivery']}",
+                f"- **Average Delivery Fee:** {usd(data['avg_delivery'])}",
+                f"- **Standard Deviation of Delivery Fee:** {usd(data['std_fees'])}"
+            ]
+
+            # Fulfillment analysis section for customer
+            lines_fulfillment_customer = [f"## Fulfillment Analysis - {customer_name}"]
+            for status in data['fulfillment_counts'].index:
+                lines_fulfillment_customer.append(
+                    f"- **{format_status(status)}:** {data['fulfillment_counts'][status]} orders ({format_percentage(data['fulfillment_percent'][status])})"
+                )
+
+            # Add customer sections
+            add_section(f"Delivery Fees Analysis - {customer_name}", lines_delivery_customer)
+            add_section(f"Fulfillment Analysis - {customer_name}", lines_fulfillment_customer)
+
     except Exception as e:
         logger2.warning(f"Error in the calculation of Delivery Fees - Fulfillment Analysis: {e}")
     
@@ -550,11 +637,11 @@ async def combine_dicts_async(A, B):
     """Parse key to get value from statistics and AI dict to get one final result.
 
     Args:
-        A (dict): Ai dict answer
-        B (dict): Statistics dict
+        A (dict): section_name + Ai dict answer
+        B (dict): section_name + Statistics 
 
     Returns:
-        - new_dict (dict): dict that result of connected statistics and AI.
+        - new_dict (dict): dict that section_name + result of connected statistics and AI response.
         - result_string (str): full report with statistics and AI.
     """
     order = [
@@ -575,26 +662,35 @@ async def combine_dicts_async(A, B):
     
     for key in order:
         if key not in A:
-            new_dict[key] = B[key]
-            parts.append(B[key])
+            content = B[key]
         else:    
             if key in B:
-                # Preallocate memory efficiently
-                combined = f"\n{B[key]} \n\n {A[key]} \n"
-                new_dict[key] = combined
-                parts.append(combined)
+                content = f"\n{B[key]} \n\n {A[key]} \n"
             else:
-                new_dict[key] = A[key]
-                parts.append(A[key])
+                content = A[key]
+        
+        # Special handling for 'Suggestions'
+        if key == 'Suggestions':
+            content = f"<div id=\"suggestions-block\">\n\n{content}\n</div>"
+        
+        new_dict[key] = content
+        parts.append(content)
     
-    # Efficient string joining
     result_string = " ".join(parts)
     return new_dict, result_string
 
 async def generate_analytics_report(directory):
-    orders, products = await load_data(directory)
+    import time
+    start = time.perf_counter()
+
     try:
-        concat_customer_path = await concat_customer_csv("data/uuid")
+        orders, products = await load_data(directory)
+    except Exception as e:
+        logger2.error("Can not create concatenated orders and products due:", e)
+    print("Step 3.1 - load data:", time.perf_counter() - start)
+    
+    try:
+        concat_customer_path = await concat_customer_csv("data/uuid/raw_data")
         customer_df = pd.read_csv(concat_customer_path)
     except Exception as e:
         logger2.error("Can not create customer data df:", e)
@@ -603,7 +699,7 @@ async def generate_analytics_report(directory):
         return '', {}
     
     answer = generate_report(orders, products, customer_df)
-    
+    print("Step 3.2 - concat data and generate report:", time.perf_counter() - start)
     full_report = answer['full_report']
     overall_report = answer['customers_Overall_report']
     sections = answer['sections_main']
@@ -613,39 +709,42 @@ async def generate_analytics_report(directory):
         
         # save statistics report to md file for ai analyze
         path_for_overall_report = os.path.join(report_activities_dir, "overall_report.txt")
-        path_for_full_report= os.path.join(report_activities_dir, "full_report.md")
+        path_for_full_report = os.path.join(report_activities_dir, "full_report.md")
         
         async with aiofiles.open(path_for_overall_report, mode="w", encoding="utf-8") as f:
             await f.write(overall_report)
     
-        async with aiofiles.open(path_for_full_report , mode="w", encoding="utf-8") as f:
+        async with aiofiles.open(path_for_full_report, mode="w", encoding="utf-8") as f:
             await f.write(full_report)
     except Exception as e:
         logger2.error(f"Error saving group customer report result to file: {e}")
     
-
-    ans = await Ask_AI_group_orders('data/uuid/pproducts.csv', 'data/uuid/oorders.csv', 'uuid')
-    raw = str(ans.get('output') or "")
-    sections_answer = parse_analysis_response(raw)
+    # Run independent async tasks concurrently
+    ai_task = asyncio.create_task(
+        Ask_AI_group_orders('data/uuid/pproducts.csv', 'data/uuid/oorders.csv', 'uuid')
+    )
+    state_analysis_task = asyncio.create_task(
+        make_product_per_state_analysis()
+    )
     
+    # Wait for both tasks to complete
+    ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
     
-    product_per_state_analysis = await make_product_per_state_analysis()
-    items = list(sections_answer.items())
-    items.insert(8, ('product_per_state_analysis', product_per_state_analysis))
-    new_dict = dict(items)
+    print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
     
+    raw = str(ans.get('output') or "")              # answer of model for full report
+    sections_answer = parse_analysis_response(raw)  # func that parse answer to section
+    
+    items = list(sections_answer.items())                                       # tuple of sectioned report
+    items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
+    new_dict = dict(items)                              # dict in format {section : ai_text}
 
     items2 = list(sections.items())
-    #print(items2)
-    #print("Length before:", len(items2))
-    items2.insert(8, ('product_per_state_analysis', product_per_state_analysis))
-    #print("Length after:", len(items2))
+    items2.insert(8, ('product_per_state_analysis', ''))
 
-   
-    new_dict2 = dict(items2)
-    #pprint(new_dict2)
+    new_dict2 = dict(items2)                            # dict in format {section : calculated statistics}
     sectioned_report, full_report = await combine_dicts_async(new_dict, new_dict2)
-
+    print("Step 3.5 - combine_dicts_async:", time.perf_counter() - start)
     return full_report, sectioned_report
     
 
@@ -720,15 +819,9 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             extra_tools=[advice_tool] if advice_tool else []  # Add tool if available
         )
          
-        try:
-            report_path = os.path.join('data', customer_id, 'report.md')
-            with open(report_path, "r") as file:
-                report = file.read()
-        except Exception as e:
-            report = 'No data given'
-            logger2.warning(f"Can not read report.md due to {e} ")
         
         try:
+            #raw calculated statistics for customers (not separated)
             full_report_path = os.path.join('data', customer_id, 'full_report.md')
             with open(full_report_path, "r") as file:
                 full_report = file.read()
@@ -737,6 +830,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             logger2.warning(f"Can not read additional_info.md due to {e} ")
         
         try:
+            #some base recommendation example
             with open('AI\group_customer_analyze\promo_rules.txt', "r") as file:
                 recommendations = file.read()
         except Exception as e:
@@ -749,11 +843,9 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         - **df1** (Orders) contains critical order-related data or can be user activities data.  
         - **df2** (Products) contains details about products within each order or can be user tasks data.  
 
-        Calculated statistics that the user sees: {report}
-        More detailed statistics are calculated for each customer. 
-        Analyze this data and find important underlying patterns that businesses need to know: {full_report}
+        Calculated statistics that the user sees: {full_report}
 
-        some additional data that you can use to make recommendations to the customer: {recommendations}
+        And some additional data that you can use to make recommendations to the customer: {recommendations}
         
         **Important Rules to Follow:**  
         - **Unique Values:** When answering questions about orders or products, always consider unique values.  
@@ -848,6 +940,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
             cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
         
+            logger2.info("Agent for func:  create_report_group")
             logger2.info(f"Input Cost:  ${in_cost:.6f}")
             logger2.info(f"Output Cost: ${out_cost:.6f}")
             logger2.info(f"Total Cost:  ${cost:.6f}")

@@ -26,7 +26,7 @@ def process_data():
     """Process customer, order, and product data, saving the result to 'final_data.csv' with left joins to retain all product rows."""
     
     # Load datasets with selected columns
-    customers = pd.read_csv("data/uuid/concatenated_customers.csv", usecols=[
+    customers = pd.read_csv("data/uuid/raw_data/concatenated_customers.csv", usecols=[
         'customer_name', 'status',
         'billingAddress_formatted_address', 'billingAddress_street', 'billingAddress_appartement',
         'billingAddress_city', 'billingAddress_state', 'billingAddress_zip',
@@ -73,16 +73,16 @@ def process_data():
     products['is_discounted'] = products['itemDiscountAmount'] > 0
 
     # Diagnostic: Print initial row counts
-    print(f"Products rows: {len(products)}")
-    print(f"Orders rows: {len(orders)}")
-    print(f"Customers rows: {len(customers)}")
+    #print(f"Products rows: {len(products)}")
+    #print(f"Orders rows: {len(orders)}")
+    #print(f"Customers rows: {len(customers)}")
 
     # Diagnostic: Check for unmatched orderIds
     product_order_ids = set(products['orderId'])
     order_ids = set(orders['order_id'])
     missing_order_ids = product_order_ids - order_ids
-    if missing_order_ids:
-        print(f"Product orderIds not in orders: {len(missing_order_ids)}", missing_order_ids)
+    #if missing_order_ids:
+    #    print(f"Product orderIds not in orders: {len(missing_order_ids)}", missing_order_ids)
 
     # First merge: Left join to retain all products
     merged = pd.merge(
@@ -92,7 +92,7 @@ def process_data():
         right_on=['order_id', 'customer_name'],
         how='left'  # Retain all products, even without matching orders
     )
-    print(f"Rows after products-orders merge: {len(merged)}")
+    #print(f"Rows after products-orders merge: {len(merged)}")
 
     # Diagnostic: Check for unmatched customer_name in merged dataframe
     merged_customers = set(merged['customer_name'])
@@ -108,7 +108,7 @@ def process_data():
         on='customer_name',
         how='left'  # Retain all rows, even without matching customers
     )
-    print(f"Final rows: {len(final_df)}")
+    #print(f"Final rows: {len(final_df)}")
 
     # Convert date column
     final_df['order_date'] = pd.to_datetime(final_df['order_date'], errors='coerce')  # Handle missing dates
@@ -117,13 +117,13 @@ def process_data():
     final_df.drop(columns=['orderId'], inplace=True, errors='ignore')  # Drop redundant column if exists
 
     # Save to CSV
-    final_df.to_csv('final_data.csv', index=False)
+    final_df.to_csv('data/uuid/final_data.csv', index=False)
 
     # Optional: Print total revenue and order count for validation
     total_revenue = final_df['line_item_total'].sum()
     order_count = final_df['order_id'].nunique()
-    print(f"Total Revenue (sum of line_item_total): {total_revenue}")
-    print(f"Order Count (unique order_id): {order_count}")
+    #print(f"Total Revenue (sum of line_item_total): {total_revenue}")
+    #print(f"Order Count (unique order_id): {order_count}")
 
 
 def generate_report():
@@ -132,7 +132,7 @@ def generate_report():
         return f"${amount:,.2f}"
 
     # Read and preprocess data
-    df = pd.read_csv('final_data.csv')
+    df = pd.read_csv('data/uuid/final_data.csv')
     
     # Clean data - focus on the columns we need
     df['Full_cost_withDisc'] = pd.to_numeric(df['Full_cost_withDisc'], errors='coerce').fillna(0)
@@ -321,6 +321,8 @@ def generate_report():
         report_lines.append(f"• Top recommendation: {unique_recs[0]['customer']} in {unique_recs[0]['state']} for {unique_recs[0]['product']}")
 
     # Print final report
+    with open("data/uuid/products_state.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(report_lines))
     #print("\n".join(report_lines))
 
 # Asynchronous wrapper functions
@@ -336,22 +338,20 @@ async def async_generate_report():
 # Main asynchronous function to orchestrate execution
 async def make_product_per_state_analysis():
     """Execute data processing followed by report generation."""
-    #await async_process_data()
+    await async_process_data()
     await async_generate_report()
-    ans = await Ask_AI_group_orders('final_data.csv', 'orders_many.csv', 'uuid')
+    ans = await Ask_AI_group_orders('data/uuid/final_data.csv', 'orders_many.csv', 'uuid')
     raw = str(ans.get('output') or "")
     return raw
 
 
-async def Ask_AI_group_orders(file_path_product, file_path_orders, customer_id):
+async def Ask_AI_group_orders(final_data, file_path_orders, customer_id):
     
     try:
         #system prompt
         prompt = 'Analyze my state - product sales data and make report  from those analysis'
         result = _process_ai_request(prompt=prompt,
-            customer_id = customer_id,
-            file_path_product=file_path_product,
-            file_path_orders=file_path_orders)
+            file_path_final_data=final_data)
         #logger2.info(f"User prompt: {prompt}")
         return result
     
@@ -359,12 +359,12 @@ async def Ask_AI_group_orders(file_path_product, file_path_orders, customer_id):
         logger2.error(f"Analysis AI report for customers group failed: {e}")
         raise
 
-def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
+def _process_ai_request(prompt, file_path_final_data):
     try:
         encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
         for encoding in encodings:
             try:
-                df1 = pd.read_csv(file_path_product, encoding=encoding, low_memory=False)
+                df1 = pd.read_csv(file_path_final_data, encoding=encoding, low_memory=False)
                 break
             except UnicodeDecodeError:
                 logger2.warning(f"Failed decoding attempt with encoding: {encoding}")
@@ -383,7 +383,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         )
         
         try:
-            full_report_path = os.path.join('products_state.txt')
+            full_report_path = os.path.join('data','uuid', 'products_state.txt')
             with open(full_report_path, "r") as file:
                 full_report = file.read()
         except Exception as e:
@@ -482,6 +482,7 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
             cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
         
+            logger2.info("Agent for func:  orders_state")
             logger2.info(f"Input Cost:  ${in_cost:.6f}")
             logger2.info(f"Output Cost: ${out_cost:.6f}")
             logger2.info(f"Total Cost:  ${cost:.6f}")
@@ -506,6 +507,6 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
 
 # Entry point
 if __name__ == "__main__":
-    asyncio.run(make_product_per_state_analysis())
+    asyncio.run(async_generate_report()) #make_product_per_state_analysis
     
     

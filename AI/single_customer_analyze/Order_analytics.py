@@ -595,7 +595,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "\n</div>"
             )
             add_section("suggestions", [html_suggestions])
-            # Pass this to your response logic
+
             result = sections['suggestions_div'] = "".join(html_suggestions)
             #print(result)
 

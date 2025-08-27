@@ -101,7 +101,7 @@ async def save_customer_data(
         customer_name = customer_names.get(customer_id, "UNKNOWN_CUSTOMER")
         
         # Create directory path
-        save_dir = os.path.join("data", uuid, customer_id, entity)
+        save_dir = os.path.join("data", uuid, "raw_data", customer_id, entity)
         os.makedirs(save_dir, exist_ok=True)
         file_path = os.path.join(save_dir, f"{entity}.csv")
         

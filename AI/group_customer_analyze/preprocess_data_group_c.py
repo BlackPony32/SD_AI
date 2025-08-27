@@ -333,8 +333,8 @@ async def create_group_user_data(orders_df_paths, products_df_paths, folder_to_s
                 logger2.warning(f"Skipping cleaning for pair {index} due to empty DataFrames")
             
             # Save results
-            orders_save_path = f'data/{uuid}/work_ord_{index}.csv'
-            products_save_path = f'data/{uuid}/work_prod_{index}.csv'
+            orders_save_path = f'data/{uuid}/work_data_folder/work_ord_{index}.csv'
+            products_save_path = f'data/{uuid}/work_data_folder/work_prod_{index}.csv'
             await asyncio.gather(
                 save_df(_orders_df, orders_save_path),
                 save_df(_products_df, products_save_path)
@@ -438,8 +438,8 @@ async def read_csv_async(file_path):
     
 async def load_data(directory):
     try:
-        orders_files = glob.glob(f"{directory}/work_ord_*.csv")
-        products_files = glob.glob(f"{directory}/work_prod_*.csv")
+        orders_files = glob.glob(f"{directory}/work_data_folder/work_ord_*.csv")
+        products_files = glob.glob(f"{directory}/work_data_folder/work_prod_*.csv")
 
         orders_dfs = await asyncio.gather(*[read_csv_async(f) for f in orders_files])
         products_dfs = await asyncio.gather(*[read_csv_async(f) for f in products_files])
