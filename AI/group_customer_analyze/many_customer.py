@@ -15,17 +15,18 @@ import csv
 import io
 import aiofiles
 from typing import Dict, List
-
+import random
+import pandas as pd
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.utils import get_logger
-
+import json
 load_dotenv()
 app = FastAPI()
 
 logger2 = get_logger("logger2", "project_log_many.log", False)
 
 
-async def get_exported_data_many(customer_id: str, entity: str) -> dict:
+async def old_get_exported_data_many(customer_id: str, entity: str) -> dict:
     """
     Asynchronously connects to the API endpoint to export customer profile data and returns the file content.
     Includes retry logic for HTTP 429 errors.
@@ -58,21 +59,75 @@ async def get_exported_data_many(customer_id: str, entity: str) -> dict:
                     else:
                         raise Exception(f"Failed to download file: HTTP {file_response.status_code}")
                 elif response.status_code == 429:
-                    if attempt < 2:  # Retry if not the last attempt
-                        logger2.warning(f"429 for customer {customer_id}, entity {entity}. Retrying in 5s...")
-                        await asyncio.sleep(10)
+                    if attempt < 4:
+                        backoff = 5 * (2 ** attempt)  # 5s, 10s, 20s, 40s
+                        jitter = random.uniform(0, 5)  # Random 0-5s
+                        sleep_time = backoff + jitter
+                        logger2.warning(f"429 for customer {customer_id}, entity {entity}. Retrying in {sleep_time:.1f}s...")
+                        await asyncio.sleep(sleep_time)
                     else:
                         raise Exception("Too many retries")
                 else:
                     raise Exception(f"Error: HTTP {response.status_code}")
             except Exception as e:
-                if attempt == 2:  # Last attempt failed
+                if attempt == 4:
                     raise Exception(f"Failed after retries: {e}")
-                await asyncio.sleep(10)  # Wait before retrying
+                # Sleep on other exceptions too, with backoff
+                await asyncio.sleep(5 * (2 ** attempt) + random.uniform(0, 5))
 
 AllowedEntity = Literal["orders", "order_products", "notes", "tasks", "activities"]
 
+async def download_file(client, url: str, entity: str):
+    """Download individual file and return entity-content pair"""
+    response = await client.get(url)
+    if response.status_code == 200:
+        return (entity, response.content)
+    raise Exception(f"Failed to download {entity} file")
 
+async def get_exported_data_many(customer_id: str, entities: List[str]) -> dict:
+    """
+    Fetch data for multiple entities in a single request
+    """
+    SD_API_URL = os.getenv('SD_API_URL')
+    if not SD_API_URL:
+        raise Exception("SD_API_URL environment variable is not set")
+    
+    params = {
+        "customer_id": customer_id,
+        "entities": json.dumps(entities)
+    }
+    headers = {"x-api-key": os.getenv('X_API_KEY')}
+
+    async with httpx.AsyncClient() as client:
+        for attempt in range(3):
+            try:
+                response = await client.get(SD_API_URL, params=params, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    customer_name = data.get("customerName", "Unknown")
+                    file_urls = data.get("fileUrls", {})
+                    
+                    # Download all files concurrently
+                    download_tasks = [
+                        download_file(client, url, entity)
+                        for entity, url in file_urls.items()
+                    ]
+                    file_contents = await asyncio.gather(*download_tasks)
+                    
+                    return {
+                        "customer_name": customer_name,
+                        "files": dict(file_contents)
+                    }
+                    
+                elif response.status_code == 429:
+                    await asyncio.sleep(1 * (2 ** attempt))  # Reduced retry delay
+                else:
+                    raise Exception(f"HTTP Error {response.status_code}")
+                    
+            except Exception as e:
+                if attempt == 2:
+                    raise Exception(f"Failed after retries: {e}")
+                await asyncio.sleep(5 * (2 ** attempt))
 
 async def save_customer_data(
     customer_ids: List[str],
@@ -99,52 +154,35 @@ async def save_customer_data(
     async def save_single_customer(customer_id: str):
         # Get customer name (default to UNKNOWN if not found)
         customer_name = customer_names.get(customer_id, "UNKNOWN_CUSTOMER")
-        
+
         # Create directory path
         save_dir = os.path.join("data", uuid, "raw_data", customer_id, entity)
-        os.makedirs(save_dir, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, save_dir, exist_ok=True)
         file_path = os.path.join(save_dir, f"{entity}.csv")
-        
+
         # Handle missing data
         if customer_id not in data or not data[customer_id]:
             results[customer_id] = f"Error: No data for {customer_id}"
             return
-        
+
         try:
             # Process CSV data to add customer name column
             csv_bytes = data[customer_id]
-            csv_text = csv_bytes.decode('utf-8')
-            
-            # Use StringIO for efficient text processing
-            input_stream = io.StringIO(csv_text)
-            output_stream = io.StringIO()
-            
-            reader = csv.reader(input_stream)
-            writer = csv.writer(output_stream)
-            
-            # Process header row
-            headers = next(reader, None)
-            if headers is not None:
-                headers.append("customer_name")
-                writer.writerow(headers)
-                
-                # Process data rows
-                for row in reader:
-                    row.append(customer_name)
-                    writer.writerow(row)
-            else:
-                # Empty file - write header only
-                writer.writerow(["customer_name"])
-            
-            # Get modified CSV content
-            modified_csv = output_stream.getvalue().encode('utf-8')
-            
+            #csv_text = csv_bytes.decode('utf-8')
+
+            def process_csv_sync():
+                df = pd.read_csv(io.BytesIO(csv_bytes))
+                df['customer_name'] = customer_name
+                return df.to_csv(index=False).encode('utf-8')
+
+            modified_csv = await asyncio.to_thread(process_csv_sync)
+
             # Write to file
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(modified_csv)
-                
+
             results[customer_id] = file_path
-            
+
         except Exception as e:
             error_msg = f"Error processing {customer_id}: {str(e)}"
             results[customer_id] = error_msg

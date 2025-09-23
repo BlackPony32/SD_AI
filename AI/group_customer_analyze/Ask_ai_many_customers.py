@@ -9,7 +9,7 @@ from AI.utils import get_logger
 from langchain.agents import tool
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
 from langchain_community.callbacks import get_openai_callback
@@ -27,7 +27,7 @@ def _create_advice_tool(user_uuid: str):
         logger2.error("overall_report file not found")
         return None
     # Split text into chunks
-    splitter = CharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     chunks = splitter.split_text(advice_text)
     
     # Create vector store
@@ -120,7 +120,7 @@ async def Ask_ai_many_customers(prompt: str, user_uuid: str):
         product lines highlight sustained customer interest. The pricing strategy, with consistent margins between wholesale
         and retail values, supports profitability and long-term stability.  
 
-        -  **Use AdviceTool**: if the question concerns more detailed data on customers or products. 
+        -  **Use AdviceTool**: It may already contain the answer to the question. or if the question concerns more detailed data on customers or products. 
         This tool searches the txt file for data that matches the question.
 
         **Question:**  
@@ -184,3 +184,4 @@ async def Ask_ai_many_customers(prompt: str, user_uuid: str):
 
     except Exception as e:
         logger2.error(f"Error in AI processing: {str(e)}")
+        return {"error": 'invalid_uuid', "cost": 0}

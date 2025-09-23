@@ -82,7 +82,7 @@ def preprocess_orders(file_path):
     """Loads and cleans order data from a CSV file."""
     try:
         df = pd.read_csv(file_path)
-        logger2.info(f"Loaded orders CSV from {file_path}")
+        #logger2.info(f"Loaded orders CSV from {file_path}")
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
         logger2.error(f"Error loading orders CSV file {file_path}: {e}")
         df = pd.DataFrame(columns=EXPECTED_COLUMNS["orders"])
@@ -137,7 +137,7 @@ def preprocess_products(file_path):
     """Loads and cleans product data from a CSV file."""
     try:
         df = pd.read_csv(file_path)
-        logger2.info(f"Loaded products CSV from {file_path}")
+        #logger2.info(f"Loaded products CSV from {file_path}")
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
         logger2.warning(f"Error loading products CSV file {file_path}: {e}")
         df = pd.DataFrame(columns=EXPECTED_COLUMNS["products"])
@@ -197,7 +197,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
             orders_df['createdAt'] = pd.to_datetime(orders_df['createdAt'], utc=True)
             # Changed from .dt.to_period('M') to .dt.strftime('%m/%Y')
             orders_df['month'] = orders_df['createdAt'].dt.strftime('%m/%Y')
-            logger2.info("Dates processed successfully")
+            #logger2.info("Dates processed successfully")
         except Exception as e:
             logger2.error(f"Error processing dates: {str(e)}")
             logger2.warning("There was an issue with the date format in the orders file. Please ensure the 'createdAt' column is in a valid date format.")
@@ -206,7 +206,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
         try:
             orders_df['deliveryStatus'] = orders_df['deliveryStatus'].str.strip().str.upper().fillna('UNKNOWN')
             orders_df['paymentStatus'] = orders_df['paymentStatus'].str.strip().str.upper().fillna('UNKNOWN')
-            logger2.info("Statuses standardized successfully")
+            #logger2.info("Statuses standardized successfully")
         except Exception as e:
             logger2.error(f"Error standardizing statuses: {str(e)}")
             return pd.DataFrame()
@@ -222,7 +222,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
             if orders_df.empty:
                 logger2.warning("No valid orders found after filtering. All orders are either canceled or archived. Please try a different file.")
                 return pd.DataFrame()
-            logger2.info(f"Filtered orders, remaining: {len(orders_df)}")
+            #logger2.info(f"Filtered orders, remaining: {len(orders_df)}")
         except Exception as e:
             logger2.error(f"Error filtering orders: {str(e)}")
             return pd.DataFrame()
@@ -235,7 +235,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
                 .fillna(0)
             )
 
-            logger2.info("Financial columns cleaned successfully")
+            #logger2.info("Financial columns cleaned successfully")
         except Exception as e:
             logger2.error(f"Error cleaning financial columns: {str(e)}")
             return pd.DataFrame()
@@ -261,7 +261,7 @@ def data_clean_products(products_df: pd.DataFrame):
             products_df['sku'] = products_df['sku'].fillna('MISSING_SKU')
             products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
             products_df['paidQuantity'] = pd.to_numeric(products_df['paidQuantity'], errors='coerce').fillna(0)
-            logger2.info("SKUs and quantities cleaned successfully")
+            #logger2.info("SKUs and quantities cleaned successfully")
         except Exception as e:
             logger2.error(f"Error cleaning SKUs and quantities: {str(e)}")
             return pd.DataFrame()
@@ -269,7 +269,7 @@ def data_clean_products(products_df: pd.DataFrame):
         try:
             price_cols = ['price', 'itemDiscountAmount']
             products_df[price_cols] = products_df[price_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-            logger2.info("Prices cleaned successfully")
+            #logger2.info("Prices cleaned successfully")
         except Exception as e:
             logger2.error(f"Error cleaning prices: {str(e)}")
             return pd.DataFrame()
@@ -284,7 +284,7 @@ async def save_df(df, path):
     """Asynchronously saves a DataFrame to a CSV file with error handling."""
     try:
         await asyncio.to_thread(df.to_csv, path, index=False)
-        logger2.info(f"Saved DataFrame to {path}")
+        #logger2.info(f"Saved DataFrame to {path}")
     except Exception as e:
         logger2.error(f"Error saving {path}: {e}")
 
@@ -304,7 +304,7 @@ async def create_group_user_data(orders_df_paths, products_df_paths, folder_to_s
         pair_empty_files = []  # Track empty files for this specific pair
         
         try:
-            logger2.info(f"Processing pair {index}: {orders_path} and {products_path}")
+            #logger2.info(f"Processing pair {index}: {orders_path} and {products_path}")
             
             # Preprocess orders and products concurrently
             (orders_df, orders_path), (products_df, products_path) = await asyncio.gather(
@@ -340,7 +340,7 @@ async def create_group_user_data(orders_df_paths, products_df_paths, folder_to_s
                 save_df(_products_df, products_save_path)
             )
             
-            logger2.info(f"Completed processing pair {index}")
+            #logger2.info(f"Completed processing pair {index}")
             return pair_empty_files
         except Exception as e:
             logger2.error(f"Error processing pair {index}: {e}")
@@ -430,22 +430,25 @@ async def read_csv_customer(path):
 # Async data loading
 async def read_csv_async(file_path):
     try:
-        df = pd.read_csv(file_path)
+        df = await asyncio.to_thread(pd.read_csv, file_path)
         return df
     except Exception as e:
-        df = pd.DataFrame()
-        return df
+        return pd.DataFrame()
     
 async def load_data(directory):
     try:
-        orders_files = glob.glob(f"{directory}/work_data_folder/work_ord_*.csv")
-        products_files = glob.glob(f"{directory}/work_data_folder/work_prod_*.csv")
+        orders_files = await asyncio.to_thread(glob.glob, f"{directory}/work_data_folder/work_ord_*.csv")
+        products_files = await asyncio.to_thread(glob.glob, f"{directory}/work_data_folder/work_prod_*.csv")
 
-        orders_dfs = await asyncio.gather(*[read_csv_async(f) for f in orders_files])
-        products_dfs = await asyncio.gather(*[read_csv_async(f) for f in products_files])
+        orders_dfs = [df for df in await asyncio.gather(*[read_csv_async(f) for f in orders_files]) if not df.empty]
+        products_dfs = [df for df in await asyncio.gather(*[read_csv_async(f) for f in products_files]) if not df.empty]
+
+        if not orders_dfs or not products_dfs:
+            return pd.DataFrame(), pd.DataFrame()
 
         orders = pd.concat(orders_dfs, ignore_index=True)
         products = pd.concat(products_dfs, ignore_index=True)
+
         return orders, products
     except Exception as e:
         logger2.error("Load data problem: ", e)

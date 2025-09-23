@@ -22,11 +22,11 @@ logger2 = get_logger("logger2", "project_log_many.log", False)
 
 
 
-def process_data():
+def process_data(uuid):
     """Process customer, order, and product data, saving the result to 'final_data.csv' with left joins to retain all product rows."""
     
     # Load datasets with selected columns
-    customers = pd.read_csv("data/uuid/raw_data/concatenated_customers.csv", usecols=[
+    customers = pd.read_csv(f"data/{uuid}/raw_data/concatenated_customers.csv", usecols=[
         'customer_name', 'status',
         'billingAddress_formatted_address', 'billingAddress_street', 'billingAddress_appartement',
         'billingAddress_city', 'billingAddress_state', 'billingAddress_zip',
@@ -37,7 +37,7 @@ def process_data():
         'territory_name', 'tags_tag_tag', 'totalOrdersVolumes'
     ])
 
-    orders = pd.read_csv("data/uuid/oorders.csv", usecols=[
+    orders = pd.read_csv(f"data/{uuid}/oorders.csv", usecols=[
         'id', 'createdAt', 'orderStatus', 'paymentStatus',
         'deliveryStatus', 'totalAmount', 'customer_name'
     ]).rename(columns={
@@ -46,7 +46,7 @@ def process_data():
         'totalAmount': 'order_total'
     })
 
-    products = pd.read_csv("data/uuid/pproducts.csv", usecols=[
+    products = pd.read_csv(f"data/{uuid}/pproducts.csv", usecols=[
         'orderId', 'name', 'sku', 'manufacturerName',
         'productCategoryName', 'quantity', 'price',
         'itemDiscountAmount', 'amount', 'customer_name', 'totalAmount',
@@ -117,7 +117,7 @@ def process_data():
     final_df.drop(columns=['orderId'], inplace=True, errors='ignore')  # Drop redundant column if exists
 
     # Save to CSV
-    final_df.to_csv('data/uuid/final_data.csv', index=False)
+    final_df.to_csv(f'data/{uuid}/final_data.csv', index=False)
 
     # Optional: Print total revenue and order count for validation
     total_revenue = final_df['line_item_total'].sum()
@@ -126,13 +126,13 @@ def process_data():
     #print(f"Order Count (unique order_id): {order_count}")
 
 
-def generate_report():
+def generate_report(uuid):
     """Generate a sales analysis report using pandas with correct revenue calculation"""
     def format_currency(amount):
         return f"${amount:,.2f}"
 
     # Read and preprocess data
-    df = pd.read_csv('data/uuid/final_data.csv')
+    df = pd.read_csv(f'data/{uuid}/final_data.csv')
     
     # Clean data - focus on the columns we need
     df['Full_cost_withDisc'] = pd.to_numeric(df['Full_cost_withDisc'], errors='coerce').fillna(0)
@@ -321,37 +321,38 @@ def generate_report():
         report_lines.append(f"• Top recommendation: {unique_recs[0]['customer']} in {unique_recs[0]['state']} for {unique_recs[0]['product']}")
 
     # Print final report
-    with open("data/uuid/products_state.txt", "w", encoding="utf-8") as f:
+    with open(f"data/{uuid}/products_state.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(report_lines))
     #print("\n".join(report_lines))
 
 # Asynchronous wrapper functions
-async def async_process_data():
+async def async_process_data(uuid):
     """Asynchronously process data by running process_data in a separate thread."""
-    await asyncio.to_thread(process_data)
+    await asyncio.to_thread(process_data, uuid)
 
-async def async_generate_report():
+async def async_generate_report(uuid):
     """Asynchronously generate report by running generate_report in a separate thread."""
-    report = await asyncio.to_thread(generate_report)
+    report = await asyncio.to_thread(generate_report, uuid)
     return report
 
 # Main asynchronous function to orchestrate execution
-async def make_product_per_state_analysis():
+async def make_product_per_state_analysis(uuid):
     """Execute data processing followed by report generation."""
-    await async_process_data()
-    await async_generate_report()
-    ans = await Ask_AI_group_orders('data/uuid/final_data.csv', 'orders_many.csv', 'uuid')
+    await async_process_data(uuid)
+    await async_generate_report(uuid)
+    ans = await analyze_final_data(f'data/{uuid}/final_data.csv',uuid)
     raw = str(ans.get('output') or "")
     return raw
 
 
-async def Ask_AI_group_orders(final_data, file_path_orders, customer_id):
+async def analyze_final_data(final_data, uuid):
     
     try:
         #system prompt
         prompt = 'Analyze my state - product sales data and make report  from those analysis'
         result = _process_ai_request(prompt=prompt,
-            file_path_final_data=final_data)
+            file_path_final_data=final_data,
+            uuid=uuid)
         #logger2.info(f"User prompt: {prompt}")
         return result
     
@@ -359,7 +360,7 @@ async def Ask_AI_group_orders(final_data, file_path_orders, customer_id):
         logger2.error(f"Analysis AI report for customers group failed: {e}")
         raise
 
-def _process_ai_request(prompt, file_path_final_data):
+def _process_ai_request(prompt, file_path_final_data, uuid):
     try:
         encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
         for encoding in encodings:
@@ -383,7 +384,7 @@ def _process_ai_request(prompt, file_path_final_data):
         )
         
         try:
-            full_report_path = os.path.join('data','uuid', 'products_state.txt')
+            full_report_path = os.path.join('data',uuid, 'products_state.txt')
             with open(full_report_path, "r") as file:
                 full_report = file.read()
         except Exception as e:
@@ -476,23 +477,25 @@ def _process_ai_request(prompt, file_path_final_data):
         with get_openai_callback() as cb:
             agent.agent.stream_runnable = False
             start_time = time.time()
+            logger2.info("here 3 ")
             result = agent.invoke({"input": formatted_prompt})
+            logger2.info("here 4 ")
             execution_time = time.time() - start_time
         
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
             cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
         
             logger2.info("Agent for func:  orders_state")
-            logger2.info(f"Input Cost:  ${in_cost:.6f}")
-            logger2.info(f"Output Cost: ${out_cost:.6f}")
-            logger2.info(f"Total Cost:  ${cost:.6f}")
+            logger2.info(f"Input Cost orders_state:  ${in_cost:.6f}")
+            logger2.info(f"Output Cost orders_state: ${out_cost:.6f}")
+            logger2.info(f"Total Cost orders_state:  ${cost:.6f}")
         
             result['metadata'] = {
-                'total_tokens': in_toks+out_toks,
-                'prompt_tokens': in_toks,
-                'completion_tokens': out_toks,
-                'execution_time': f"{execution_time:.2f} seconds",
-                'model': llm.model_name,
+                'total_tokens orders_state': in_toks+out_toks,
+                'prompt_tokens orders_state': in_toks,
+                'completion_tokens orders_state': out_toks,
+                'execution_time orders_state': f"{execution_time:.2f} seconds",
+                'model orders_state': llm.model_name,
             }
 
         

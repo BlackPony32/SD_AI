@@ -6,7 +6,8 @@ import asyncio
 import aiofiles
 from pathlib import Path
 from pprint import pprint
-
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain_openai import AsyncOpenAIEmbeddings, ChatOpenAI
 
 from AI.group_customer_analyze.preprocess_data_group_c import load_data, concat_customer_csv
 from AI.group_customer_analyze.statistics_group_c import format_status, usd, top_new_contact, top_reorder_contact, peak_visit_time, \
@@ -41,14 +42,14 @@ def format_month(month: str) -> str:
             return f"{parts[0]}/{parts[1][-2:]}"
         return month
 
-def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: pd.DataFrame) -> str:
+def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: pd.DataFrame, uuid) -> str:
     """Function prepare all the statistics for ai 
 
     Args:
         orders (pd.DataFrame): orders dataframe
         products (pd.DataFrame): products dataframe
         customer_df (pd.DataFrame): some customer data (customer name)
-
+        uuid : customer group uuid
     Returns:
         Return 3 type of reports. \n
         str: **full_report** -> full main report without sections an for all customers \n
@@ -59,8 +60,8 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     #orders.to_csv('orders_many.csv', index=False)
     #products.to_csv('products_many.csv', index=False)
     products['product_variant'] = products['name'] + ' - ' + products['sku']
-    orders.to_csv('data/uuid/oorders.csv', index=False)
-    products.to_csv('data/uuid/pproducts.csv', index=False)
+    orders.to_csv(f'data/{uuid}/oorders.csv', index=False)
+    products.to_csv(f'data/{uuid}/pproducts.csv', index=False)
     
     full_report = []
     sections_main = {}
@@ -679,7 +680,7 @@ async def combine_dicts_async(A, B):
     result_string = " ".join(parts)
     return new_dict, result_string
 
-async def generate_analytics_report(directory):
+async def generate_analytics_report(directory, uuid):
     import time
     start = time.perf_counter()
 
@@ -690,22 +691,23 @@ async def generate_analytics_report(directory):
     print("Step 3.1 - load data:", time.perf_counter() - start)
     
     try:
-        concat_customer_path = await concat_customer_csv("data/uuid/raw_data")
+        concat_customer_path = await concat_customer_csv(f"data/{uuid}/raw_data")
         customer_df = pd.read_csv(concat_customer_path)
     except Exception as e:
         logger2.error("Can not create customer data df:", e)
         
-    if len(orders.columns) == 0 or len(products.columns) == 0:
+    if orders.empty or products.empty:
+        logger2.info("create_report_group_c data is empty so report is none")
         return '', {}
     
-    answer = generate_report(orders, products, customer_df)
+    answer = generate_report(orders, products, customer_df, uuid)
     print("Step 3.2 - concat data and generate report:", time.perf_counter() - start)
     full_report = answer['full_report']
     overall_report = answer['customers_Overall_report']
     sections = answer['sections_main']
     
     try:
-        report_activities_dir = os.path.join("data", "uuid")
+        report_activities_dir = os.path.join("data", uuid)
         
         # save statistics report to md file for ai analyze
         path_for_overall_report = os.path.join(report_activities_dir, "overall_report.txt")
@@ -720,17 +722,21 @@ async def generate_analytics_report(directory):
         logger2.error(f"Error saving group customer report result to file: {e}")
     
     # Run independent async tasks concurrently
-    ai_task = asyncio.create_task(
-        Ask_AI_group_orders('data/uuid/pproducts.csv', 'data/uuid/oorders.csv', 'uuid')
-    )
-    state_analysis_task = asyncio.create_task(
-        make_product_per_state_analysis()
-    )
+    try:
+        ai_task = asyncio.create_task(
+            analyze_orders_and_products(f'data/{uuid}/pproducts.csv', f'data/{uuid}/oorders.csv', uuid)
+        )
+        state_analysis_task = asyncio.create_task(
+            make_product_per_state_analysis(uuid)
+        )
+
+        # Wait for both tasks to complete
+        ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
     
-    # Wait for both tasks to complete
-    ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
-    
-    print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
+        print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
+    except Exception as e:
+        logger2.error("Error in creating report state or statistic report: ", e)
+        return '', {}
     
     raw = str(ans.get('output') or "")              # answer of model for full report
     sections_answer = parse_analysis_response(raw)  # func that parse answer to section
@@ -748,50 +754,55 @@ async def generate_analytics_report(directory):
     return full_report, sectioned_report
     
 
-def _create_advice_tool():
-     # Load predefined recommendations
-     try:
-         with open("Ai/group_customer_analyze/FAQ_SD.txt", "r", encoding="utf-8") as f:
-             advice_text = f.read()
-     except FileNotFoundError:
-         logger2.error("Advice file not found")
-         return None
-
-     # Split text into chunks
-     splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-     chunks = splitter.split_text(advice_text)
-     
-     # Create vector store
-     emb = OpenAIEmbeddings()
-     index = FAISS.from_texts(chunks, emb)
-     
-     # Define advice retrieval tool
-     @tool("AdviceTool")
-     def get_advice(topic: str) -> str:
-         '''Retrieves 2-3 predefined recommendations for a business topic.'''
-         docs = index.similarity_search(topic, k=3)
-         return "\n".join(d.page_content for d in docs)
-         
-     return get_advice
- 
-async def Ask_AI_group_orders(file_path_product, file_path_orders, customer_id):
-    
+async def _create_advice_tool():
+    # Load predefined recommendations asynchronously
     try:
-        #system prompt
-        prompt = 'Make small analysis from my data and give some suggestions - only main info that i needed'
-        result = _process_ai_request(prompt=prompt,
-            customer_id = customer_id,
+        async with aiofiles.open("Ai/group_customer_analyze/FAQ_SD.txt", "r", encoding="utf-8") as f:
+            advice_text = await f.read()
+    except FileNotFoundError:
+        logger2.error("Advice file not found")
+        return None
+    
+    # Split text into chunks
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = splitter.split_text(advice_text)
+    
+    # Create vector store (synchronous, consider precomputing)
+    emb = OpenAIEmbeddings()  # Use async embeddings if available
+    index = FAISS.from_texts(chunks, emb)  # FAISS is sync; precompute if slow
+    
+    # Define advice retrieval tool
+    @tool("AdviceTool")
+    async def get_advice(topic: str) -> str:
+        '''Retrieves 2-3 predefined recommendations for a business topic.'''
+        docs = index.similarity_search(topic, k=3)  # FAISS is sync
+        return "\n".join(d.page_content for d in docs)
+        
+    return get_advice
+ 
+async def analyze_orders_and_products(file_path_product, file_path_orders, customer_id):
+    try:
+        # System prompt
+        prompt = 'Make small analysis from my data and give some suggestions - only main info that I needed'
+        result = await _process_ai_request(
+            prompt=prompt,
+            customer_id=customer_id,
             file_path_product=file_path_product,
-            file_path_orders=file_path_orders)
-        #logger2.info(f"User prompt: {prompt}")
+            file_path_orders=file_path_orders
+        )
         return result
     
     except Exception as e:
         logger2.error(f"Analysis AI report for customers group failed: {e}")
         raise
+    
+    except Exception as e:
+        logger2.error(f"Analysis AI report for customers group failed: {e}")
+        raise
 
-def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
+async def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
     try:
+        # Async file reading for CSVs
         encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
         for encoding in encodings:
             try:
@@ -800,13 +811,15 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
                 break
             except UnicodeDecodeError:
                 logger2.warning(f"Failed decoding attempt with encoding: {encoding}")
-        #df = df1.merge(df2, on="orderId", how="left")
-        #df.to_csv('data.csv',index=False)
-        llm = ChatOpenAI(model='gpt-4o') #model='o3-mini'  gpt-4.1-mini
+        
+        llm = ChatOpenAI(model='gpt-4.1-mini')  # Ensure async support #model='o3-mini'  gpt-4.1-mini
         
         # Create advice tool
-        advice_tool = _create_advice_tool()
-
+        import time
+        start = time.perf_counter()
+        print("Step 3.1.1 - before _create_advice_tool:", time.perf_counter() - start)
+        advice_tool =await _create_advice_tool()
+        print("Step 3.1.2 - after _create_advice_tool:", time.perf_counter() - start)
         # Create agent with extra tool
         agent = create_pandas_dataframe_agent(
             llm,
@@ -821,21 +834,18 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
          
         
         try:
-            #raw calculated statistics for customers (not separated)
-            full_report_path = os.path.join('data', customer_id, 'full_report.md')
-            with open(full_report_path, "r") as file:
-                full_report = file.read()
+            async with aiofiles.open(os.path.join('data', customer_id, 'full_report.md'), mode='r') as file:
+                full_report = await file.read()
         except Exception as e:
             full_report = 'No data given'
-            logger2.warning(f"Can not read additional_info.md due to {e} ")
+            logger2.warning(f"Can not read full_report.md due to {e}")
         
         try:
-            #some base recommendation example
-            with open('AI\group_customer_analyze\promo_rules.txt', "r") as file:
-                recommendations = file.read()
+            async with aiofiles.open('AI/group_customer_analyze/promo_rules.txt', mode='r') as file:
+                recommendations = await file.read()
         except Exception as e:
             recommendations = 'No data given'
-            logger2.warning(f"Can not read additional_info.md due to {e} ")
+            logger2.warning(f"Can not read promo_rules.txt due to {e}")
         
         
         formatted_prompt = f"""
@@ -934,22 +944,24 @@ def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id
         with get_openai_callback() as cb:
             agent.agent.stream_runnable = False
             start_time = time.time()
-            result = agent.invoke({"input": formatted_prompt})
+            logger2.info("here 1 ")
+            result = await agent.ainvoke({"input": formatted_prompt})
+            logger2.info("here 2 ")
             execution_time = time.time() - start_time
         
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
             cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
         
-            logger2.info("Agent for func:  create_report_group")
-            logger2.info(f"Input Cost:  ${in_cost:.6f}")
-            logger2.info(f"Output Cost: ${out_cost:.6f}")
-            logger2.info(f"Total Cost:  ${cost:.6f}")
+            logger2.info("Agent for func: create_report_group")
+            logger2.info(f"Input Cost create_report_group: ${in_cost:.6f}")
+            logger2.info(f"Output Cost create_report_group: ${out_cost:.6f}")
+            logger2.info(f"Total Cost create_report_group: ${cost:.6f}")
         
             result['metadata'] = {
-                'total_tokens': in_toks+out_toks,
-                'prompt_tokens': in_toks,
-                'completion_tokens': out_toks,
-                'execution_time': f"{execution_time:.2f} seconds",
+                'total_tokens create_report_group': in_toks + out_toks,
+                'prompt_tokens create_report_group': in_toks,
+                'completion_tokens create_report_group': out_toks,
+                'execution_time create_report_group': f"{execution_time:.2f} seconds",
                 'model': llm.model_name,
             }
 

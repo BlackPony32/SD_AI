@@ -156,8 +156,7 @@ so slow-moving stock in one location can be fulfilled by nearby nodes with avail
 
 
 Sales Performance Overview advice block list:
-1) Identify Revenue Concentration Using Pareto Logic
-Pareto logic in business is the idea that a small part of the causes creates most of the results — often explained by the 80/20 rule:
+1) Pareto logic in business is the idea that a small part of the causes creates most of the results — often explained by the 80/20 rule:
 
 80% of outcomes come from 20% of inputs.
 Example:

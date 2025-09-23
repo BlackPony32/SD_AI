@@ -30,7 +30,12 @@ from AI.group_customer_analyze.many_customer import save_customer_data, get_expo
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
 from AI.group_customer_analyze.Ask_ai_many_customers import Ask_ai_many_customers
-from AI.utils import get_logger, extract_customer_id
+from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
+    analyze_customer_orders_async
+
+from fastapi import HTTPException, status
+from fastapi.responses import JSONResponse
+
 
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
@@ -42,7 +47,7 @@ from pathlib import Path
 import time
 from typing import Literal
 import shutil
-
+from typing import List
 from concurrent.futures import ProcessPoolExecutor
 load_dotenv()
     
@@ -59,7 +64,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 
 
@@ -162,7 +166,7 @@ def get_exported_data(customer_id, entity):
 # Initialize at app startup
 @app.on_event("startup")
 async def startup_event():
-    app.state.process_executor = ProcessPoolExecutor(max_workers=4)  # Adjust based on CPU cores
+    app.state.process_executor = ProcessPoolExecutor(max_workers=6)  # Adjust based on CPU cores
 
 # Cleanup at shutdown
 @app.on_event("shutdown")
@@ -581,146 +585,206 @@ class ReportRequest(BaseModel):
     customer_ids: list[str]  # List of customer IDs
     entity: AllowedEntity    # Single entity, restricted to AllowedEntity values
 
-sem = asyncio.Semaphore(10)
-async def fetch_data_with_sem(customer_id: str, entity: str):
+sem = asyncio.Semaphore(15)
+
+async def fetch_customer_data(customer_id: str, entities: List[str]):
     """
-    Fetch data with semaphore to limit concurrency.
+    Fetch data for multiple entities with semaphore control
     """
     async with sem:
         try:
-            result = await get_exported_data_many(customer_id, entity)
-            return (customer_id, entity, result)
+            result = await get_exported_data_many(customer_id, entities)
+            return (customer_id, result)
         except Exception as e:
-            logger2.error(f"Error fetching data for customer {customer_id}, entity {entity}: {e}")
-            return (customer_id, entity, None)
+            logger2.error(f"Error fetching data for customer {customer_id}: {e}")
+            return (customer_id, None)
 
 
-@app.post("/generate-reports")
+@app.post("/generate-reports-group")
 async def create_group_reports(request: ReportRequest = Body(...)):
-    import time
+    """Generate group reports for multiple customers with improved asynchrony."""
     start = time.perf_counter()
     customer_ids = request.customer_ids
     uuid = str(uuid4())
-    await clean_directories('uuid')
-
-    folder_path = os.path.join('data', 'uuid', 'work_data_folder')
-    os.makedirs(folder_path, exist_ok=True)
     
-    # Create tasks for all customer-entity pairs
+    # Create directory structure
+    folder_path = os.path.join('data', uuid, 'work_data_folder')
+    await asyncio.to_thread(os.makedirs, folder_path, exist_ok=True)
+    
+    # Fetch data for all customers
     entities = ['orders', 'order_products', 'customer']
-    tasks = [fetch_data_with_sem(customer_id, entity) for customer_id in customer_ids for entity in entities]
+    tasks = [fetch_customer_data(customer_id, entities) for customer_id in customer_ids]
     results = await asyncio.gather(*tasks)
-
-    # Process results into separate dictionaries
-    data_orders = {}
-    data_products = {}
-    data_customer = {}
-    customer_names = {}
-
-    for customer_id, entity, payload in results:
-        if payload:
-            if entity == 'orders':
-                data_orders[customer_id] = payload["file"]
-            elif entity == 'order_products':
-                data_products[customer_id] = payload["file"]
-            elif entity == 'customer':
-                data_customer[customer_id] = payload["file"]
-            customer_names[customer_id] = payload["customer_name"]
-        else:
-            if entity == 'orders':
-                data_orders[customer_id] = None
-            elif entity == 'order_products':
-                data_products[customer_id] = None
-            elif entity == 'customer':
-                data_customer[customer_id] = None
-            customer_names[customer_id] = customer_names.get(customer_id, None)
-
+    print("Step 0 - fetch data:", time.perf_counter() - start)
+    
+    # Process fetched data
+    data_orders, data_products, data_customer, customer_names = await process_fetch_results(results, customer_ids, entities)
+    
     # Save data for all entities
-    save_results_orders = await save_customer_data(customer_ids, 'orders', data_orders, 'uuid', customer_names)
-    save_results_products = await save_customer_data(customer_ids, 'order_products', data_products, 'uuid', customer_names)
-    save_results_customer = await save_customer_data(customer_ids, 'customer', data_customer, 'uuid', customer_names)
-
-    # Check for successful saves across all entities
-    success_count = sum(
-        1 for customer_id in customer_ids
-        if (save_results_orders[customer_id].endswith(".csv") and
-            save_results_products[customer_id].endswith(".csv") and
-            save_results_customer[customer_id].endswith(".csv"))
-    )
-    print("Step 1 - saved customer data:", time.perf_counter() - start)
-    # Identify failed customers
-    #print(customer_names)
-    failed_customer_names = [
-        customer_names.get(customer_id, f"Unknown ({customer_id})")
-        for customer_id in customer_ids
-        if not (save_results_orders[customer_id].endswith(".csv") and
-                save_results_products[customer_id].endswith(".csv") and
-                save_results_customer[customer_id].endswith(".csv"))
+    save_tasks = [
+        save_customer_data(customer_ids, 'orders', data_orders, uuid, customer_names),
+        save_customer_data(customer_ids, 'order_products', data_products, uuid, customer_names),
+        save_customer_data(customer_ids, 'customer', data_customer, uuid, customer_names)
     ]
-    #print(failed_customer_names)
-    if success_count == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="All customers failed processing. Report cannot be generated."
+    save_results = await asyncio.gather(*save_tasks)
+    print("Step 1 - saved customer data:", time.perf_counter() - start)
+    
+    # Validate save results
+    success_count, failed_customer_names = await validate_save_results(save_results, customer_ids, customer_names)
+    
+    logger2.info(f"Saved data for: {uuid}")
+    
+    # Generate file paths
+    ord_path, prod_path, customer_path = await generate_file_paths(customer_ids, uuid)
+    print("Step 2 - generated file paths:", time.perf_counter() - start)
+    
+    try:
+        # Create user data
+        data_created, empty_files = await create_group_user_data(ord_path, prod_path, "test", uuid)
+        if not data_created:
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "detail": [
+                        {
+                            "loc": ["body", "data_creation"],
+                            "msg": "Report cannot be generated due to data validation errors",
+                            "type": "data_validation_error"
+                        }
+                    ]
+                }
+            )
+        
+        # Process empty files
+        customer_names_empty = [
+            customer_names.get(extract_customer_id(file_path), f"Unknown ({extract_customer_id(file_path)})")
+            for file_path in empty_files
+        ] if empty_files else []
+        
+        # Generate analytics reports
+        print("Step 3 - before generate report:", time.perf_counter() - start)
+        full_report, sectioned_report = await generate_analytics_report(f'data/{uuid}', uuid)
+        
+        # Save full report
+        async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
+            await f.write(full_report)
+        print("Step 4 - after generate report:", time.perf_counter() - start)
+        
+        # Create and return response
+        return await create_response(success_count, len(customer_ids), failed_customer_names, customer_names_empty, sectioned_report, full_report, uuid)
+    
+    except Exception as e:
+        logger2.error(f"Report generation failed: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": [
+                    {
+                        "loc": ["server", "report_generation"],
+                        "msg": "Internal server error during report generation",
+                        "type": "internal_server_error"
+                    }
+                ]
+            }
         )
 
-    logger2.info(f"Saved data for: {uuid}")
 
-    # Generate file paths
-    ord_path = [f"data/uuid/raw_data/{customer_id}/orders/orders.csv" for customer_id in customer_ids]
-    prod_path = [f"data/uuid/raw_data/{customer_id}/order_products/order_products.csv" for customer_id in customer_ids]
-    customer_path = [f"data/uuid/raw_data/{customer_id}/customer/customer.csv" for customer_id in customer_ids]
-    print("Step 2 - saved all data:", time.perf_counter() - start)
-    # Generate report
-    try:
-        create_user_data_bool, all_empty_files = await create_group_user_data(ord_path, prod_path, "test", "uuid")
-        if create_user_data_bool:
-            customer_names_empty = [
-                customer_names.get(extract_customer_id(i)) for i in all_empty_files
-            ] if all_empty_files else []
-            print("Step 3 - before generate report:", time.perf_counter() - start)
-            full_report, sectioned_report = await generate_analytics_report('data/uuid')
-            with open("data/uuid/full_report.txt", "w", encoding="utf-8") as f:
-                f.write(full_report)
-            print("Step 4 - after generate report:", time.perf_counter() - start)
-            return {
-                "message": f"Reports generated and saved for {success_count} of {len(customer_ids)} customers",
-                "failed customers": failed_customer_names + list(set(customer_names_empty)),
-                "sectioned_report": sectioned_report,
-                "full_report": full_report,
-                "uuid": uuid
-            }
-        else:
-            return {
-                "message": "Report cannot be generated due to a data error.",
-                "uuid": uuid
-            }
-    except Exception as e:
-        logger2.error(f"Error generating report: {e}")
-        raise HTTPException(status_code=404, detail="Report cannot be generated due to a data error.")
 
 
 class AI_Request(BaseModel):
     uuid: str
     prompt: str
     
+
 @app.post("/Ask_ai_many_customers")
 async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
     user_uuid = request.uuid
     prompt = request.prompt
 
     try:
-        # use AI function to get response
+        # Use AI function to get response
         response = await Ask_ai_many_customers(prompt, user_uuid)
+        
+        # Check if response indicates an invalid UUID
+        if response.get('error') == 'invalid_uuid':
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={
+                    "detail": [
+                        {
+                            "loc": ["body", "uuid"],
+                            "msg": "Invalid UUID provided",
+                            "type": "value_error"
+                        }
+                    ]
+                }
+            )
         
         answer = response.get('output')
         cost = response.get('cost', 0.0)
+        
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "AI_answer": answer,
+                "cost": cost
+            }
+        )
+        
     except Exception as e:
         logger2.error(f"Error executing LLM: {str(e)}")
-        answer = "Cannot answer this question"
-        cost = 0.0
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": [
+                    {
+                        "loc": ["server", "llm_processing"],
+                        "msg": "Internal server error while processing request",
+                        "type": "internal_server_error"
+                    }
+                ]
+            }
+        )
+
+
+#____
+@app.post("/analyze_routes/{user_id}")
+async def analyze_routes(user_id: str):
+    user_data_path = f"data/{user_id}"
+    orders_csv_path = f"{user_data_path}/oorders.csv"
+    customers_csv_path = f"{user_data_path}/raw_data/concatenated_customers.csv"
     
-    return {"AI_answer": answer, "cost": cost}
+    # Check if user data directory exists
+    if not os.path.exists(user_data_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incorrect user ID: {user_id}"
+        )
+            
+    # Check if files exist
+    if not os.path.exists(orders_csv_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Orders file not found."
+        )
+    
+    if not os.path.exists(customers_csv_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Customers file not found."
+        )
+    
+    # Analyze customer orders
+    result = await analyze_customer_orders_async(orders_csv_path, customers_csv_path)
+    
+    # Check if result is empty
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No data available after analysis"
+        )
+    
+    return result
 
 
 if __name__ == '__main__':
