@@ -30,33 +30,33 @@ def get_top_products_for_contact(contact_name, orders_df, products_df, top_n=3):
     return product_counts.index.tolist()
 
 def top_new_contact(ord_df, products_df):
-    #ord_df = pd.read_csv(file_path)
-    #products_df = pd.read_csv(products_file_path)
-    
-    successful_orders = ord_df[(ord_df['orderStatus'] == 'COMPLETED') & 
-                              (ord_df['paymentStatus'] == 'PAID') & 
-                              (ord_df['deliveryStatus'] == 'FULFILLED')]
-    
+    successful_orders = ord_df[
+        (ord_df['orderStatus'] == 'COMPLETED') &
+        (ord_df['paymentStatus'] == 'PAID') &
+        (ord_df['deliveryStatus'] == 'FULFILLED')
+    ]
     if successful_orders.empty:
         return ("No data", [])
-    
-    best_contact = successful_orders['contactDuplicate_name'].value_counts().idxmax()
+
+    contact_counts = successful_orders['contactDuplicate_name'].dropna().value_counts()
+    if contact_counts.empty:
+        return ("No data", [])
+
+    best_contact = contact_counts.idxmax()
     top_products = get_top_products_for_contact(best_contact, ord_df, products_df)
-    
     return (best_contact, top_products)
 
 def top_reorder_contact(ord_df, products_df):
-    #ord_df = pd.read_csv(file_path)
-    #products_df = pd.read_csv(products_file_path)
-    
     repeat_contacts = ord_df.groupby('contactDuplicate_name').filter(lambda x: len(x) > 1)
-    
     if repeat_contacts.empty:
         return ("No data", [])
-    
-    best_contact = repeat_contacts['contactDuplicate_name'].value_counts().idxmax()
+
+    contact_counts = repeat_contacts['contactDuplicate_name'].dropna().value_counts()
+    if contact_counts.empty:
+        return ("No data", [])
+
+    best_contact = contact_counts.idxmax()
     top_products = get_top_products_for_contact(best_contact, ord_df, products_df)
-    
     return (best_contact, top_products)
 
 def format_am_pm(hour):
@@ -71,25 +71,22 @@ def format_am_pm(hour):
         return f"{hour - 12}:00 PM"
 
 def peak_visit_time(df):
-    #df = pd.read_csv(file_path)
-    df['createdAt'] = pd.to_datetime(df['createdAt'])
-    
-    # Calculate best day
+    df = df.copy()
+    df['createdAt'] = pd.to_datetime(df['createdAt'], errors='coerce')
+
     df['weekday'] = df['createdAt'].dt.day_name()
-    day_counts = df['weekday'].value_counts()
+    day_counts = df['weekday'].dropna().value_counts()
     best_day = day_counts.idxmax() if not day_counts.empty else "No data"
-    
-    # Calculate peak time window
+
     df['hour'] = df['createdAt'].dt.hour
-    hour_counts = df['hour'].value_counts()
-    
+    hour_counts = df['hour'].dropna().value_counts()
     if not hour_counts.empty:
         peak_hour = hour_counts.idxmax()
         end_hour = (peak_hour + 1) % 24
         time_window = f"{format_am_pm(peak_hour)} - {format_am_pm(end_hour)}"
     else:
         time_window = "No data"
-    
+
     return (best_day, time_window)
 
 def get_contact_peak_time(contact_name, orders_df):
@@ -311,7 +308,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             if float(value).is_integer():
                 return f"${value:,.0f}"
             return f"${value:,.2f}"
-        
+    
 
         def format_status(status: str) -> str:
             return status.replace('_', ' ')
@@ -323,6 +320,9 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
         
         # Step 4: Calculate metrics
         try:
+            merged_df['sku'] = merged_df['sku'].fillna('unknown').astype(str)
+            merged_df['product'] = merged_df['name'].astype(str) + ' - ' + merged_df['sku']
+
             # Total sales by payment and delivery status
             total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
 
@@ -382,7 +382,13 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             # Monthly Trends
             merged_df['product'] = merged_df.get('name', 'Product') + ' - ' + merged_df['sku']
             product_sales = merged_df.groupby(['month', 'product'])['item_revenue'].sum().reset_index()
-            top_products = product_sales.loc[product_sales.groupby('month')['item_revenue'].idxmax()]
+            if not product_sales.empty:
+                top_products = product_sales.loc[
+                    product_sales.groupby('month')['item_revenue'].idxmax()
+                ]
+            else:
+                top_products = pd.DataFrame(columns=['month', 'product', 'item_revenue'])
+
             monthly_sales = orders.groupby('month').agg(
                 total_sales=('totalAmount', 'sum'),
                 order_count=('id', 'nunique')
@@ -595,7 +601,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "\n</div>"
             )
             add_section("suggestions", [html_suggestions])
-            # Pass this to your response logic
+
             result = sections['suggestions_div'] = "".join(html_suggestions)
             #print(result)
 
