@@ -19,6 +19,7 @@ anyio==4.6.1
 # Frameworks and APIs
 fastapi==0.115.5
 uvicorn==0.32.0
+faiss-cpu
 
 markdown
 gradio==5.19.0

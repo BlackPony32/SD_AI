@@ -209,7 +209,7 @@ def preprocess_orders(orders_df: pd.DataFrame):
 def preprocess_products(products_df: pd.DataFrame):
     """Clean and transform products data, returning processed DataFrame and an optional error message."""
     # Check for required columns
-    required_columns = ['sku', 'quantity', 'paidQuantity', 'price', 'itemDiscountAmount', 'orderId']
+    required_columns = ['sku', 'quantity', 'paidQuantity', 'price', 'itemDiscountAmount','size', 'orderId']
     missing_cols = [col for col in required_columns if col not in products_df.columns]
     if missing_cols:
         return pd.DataFrame(), f"The products file is missing these required columns: {', '.join(missing_cols)}. Please check the file."
@@ -321,8 +321,9 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
         # Step 4: Calculate metrics
         try:
             merged_df['sku'] = merged_df['sku'].fillna('unknown').astype(str)
-            merged_df['product'] = merged_df['name'].astype(str) + ' - ' + merged_df['sku']
-
+            merged_df['size'] = merged_df['size'].fillna('unknown size').astype(str)
+            merged_df['product'] = merged_df['name'].astype(str) + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
+            merged_df.to_csv('deleteee.csv')
             # Total sales by payment and delivery status
             total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
 
@@ -349,7 +350,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
             # Product Analysis
             merged_df['item_revenue'] = (merged_df['price'] - merged_df['itemDiscountAmount']) * merged_df['quantity']
-            product_stats = merged_df.groupby('sku').agg(
+            product_stats = merged_df.groupby('product').agg(
                 total_quantity=('quantity', 'sum'),
                 total_revenue=('item_revenue', 'sum')
             ).sort_values('total_revenue', ascending=False)
@@ -380,7 +381,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ).sort_values('total_purchases', ascending=False)
 
             # Monthly Trends
-            merged_df['product'] = merged_df.get('name', 'Product') + ' - ' + merged_df['sku']
+            #merged_df['product'] = merged_df.get('name', 'Product') + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
             product_sales = merged_df.groupby(['month', 'product'])['item_revenue'].sum().reset_index()
             if not product_sales.empty:
                 top_products = product_sales.loc[
@@ -388,7 +389,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 ]
             else:
                 top_products = pd.DataFrame(columns=['month', 'product', 'item_revenue'])
-
+            print(product_sales)
             monthly_sales = orders.groupby('month').agg(
                 total_sales=('totalAmount', 'sum'),
                 order_count=('id', 'nunique')
@@ -406,8 +407,10 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
         try:
             # Top Products
             top_skus = product_stats.head(3).index
-            product_names = merged_df.groupby('sku')['name'].first() if 'name' in merged_df.columns else pd.Series(index=top_skus, data='Unknown Product')
-            top_products_list = [f"{product_names.get(sku, 'Unknown Product')} - {sku}" for sku in top_skus]
+            product_names = merged_df.groupby('product')['name'].first() if 'product' in merged_df.columns else pd.Series(index=top_skus, data='Unknown Product')
+
+            
+            top_products_list = [f"{sku}" for sku in top_skus]
 
             # Sales Team
             if not salesperson_stats.empty:

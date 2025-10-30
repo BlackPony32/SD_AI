@@ -9,7 +9,7 @@ logger2 = get_logger("logger2", "project_log_many.log", False)
 
 EXPECTED_COLUMNS = {
     "orders": [
-        "id", "salesDuplicate_name", "appCustomer_name", "contactDuplicate_name", "contactDuplicate_phone", "contactDuplicate_email", "contactDuplicate_role", 
+        "salesDuplicate_name", "appCustomer_name", "contactDuplicate_name", "contactDuplicate_phone", "contactDuplicate_email", "contactDuplicate_role", 
         "paymentTermsDuplicate_name", "paymentTermsDuplicate_daysInvoices", "paymentTermsDuplicate_dayOfMonthDue", "paymentTermsDuplicate_dueNextMonthDays", "paymentTermsDuplicate_type", 
         "createdType", "type", "archived", "customerDiscount", "totalOrderDiscountAmount", "totalOrderDiscountType", "manualDeliveryFee", "deliveryFee", "appliedDiscountsType", 
         "emailed", "remindersSent", "createdAt", "updatedAt", "shipEngineUpdatedAt", "cancelReason", "fulfillBy", "fulfillVia", "shippingCarrierDuplicate_name", "canceledAt", "shippedAt", "completedAt", 
@@ -82,7 +82,7 @@ def preprocess_orders(file_path):
     """Loads and cleans order data from a CSV file."""
     try:
         df = pd.read_csv(file_path)
-        #logger2.info(f"Loaded orders CSV from {file_path}")
+        logger2.info(f"Loaded orders CSV from {file_path}")
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
         logger2.error(f"Error loading orders CSV file {file_path}: {e}")
         df = pd.DataFrame(columns=EXPECTED_COLUMNS["orders"])
@@ -137,7 +137,7 @@ def preprocess_products(file_path):
     """Loads and cleans product data from a CSV file."""
     try:
         df = pd.read_csv(file_path)
-        #logger2.info(f"Loaded products CSV from {file_path}")
+        logger2.info(f"Loaded products CSV from {file_path}")
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
         logger2.warning(f"Error loading products CSV file {file_path}: {e}")
         df = pd.DataFrame(columns=EXPECTED_COLUMNS["products"])
@@ -197,7 +197,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
             orders_df['createdAt'] = pd.to_datetime(orders_df['createdAt'], utc=True)
             # Changed from .dt.to_period('M') to .dt.strftime('%m/%Y')
             orders_df['month'] = orders_df['createdAt'].dt.strftime('%m/%Y')
-            #logger2.info("Dates processed successfully")
+            logger2.info("Dates processed successfully")
         except Exception as e:
             logger2.error(f"Error processing dates: {str(e)}")
             logger2.warning("There was an issue with the date format in the orders file. Please ensure the 'createdAt' column is in a valid date format.")
@@ -206,7 +206,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
         try:
             orders_df['deliveryStatus'] = orders_df['deliveryStatus'].str.strip().str.upper().fillna('UNKNOWN')
             orders_df['paymentStatus'] = orders_df['paymentStatus'].str.strip().str.upper().fillna('UNKNOWN')
-            #logger2.info("Statuses standardized successfully")
+            logger2.info("Statuses standardized successfully")
         except Exception as e:
             logger2.error(f"Error standardizing statuses: {str(e)}")
             return pd.DataFrame()
@@ -222,7 +222,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
             if orders_df.empty:
                 logger2.warning("No valid orders found after filtering. All orders are either canceled or archived. Please try a different file.")
                 return pd.DataFrame()
-            #logger2.info(f"Filtered orders, remaining: {len(orders_df)}")
+            logger2.info(f"Filtered orders, remaining: {len(orders_df)}")
         except Exception as e:
             logger2.error(f"Error filtering orders: {str(e)}")
             return pd.DataFrame()
@@ -235,7 +235,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
                 .fillna(0)
             )
 
-            #logger2.info("Financial columns cleaned successfully")
+            logger2.info("Financial columns cleaned successfully")
         except Exception as e:
             logger2.error(f"Error cleaning financial columns: {str(e)}")
             return pd.DataFrame()
@@ -261,7 +261,7 @@ def data_clean_products(products_df: pd.DataFrame):
             products_df['sku'] = products_df['sku'].fillna('MISSING_SKU')
             products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
             products_df['paidQuantity'] = pd.to_numeric(products_df['paidQuantity'], errors='coerce').fillna(0)
-            #logger2.info("SKUs and quantities cleaned successfully")
+            logger2.info("SKUs and quantities cleaned successfully")
         except Exception as e:
             logger2.error(f"Error cleaning SKUs and quantities: {str(e)}")
             return pd.DataFrame()
@@ -269,7 +269,7 @@ def data_clean_products(products_df: pd.DataFrame):
         try:
             price_cols = ['price', 'itemDiscountAmount']
             products_df[price_cols] = products_df[price_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-            #logger2.info("Prices cleaned successfully")
+            logger2.info("Prices cleaned successfully")
         except Exception as e:
             logger2.error(f"Error cleaning prices: {str(e)}")
             return pd.DataFrame()
@@ -453,3 +453,129 @@ async def load_data(directory):
     except Exception as e:
         logger2.error("Load data problem: ", e)
         return pd.DataFrame(), pd.DataFrame()
+    
+#Test zone
+def one_file_preprocess_orders(file_path):
+    """Loads and cleans order data from a CSV file."""
+    try:
+        df = pd.read_csv(file_path)
+        logger2.info(f"Loaded orders CSV from {file_path}")
+    except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
+        logger2.error(f"Error loading orders CSV file {file_path}: {e}")
+        df = pd.DataFrame(columns=EXPECTED_COLUMNS["orders"])
+    else:
+        # Add missing columns
+        for col in EXPECTED_COLUMNS["orders"]:
+            if col not in df.columns:
+                df[col] = pd.NA
+                logger2.warning(f"Added missing column '{col}' to orders DataFrame")
+    if df.empty:
+        logger2.warning(f"Orders DataFrame is empty from file: {file_path}")
+        return df, file_path  # Return tuple with file_path
+    
+    # Remove duplicate orders based on 'id'
+    #df.drop_duplicates(subset=["id"], inplace=True)
+    
+    # Convert datetime columns to UTC
+    datetime_cols = [
+        "createdAt", "updatedAt", "shipEngineUpdatedAt", "canceledAt", "shippedAt", 
+        "completedAt", "paidAt", "partiallyPaidAt", "unpaidAt", "fulfilledAt", 
+        "paymentDue", "partiallyFulfilledAt", "unfulfilledAt"
+    ]
+    df = convert_to_datetime(df, datetime_cols)
+    
+    try:
+        # Extract 'month' from 'createdAt'; works with pd.NA, resulting in NaT
+        df['month'] = df['createdAt'].dt.tz_localize(None).dt.to_period('M')
+
+        # Convert financial columns to numeric, filling NaN with 0
+        for col in ["totalAmount", "totalRawAmount"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+        # Round financial columns to 2 decimal places, only if present
+        columns_to_round = ['totalAmount', 'totalDiscountValue', 'deliveryFee']
+        df = df.round({col: 2 for col in columns_to_round if col in df.columns})
+    except Exception as e:
+        logger2.error("Error in preproc orders financial columns: ", e)    
+    
+    # Drop unnecessary columns, ignoring errors if columns are missing
+    columns_to_drop = [
+        'appCustomer_name', 'shippingCarrierDuplicate_name', 'fulfillBy', 'canceledAt', 
+        'fulfillVia', 'emailed', 'cancelReason', 'note_text', 'partiallyPaidAt', 
+        'quickbooksOrderId', 'remindersSent', 'paymentTermsDuplicate_dayOfMonthDue', 
+        'contactDuplicate_phone', 'contactDuplicate_email', 'paymentTermsDuplicate_daysInvoices'
+    ]
+    df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
+    
+    return df, file_path
+
+def one_file_preprocess_products(file_path):
+    """Loads and cleans product data from a CSV file."""
+    try:
+        df = pd.read_csv(file_path)
+        logger2.info(f"Loaded products CSV from {file_path}")
+    except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
+        logger2.warning(f"Error loading products CSV file {file_path}: {e}")
+        df = pd.DataFrame(columns=EXPECTED_COLUMNS["products"])
+    else:
+        # Add missing columns
+        for col in EXPECTED_COLUMNS["products"]:
+            if col not in df.columns:
+                df[col] = pd.NA
+                logger2.warning(f"Added missing column '{col}' to products DataFrame")
+    if df.empty:
+        logger2.warning(f"Products DataFrame is empty from file: {file_path}")
+        return df, file_path  # Return tuple with file_path
+    
+    # Remove duplicates based on 'id' and 'orderId'
+    #df.drop_duplicates(subset=["id", "orderId"], inplace=True)
+    
+    # Convert 'createdAt' to datetime with UTC
+    df = convert_to_datetime(df, ["createdAt"])
+    
+    # Convert numeric columns, filling NaN with 0
+    for col in ["price", "itemDiscountAmount", "totalAmount", "quantity", "paidQuantity"]:
+        if col in df.columns:
+            # Convert to float first (don't convert to int yet)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # Round FINANCIAL columns to 2 decimal places
+    monetary_cols = ['price', 'itemDiscountAmount', 'totalAmount']
+    present_monetary_cols = [col for col in monetary_cols if col in df.columns]
+    if present_monetary_cols:
+        df = df.round({col: 2 for col in present_monetary_cols})
+    
+    # Convert quantities to integers AFTER rounding
+    for col in ["quantity", "paidQuantity"]:
+        if col in df.columns:
+            df[col] = df[col].astype(int)
+    
+    # Drop unnecessary columns, ignoring errors if columns are missing
+    columns_to_drop = ['description', 'barcode', 'color', 'size']
+    df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
+    
+    return df, file_path
+
+
+
+async def prepared_big_data(orders_path: str, products_path: str) -> tuple:
+    """Make full data preprocessing asynchronously"""
+    # Run CPU-intensive preprocessing in thread pool
+    loop = asyncio.get_event_loop()
+    
+    preprocessed_orders, _o = await loop.run_in_executor(
+        None, one_file_preprocess_orders, orders_path
+    )
+    preprocessed_products, _p = await loop.run_in_executor(
+        None, one_file_preprocess_products, products_path
+    )
+
+    full_cleaned_orders = await loop.run_in_executor(
+        None, data_clean_orders, preprocessed_orders
+    )
+    full_cleaned_products = await loop.run_in_executor(
+        None, data_clean_products, preprocessed_products
+    )
+
+    return full_cleaned_orders, full_cleaned_products

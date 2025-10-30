@@ -25,9 +25,9 @@ logger2 = get_logger("logger2", "project_log_many.log", False)
 def process_data(uuid):
     """Process customer, order, and product data, saving the result to 'final_data.csv' with left joins to retain all product rows."""
     
-    # Load datasets with selected columns
-    customers = pd.read_csv(f"data/{uuid}/raw_data/concatenated_customers.csv", usecols=[
-        'customer_name', 'status',
+    # Load datasets with selected columns "data/{uuid}/raw_data/concatenated_customers.csv"
+    customers = pd.read_csv(f"data/{uuid}/work_data_folder/one_file_customers.csv", usecols=[
+        'name', 'status',
         'billingAddress_formatted_address', 'billingAddress_street', 'billingAddress_appartement',
         'billingAddress_city', 'billingAddress_state', 'billingAddress_zip',
         'billingAddress_lat', 'billingAddress_lng',
@@ -35,7 +35,9 @@ def process_data(uuid):
         'shippingAddress_city', 'shippingAddress_state', 'shippingAddress_zip',
         'shippingAddress_lat', 'shippingAddress_lng',
         'territory_name', 'tags_tag_tag', 'totalOrdersVolumes'
-    ])
+    ]).rename(columns={
+        'name': 'customer_name'
+    })
 
     orders = pd.read_csv(f"data/{uuid}/oorders.csv", usecols=[
         'id', 'createdAt', 'orderStatus', 'paymentStatus',
@@ -49,7 +51,7 @@ def process_data(uuid):
     products = pd.read_csv(f"data/{uuid}/pproducts.csv", usecols=[
         'orderId', 'name', 'sku', 'manufacturerName',
         'productCategoryName', 'quantity', 'price',
-        'itemDiscountAmount', 'amount', 'customer_name', 'totalAmount',
+        'itemDiscountAmount', 'amount', 'totalAmount',
         'product_variant'
     ]).rename(columns={
         'name': 'product_name',
@@ -60,7 +62,6 @@ def process_data(uuid):
     # Clean merge keys by stripping whitespace
     products['orderId'] = products['orderId'].str.strip()
     orders['order_id'] = orders['order_id'].str.strip()
-    products['customer_name'] = products['customer_name'].str.strip()
     orders['customer_name'] = orders['customer_name'].str.strip()
     customers['customer_name'] = customers['customer_name'].str.strip()
 
@@ -77,29 +78,22 @@ def process_data(uuid):
     #print(f"Orders rows: {len(orders)}")
     #print(f"Customers rows: {len(customers)}")
 
-    # Diagnostic: Check for unmatched orderIds
-    product_order_ids = set(products['orderId'])
-    order_ids = set(orders['order_id'])
-    missing_order_ids = product_order_ids - order_ids
-    #if missing_order_ids:
-    #    print(f"Product orderIds not in orders: {len(missing_order_ids)}", missing_order_ids)
-
     # First merge: Left join to retain all products
     merged = pd.merge(
         products,
         orders,
-        left_on=['orderId', 'customer_name'],
-        right_on=['order_id', 'customer_name'],
+        left_on=['orderId'],
+        right_on=['order_id'],
         how='left'  # Retain all products, even without matching orders
     )
     #print(f"Rows after products-orders merge: {len(merged)}")
 
     # Diagnostic: Check for unmatched customer_name in merged dataframe
-    merged_customers = set(merged['customer_name'])
-    customer_names = set(customers['customer_name'])
-    missing_customers = merged_customers - customer_names
-    if missing_customers:
-        print(f"Customers not in customers df: {len(missing_customers)}", missing_customers)
+    #merged_customers = set(merged['customer_name'])
+    #customer_names = set(customers['customer_name'])
+    #missing_customers = merged_customers - customer_names
+    #if missing_customers:
+    #    print(f"Customers not in customers df: {len(missing_customers)}", missing_customers)
 
     # Second merge: Left join to retain all rows from merged dataframe
     final_df = pd.merge(

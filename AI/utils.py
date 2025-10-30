@@ -356,3 +356,54 @@ async def analyze_customer_orders_async(orders_csv_path, customers_csv_path):
         return {'error': f'File not found: {str(e)}'}
     except Exception as e:
         return {'error': f'An error occurred: {str(e)}'}
+
+
+# functions list for processing one file many customer data
+import asyncio
+import os
+import aiofiles
+import pandas as pd
+from pathlib import Path
+import asyncio
+import os
+import io
+import time
+
+
+async def save_dataframe_async(df: pd.DataFrame, file_path: str) -> None:
+    """Save dataframe asynchronously"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, df.to_csv, file_path)
+
+
+async def read_dataframe_async(filepath: str) -> pd.DataFrame:
+    """
+    Reads a CSV file asynchronously into a pandas DataFrame using a worker thread.
+    """
+    print(f"[{filepath}] Reading file asynchronously...")
+    
+    # Use aiofiles to read the file content asynchronously
+    async with aiofiles.open(filepath, mode="r", encoding="utf-8") as afp:
+        content = await afp.read()
+    
+    # Pass the blocking pandas.read_csv operation to a worker thread
+    # The io.StringIO object acts like an in-memory file for pandas to read
+    df = await asyncio.to_thread(pd.read_csv, io.StringIO(content))
+    
+    print(f"[{filepath}] DataFrame created in a separate thread.")
+    return df
+
+
+async def write_bytes_to_file_async(file_path: str, data: bytes) -> None:
+    """Write bytes data to file asynchronously"""
+    async with aiofiles.open(file_path, "wb") as f:
+        await f.write(data)
+
+
+async def _process_and_save_file_data(result: dict, file_path: Path) -> None:
+    """Helper function to process file data and save it"""
+    combined_bytes = b"".join(
+        part if isinstance(part, bytes) else part.encode("utf-8")
+        for part in result["files"]["combined"]
+    )
+    await write_bytes_to_file_async(str(file_path), combined_bytes)

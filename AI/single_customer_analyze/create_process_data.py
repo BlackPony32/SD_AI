@@ -162,7 +162,7 @@ def preprocess_products(file_path):
     df = df.round({col: 2 for col in columns_to_round if col in df.columns})
     
     # Drop unnecessary columns, ignoring errors if columns are missing
-    columns_to_drop = ['description', 'barcode', 'color', 'size']
+    columns_to_drop = ['description', 'barcode']
     df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
     
     return df

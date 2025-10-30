@@ -30,6 +30,15 @@ from AI.group_customer_analyze.many_customer import save_customer_data, get_expo
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
 from AI.group_customer_analyze.Ask_ai_many_customers import Ask_ai_many_customers
+
+from AI.group_customer_analyze.many_customer import get_exported_data_one_file
+from AI.utils import (
+    _process_and_save_file_data, read_dataframe_async, save_dataframe_async
+)
+
+from AI.group_customer_analyze.preprocess_data_group_c import (
+    save_df, prepared_big_data
+)
 from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
     analyze_customer_orders_async
 
@@ -600,7 +609,7 @@ async def fetch_customer_data(customer_id: str, entities: List[str]):
             return (customer_id, None)
 
 
-@app.post("/generate-reports-group")
+@app.post("/generate-reports-group-old")
 async def create_group_reports(request: ReportRequest = Body(...)):
     """Generate group reports for multiple customers with improved asynchrony."""
     start = time.perf_counter()
@@ -786,6 +795,269 @@ async def analyze_routes(user_id: str):
     
     return result
 
+
+class AI_Request(BaseModel):
+    uuid: str
+    prompt: str
+    
+
+@app.post("/Ask_ai_many_customers")
+async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
+    user_uuid = request.uuid
+    prompt = request.prompt
+
+    try:
+        # Use AI function to get response
+        response = await Ask_ai_many_customers(prompt, user_uuid)
+        
+        # Check if response indicates an invalid UUID
+        if response.get('error') == 'invalid_uuid':
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={
+                    "detail": [
+                        {
+                            "loc": ["body", "uuid"],
+                            "msg": "Invalid UUID provided",
+                            "type": "value_error"
+                        }
+                    ]
+                }
+            )
+        
+        answer = response.get('output')
+        cost = response.get('cost', 0.0)
+        
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "AI_answer": answer,
+                "cost": cost
+            }
+        )
+        
+    except Exception as e:
+        logger2.error(f"Error executing LLM: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": [
+                    {
+                        "loc": ["server", "llm_processing"],
+                        "msg": "Internal server error while processing request",
+                        "type": "internal_server_error"
+                    }
+                ]
+            }
+        )
+
+
+#____updated version
+def _sync_comparison_logic(df_1: pd.DataFrame, 
+                           df_2: pd.DataFrame, 
+                           customer_id_s):
+    """
+    Internal synchronous function to perform blocking Pandas operations.
+    Returns a dictionary with the results.
+    
+    Note:
+    - df_1 is assumed to be the 'orders' DataFrame.
+    - df_2 is assumed to be the 'customers' DataFrame.
+    """
+    
+    # 1. Check for required columns
+    required_cols_df1 = ['customerId']
+    required_cols_df2 = ['combinedid', 'name']
+    
+    if not all(col in df_1.columns for col in required_cols_df1):
+        return {"error": f"df_1 is missing required columns. Needed: {required_cols_df1}"}
+    if not all(col in df_2.columns for col in required_cols_df2):
+        return {"error": f"df_2 is missing required columns. Needed: {required_cols_df2}"}
+
+    # 2. Get unique IDs from both DataFrames.
+    ids_in_df2 = set(df_2['combinedid'])
+    ids_in_df1 = set(df_1['customerId'])
+    ids_from_list = set(customer_id_s)
+
+    # --- "Empty customers" (names from df_2) ---
+    
+    # Find IDs that are in df_2 (customers) but not in df_1 (orders)
+    missing_in_df1_ids = ids_in_df2 - ids_in_df1
+    
+    empty_customer_names = []
+    if missing_in_df1_ids:
+        # Filter df_2 to get rows with these IDs
+        missing_df = df_2[df_2['combinedid'].isin(missing_in_df1_ids)]
+        # Get unique names
+        empty_customer_names = missing_df['name'].unique().tolist()
+
+    # --- "Invalid IDs" (IDs from the input list) ---
+    
+    # Find IDs from the list that are not in df_2 (customers)
+    missing_in_df2_ids = ids_from_list - ids_in_df2
+    invalid_ids_list = list(missing_in_df2_ids)
+
+    # --- Format the result ---
+    result = {
+        "empty_customers": empty_customer_names,
+        "invalid_ids": invalid_ids_list
+    }
+    
+    return result
+
+async def check_customer_ids(df_1: pd.DataFrame, 
+                           df_2: pd.DataFrame, 
+                           customer_id_s):
+    """
+    Asynchronous wrapper for checking IDs in DataFrames.
+    
+    Note: df_1 represents orders, and df_2 represents customers.
+    
+    Executes blocking Pandas logic in a separate thread and
+    returns a dictionary (dict) ready for JSON serialization.
+    """
+    # Running the heavy synchronous function in a separate thread
+    result_dict = await asyncio.to_thread(_sync_comparison_logic, df_1, df_2, customer_id_s)
+    
+    return result_dict
+
+@app.post("/generate-reports-group")
+async def create_group_reports_new(request: ReportRequest = Body(...)):
+    """Generate group reports for multiple customers with improved asynchrony."""
+    start_time = time.perf_counter()
+    customer_ids = request.customer_ids
+    uuid = str(uuid4())
+    
+    # Create directory structure
+    user_folder = os.path.join('data', uuid, 'work_data_folder')
+    await asyncio.to_thread(os.makedirs, user_folder, exist_ok=True)
+    
+    # Fetch data for all customers
+    entities = ['orders', 'order_products', 'customer']
+    # File names
+    filename_orders = 'one_file_orders.csv'
+    filename_products = 'one_file_products.csv'
+    filename_customers = 'one_file_customers.csv'
+    
+    file_path_orders = os.path.join(user_folder,  filename_orders)
+    file_path_products = os.path.join(user_folder,  filename_products) 
+    file_path_customers = os.path.join(user_folder,  filename_customers) 
+    
+    print(f"Step 0 - Starting data fetch for id {uuid}: {time.perf_counter() - start_time:.2f}s")
+    
+    # Fetch data concurrently
+    entities_orders = ["orders"]
+    entities_products = ["order_products"] 
+    entities_customers = ["customer"]
+    
+    result_1, result_2, result_3 = await asyncio.gather(
+        get_exported_data_one_file(customer_ids, entities_orders),
+        get_exported_data_one_file(customer_ids, entities_products),
+        get_exported_data_one_file(customer_ids, entities_customers)
+    )
+    
+    print(f"Step 1 - Data fetch completed: {time.perf_counter() - start_time:.2f}s")
+    
+    # Process and save fetched data concurrently
+    await asyncio.gather(
+        _process_and_save_file_data(result_1, file_path_orders),
+        _process_and_save_file_data(result_2, file_path_products),
+        _process_and_save_file_data(result_3, file_path_customers)
+    )
+    
+    # Preprocess data
+    full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+        str(file_path_orders), 
+        str(file_path_products)
+    )
+    
+    print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
+    
+
+    # Save cleaned data concurrently
+    cleaned_orders_path =  os.path.join(user_folder,  'cleaned_real_big_orders.csv') 
+    cleaned_products_path =  os.path.join(user_folder,  'cleaned_real_big_products.csv')
+    
+    await asyncio.gather(
+        save_df(full_cleaned_orders, str(cleaned_orders_path)),
+        save_df(full_cleaned_products, str(cleaned_products_path))
+    )
+    
+    # Read dataframes concurrently
+    orders_df, products_df, customer_df = await asyncio.gather(
+        read_dataframe_async(str(cleaned_orders_path)),
+        read_dataframe_async(str(cleaned_products_path)),
+        read_dataframe_async(str(file_path_customers))
+    )
+    
+    # Clean column names
+    orders_df.columns = orders_df.columns.str.strip().str.replace('\ufeff', '')
+    customer_df.columns = customer_df.columns.str.strip().str.replace('\ufeff', '')
+    
+    print(f"Step 3 - Data cleaning completed: {time.perf_counter() - start_time:.2f}s")
+
+    # Merge data orders
+    merged = orders_df.merge(
+        customer_df[['combinedid', 'displayedName']], 
+        left_on='customerId', 
+        right_on='combinedid', 
+        how='left'
+    ).rename(columns={'displayedName': 'customer_name', 'customerId_x': 'id'})
+    merged = merged.drop('combinedid_y', axis=1).rename(columns={'combinedid_x': 'id'})
+    # Save merged data
+    merged_path = os.path.join(user_folder,  'file_a_updated.csv') #orders
+    await save_df(merged, str(merged_path))
+
+    #products
+    customer_map = merged.set_index('id')['customer_name']
+
+    # Додаємо нову колонку в df_B.
+    # .map() шукає кожне значення з 'order_id' у 'customer_map'
+    # і повертає відповідне 'customer_name'.
+    # Якщо відповідника немає (як для 105), він ставить NaN.
+    products_df['customer_name'] = products_df['orderId'].map(customer_map)
+    # Видалення рядків, де 'customer_name' є NaN (тобто ордера, що були видалені через archived ot canceled status)
+    products_df.dropna(subset=['customer_name'], inplace=True)
+    products_df.drop(columns=['id'], inplace=True)
+    try:
+
+        # Generate analytics reports
+        print("Step 4 - before generate report:", time.perf_counter() - start_time)
+        from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report
+        full_report, sectioned_report = await new_generate_analytics_report(merged, products_df, customer_df, uuid)
+        
+        # Save full report
+        async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
+            await f.write(full_report)
+        print("Step 5 - after generate report:", time.perf_counter() - start_time)
+        
+        incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+        # Create and return response
+        return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "incorrect_ids" : incorrect_ids,
+            "sectioned_report": sectioned_report,
+            "full_report": full_report,
+            "uuid": uuid
+        }
+    )
+        #return await create_response('success_count', len(customer_ids), 'failed_customer_names', 'customer_names_empty', sectioned_report, full_report, uuid)
+    
+    except Exception as e:
+        logger2.error(f"Report generation failed: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": [
+                    {
+                        "loc": ["server", "report_generation"],
+                        "msg": "Internal server error during report generation",
+                        "type": "internal_server_error"
+                    }
+                ]
+            }
+        )
 
 if __name__ == '__main__':
     import uvicorn
