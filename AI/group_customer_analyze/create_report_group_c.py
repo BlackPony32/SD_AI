@@ -626,8 +626,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     
     customers_Overall_report = "\n".join(customers_Overall_report).strip()
     full_report = "\n".join(full_report).strip()
-    
-    
+
     return {
         "full_report": full_report,
         "sections_main": sections_main,
@@ -732,7 +731,6 @@ async def generate_analytics_report(directory, uuid):
 
         # Wait for both tasks to complete
         ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
-    
         print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
     except Exception as e:
         logger2.error("Error in creating report state or statistic report: ", e)
@@ -1019,6 +1017,69 @@ def parse_analysis_response(response: str) -> dict:
         parsed[title] = content
 
     return parsed
+
+
+async def new_generate_analytics_report(orders_df, products_df, customer_df, uuid):
+    import time
+    start = time.perf_counter()
+
+        
+    if orders_df.empty or products_df.empty:
+        logger2.info("create_report_group_c data is empty so report is none")
+        return '', {}
+    
+    answer = generate_report(orders_df, products_df, customer_df, uuid)
+    print("Step 3.2 - concat data and generate report:", time.perf_counter() - start)
+    full_report = answer['full_report']
+    overall_report = answer['customers_Overall_report']
+    sections = answer['sections_main']
+    
+    try:
+        report_activities_dir = os.path.join("data", uuid)
+        
+        # save statistics report to md file for ai analyze
+        path_for_overall_report = os.path.join(report_activities_dir, "overall_report.txt")
+        path_for_full_report = os.path.join(report_activities_dir, "full_report.md")
+        
+        async with aiofiles.open(path_for_overall_report, mode="w", encoding="utf-8") as f:
+            await f.write(overall_report)
+    
+        async with aiofiles.open(path_for_full_report, mode="w", encoding="utf-8") as f:
+            await f.write(full_report)
+    except Exception as e:
+        logger2.error(f"Error saving group customer report result to file: {e}")
+    
+    # Run independent async tasks concurrently
+    try:
+        ai_task = asyncio.create_task(
+            analyze_orders_and_products(f'data/{uuid}/pproducts.csv', f'data/{uuid}/oorders.csv', uuid)
+        )
+        state_analysis_task = asyncio.create_task(
+            make_product_per_state_analysis(uuid)
+        )
+
+        # Wait for both tasks to complete
+        ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
+    
+        print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
+    except Exception as e:
+        logger2.error("Error in creating report state or statistic report: ", e)
+        return '', {}
+    
+    raw = str(ans.get('output') or "")              # answer of model for full report
+    sections_answer = parse_analysis_response(raw)  # func that parse answer to section
+    
+    items = list(sections_answer.items())                                       # tuple of sectioned report
+    items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
+    new_dict = dict(items)                              # dict in format {section : ai_text}
+
+    items2 = list(sections.items())
+    items2.insert(8, ('product_per_state_analysis', ''))
+
+    new_dict2 = dict(items2)                            # dict in format {section : calculated statistics}
+    sectioned_report, full_report = await combine_dicts_async(new_dict, new_dict2)
+    print("Step 3.5 - combine_dicts_async:", time.perf_counter() - start)
+    return full_report, sectioned_report
 
 if __name__ == "__main__":
     #asyncio.run(main())

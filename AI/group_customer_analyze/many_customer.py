@@ -193,7 +193,48 @@ async def save_customer_data(
     return results
 
     
+
+async def get_exported_data_one_file(customer_ids: List[str], entities: List[str]) -> dict:
+    """
+    Fetch data for multiple customers and entities in a single request as one file
+    """
+    SD_API_URL = os.getenv('SD_API_URL')
+    if not SD_API_URL:
+        raise Exception("SD_API_URL environment variable is not set")
     
+    params = {
+        "customer_ids": json.dumps(customer_ids),
+        "entities": json.dumps(entities),
+        "one_file": "true"
+    }
+    headers = {"x-api-key": os.getenv('X_API_KEY')}
+
+    async with httpx.AsyncClient() as client:
+        for attempt in range(3):
+            try:
+                response = await client.get(SD_API_URL, params=params, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    file_url = data.get("fileUrl")
+                    if not file_url:
+                        raise Exception("No fileUrl in response")
+                    
+                    # Download the single file
+                    file_content = await download_file(client, file_url, "combined")
+                    
+                    return {
+                        "files": {"combined": file_content}
+                    }
+                    
+                elif response.status_code == 429:
+                    await asyncio.sleep(1 * (2 ** attempt))  # Reduced retry delay
+                else:
+                    raise Exception(f"HTTP Error {response.status_code}")
+                    
+            except Exception as e:
+                if attempt == 2:
+                    raise Exception(f"Failed after retries: {e}")
+                await asyncio.sleep(5 * (2 ** attempt))    
 
 if __name__ == '__main__':
     import uvicorn
