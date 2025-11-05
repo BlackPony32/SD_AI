@@ -59,7 +59,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     
     #orders.to_csv('orders_many.csv', index=False)
     #products.to_csv('products_many.csv', index=False)
-    products['product_variant'] = products['name'] + ' - ' + products['sku']
+    products['product_variant'] = products['name'].astype(str) + ' - ' + products['sku'].astype(str)
     orders.to_csv(f'data/{uuid}/oorders.csv', index=False)
     products.to_csv(f'data/{uuid}/pproducts.csv', index=False)
     
