@@ -66,7 +66,7 @@ def process_data(uuid):
     customers['customer_name'] = customers['customer_name'].str.strip()
 
     # Create new product identifier
-    products['product_identifier'] = products['product_name'] + ' - ' + products['sku']
+    products['product_identifier'] = products['product_name'].astype(str) + ' - ' + products['sku'].astype(str)
 
     # Create product analysis columns
     products['net_unit_price'] = products['price'] - products['itemDiscountAmount']

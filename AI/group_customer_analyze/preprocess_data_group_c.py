@@ -475,7 +475,7 @@ def one_file_preprocess_orders(file_path):
     
     # Remove duplicate orders based on 'id'
     #df.drop_duplicates(subset=["id"], inplace=True)
-    
+
     # Convert datetime columns to UTC
     datetime_cols = [
         "createdAt", "updatedAt", "shipEngineUpdatedAt", "canceledAt", "shippedAt", 
@@ -515,6 +515,7 @@ def one_file_preprocess_products(file_path):
     try:
         df = pd.read_csv(file_path)
         logger2.info(f"Loaded products CSV from {file_path}")
+        df['sku'] = df['sku'].astype(str)
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
         logger2.warning(f"Error loading products CSV file {file_path}: {e}")
         df = pd.DataFrame(columns=EXPECTED_COLUMNS["products"])
