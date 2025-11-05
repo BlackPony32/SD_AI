@@ -114,7 +114,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
             f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}",
         ]
     
-        add_section("Key Metrics", lines_combined, True)
+        add_section("key_metrics", lines_combined, True)
     
         # Calculate per-customer metrics
         customer_metrics = {}
@@ -195,7 +195,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
         for _, row in dd_combined.iterrows():
             lines_combined.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
   
-        add_section("Discount Distribution", lines_combined, True)
+        add_section("discount_distribution", lines_combined, True)
   
   
         agent_report = {}
@@ -268,7 +268,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
             lines_overall.append(
                 f"| {format_status(row['paymentStatus'])} | {format_status(row['deliveryStatus'])} | {usd(row['totalAmount'])} |"
             )
-        add_section("Overall Total Sales by Payment and Delivery Status", lines_overall, True)
+        add_section("overall_total_sales_by_payment_and_delivery_status", lines_overall, True)
     
         # Add per-customer total sales by status
         for customer_name, customer_orders in orders.groupby('customer_name'):
@@ -301,7 +301,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
             )
   
         add_section("Payment Status Analysis", lines_payment)
-        add_section("Payment Status Analysis", lines_payment, True)
+        add_section("payment_status_analysis", lines_payment, True)
     except Exception as e:
         logger2.warning(f"Error in the calculation of Payment and Delivery Status: {e}")
     
@@ -336,8 +336,8 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
             )
 
         # Add overall sections
-        add_section("Delivery Fees Analysis", lines_delivery_combined, True)
-        add_section("Fulfillment Analysis", lines_fulfillment_combined, True)
+        add_section("delivery_fees_analysis", lines_delivery_combined, True)
+        add_section("fulfillment_analysis", lines_fulfillment_combined, True)
 
         # Calculate per-customer statistics
         customer_delivery_data = {}
@@ -438,7 +438,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
             "### Monthly Sales Trends",
             ""
         ] + lines_monthly_all
-        add_section("Sales Performance Overview", lines_all, True)
+        add_section("sales_performance_overview", lines_all, True)
 
         # 2. Sales Performance Overview - Each Customer
         for customer_name, customer_orders in orders.groupby('customer_name'):
@@ -565,7 +565,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
                 lines.append("  - Evaluate market fit and consider targeted promotions")
 
         # Add overall analysis to both reports
-        add_section("Top-Worst Selling Product Analysis", lines, True)
+        add_section("top_worst_selling_product", lines, True)
 
         # --- Per-Customer Analysis ---
         customer_lines = ["## Per-Customer Product Performance"]
@@ -621,7 +621,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     
     
     # Suggestions - full AI generate
-    add_section("Suggestions", ["## Suggestions"], True)
+    add_section("suggestions_div", ["## Suggestions"], True)
     add_section("Suggestions", ["## Suggestions"])
     
     customers_Overall_report = "\n".join(customers_Overall_report).strip()
@@ -645,16 +645,16 @@ async def combine_dicts_async(A, B):
         - result_string (str): full report with statistics and AI.
     """
     order = [
-        'Key Metrics',
-        'Discount Distribution',
-        'Overall Total Sales by Payment and Delivery Status',
-        'Payment Status Analysis',
-        'Delivery Fees Analysis',
-        'Fulfillment Analysis',
-        'Sales Performance Overview',
-        'Top-Worst Selling Product Analysis',
+        'key_metrics',
+        'discount_distribution',
+        'overall_total_sales_by_payment_and_delivery_status',
+        'payment_status_analysis',
+        'delivery_fees_analysis',
+        'fulfillment_analysis',
+        'sales_performance_overview',
+        'top_worst_selling_product', #top_products
         'product_per_state_analysis',
-        'Suggestions'
+        'suggestions_div'
     ]
     
     new_dict = {}
@@ -670,7 +670,7 @@ async def combine_dicts_async(A, B):
                 content = A[key]
         
         # Special handling for 'Suggestions'
-        if key == 'Suggestions':
+        if key == 'suggestions_div':
             content = f"<div id=\"suggestions-block\">\n\n{content}\n</div>"
         
         new_dict[key] = content
@@ -866,8 +866,13 @@ async def _process_ai_request(prompt, file_path_product, file_path_orders, custo
         - If you are sure that the question has nothing to do with the data, answer - "Your question is not related to the analysis of your data, please ask another question."
 
         Section headings should be in accordance with the data in the report and named accordingly: 
-        ["Discount Distribution", "Overall Total Sales by Payment and Delivery Status", "Payment Status Analysis", "Delivery Fees Analysis", "Fulfillment Analysis",
-        "Sales Performance Overview", "Top-Worst Selling Product Analysis"] + "Suggestions" for your final recommendations
+        ['key_metrics', 'discount_distribution',
+        'overall_total_sales_by_payment_and_delivery_status',
+        'payment_status_analysis',
+        'delivery_fees_analysis',
+        'fulfillment_analysis',
+        'sales_performance_overview',
+        'top_worst_selling_product'] + "suggestions_div" for your final recommendations
         Note do not skip any title - if no info - write 'Not enough info to analyze' to content
         **Critical Instructions for Insights:**
         - For **Insights** in each section, ALWAYS use the `AdviceTool` with the section title as input
@@ -875,11 +880,11 @@ async def _process_ai_request(prompt, file_path_product, file_path_orders, custo
         - Make **Insights** based on the notes you receive in accordance with the data.
 
         Example:
-        ## Discount Distribution
+        ## sales_performance_overview
         [Your analysis...]
 
         **Insights**
-        {{{{ADVICE FROM TOOL FOR "Discount Distribution"}}}}
+        {{{{ADVICE FROM TOOL FOR "Sales Performance Overview"}}}}
         Response format is:
         ---
         ## Section Title
@@ -1068,7 +1073,7 @@ async def new_generate_analytics_report(orders_df, products_df, customer_df, uui
     
     raw = str(ans.get('output') or "")              # answer of model for full report
     sections_answer = parse_analysis_response(raw)  # func that parse answer to section
-    
+    #pprint(sections_answer)
     items = list(sections_answer.items())                                       # tuple of sectioned report
     items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
     new_dict = dict(items)                              # dict in format {section : ai_text}

@@ -389,7 +389,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 ]
             else:
                 top_products = pd.DataFrame(columns=['month', 'product', 'item_revenue'])
-            print(product_sales)
+            #print(product_sales)
             monthly_sales = orders.groupby('month').agg(
                 total_sales=('totalAmount', 'sum'),
                 order_count=('id', 'nunique')
