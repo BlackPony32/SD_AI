@@ -705,56 +705,6 @@ class AI_Request(BaseModel):
     prompt: str
     
 
-@app.post("/Ask_ai_many_customers")
-async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
-    user_uuid = request.uuid
-    prompt = request.prompt
-
-    try:
-        # Use AI function to get response
-        response = await Ask_ai_many_customers(prompt, user_uuid)
-        
-        # Check if response indicates an invalid UUID
-        if response.get('error') == 'invalid_uuid':
-            return JSONResponse(
-                status_code=status.HTTP_404_NOT_FOUND,
-                content={
-                    "detail": [
-                        {
-                            "loc": ["body", "uuid"],
-                            "msg": "Invalid UUID provided",
-                            "type": "value_error"
-                        }
-                    ]
-                }
-            )
-        
-        answer = response.get('output')
-        cost = response.get('cost', 0.0)
-        
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "AI_answer": answer,
-                "cost": cost
-            }
-        )
-        
-    except Exception as e:
-        logger2.error(f"Error executing LLM: {str(e)}")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "detail": [
-                    {
-                        "loc": ["server", "llm_processing"],
-                        "msg": "Internal server error while processing request",
-                        "type": "internal_server_error"
-                    }
-                ]
-            }
-        )
-
 
 #____
 @app.post("/analyze_routes/{user_id}")
@@ -831,7 +781,8 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
-                "AI_answer": answer,
+                "data": answer,
+                "prompt" : prompt,
                 "cost": cost
             }
         )
@@ -1037,8 +988,8 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         status_code=status.HTTP_200_OK,
         content={
             "incorrect_ids" : incorrect_ids,
-            "sectioned_report": sectioned_report,
-            "full_report": full_report,
+            "sections": sectioned_report,
+            "report": full_report,
             "uuid": uuid
         }
     )
