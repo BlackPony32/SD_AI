@@ -671,7 +671,7 @@ async def combine_dicts_async(A, B):
         
         # Special handling for 'Suggestions'
         if key == 'suggestions_div':
-            content = f"<div id=\"suggestions-block\">\n\n{content}\n</div>"
+            content = f"<div id=\"suggestions-block\">\n{content}\n</div>"
         
         new_dict[key] = content
         parts.append(content)
