@@ -386,7 +386,8 @@ def _process_ai_request(prompt, file_path_final_data, uuid):
             logger2.warning(f"Can not read products_state.txt due to {e} ")
         
         try:
-            with open('AI\group_customer_analyze\promo_rules.txt', "r") as file:
+            promo_path = os.path.join('AI','group_customer_analyze', 'Agents_rules', 'promo_rules.txt')
+            with open(promo_path, "r") as file:
                 recommendations = file.read()
         except Exception as e:
             recommendations = 'No data given'
@@ -471,9 +472,9 @@ def _process_ai_request(prompt, file_path_final_data, uuid):
         with get_openai_callback() as cb:
             agent.agent.stream_runnable = False
             start_time = time.time()
-            logger2.info("here 3 ")
+            #logger2.info("here 3 ")
             result = agent.invoke({"input": formatted_prompt})
-            logger2.info("here 4 ")
+            #logger2.info("here 4 ")
             execution_time = time.time() - start_time
         
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens

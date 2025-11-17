@@ -33,6 +33,421 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 
+import pandas as pd
+import asyncio
+import aiofiles # For async file operations
+import os # Make sure os is imported
+
+# --- 
+# Refactored Synchronous Helper Functions
+# (These contain your Pandas logic)
+# ---
+
+def _calculate_key_metrics(orders: pd.DataFrame) -> list:
+    """Calculates overall Key Metrics."""
+    try:
+        total_delivery_fees = orders['deliveryFee'].sum()
+        num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
+        avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
+    
+        total_sales = orders['totalAmount'].sum()
+        total_orders = len(orders)
+        avg_order_value = total_sales / total_orders if total_orders > 0 else 0
+        total_discount_amount = orders['totalDiscountValue'].sum()
+    
+        std_order_value = orders['totalAmount'].std() if total_orders > 1 else 0
+        std_fees_value = orders['deliveryFee'].std() if total_orders > 1 else 0
+    
+        return [
+            "## Key Metrics",
+            f"- **Total Sales:** {usd(total_sales)}",
+            f"- **Total Orders:** {total_orders}",
+            f"- **Average Order Value:** {usd(avg_order_value)}",
+            f"- **Standard Deviation of Order Value:** {usd(std_order_value)}",
+            f"- **Total Discounts Given:** {usd(total_discount_amount)}",
+            f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
+            f"- **Orders with Delivery Fees:** {num_orders_with_delivery} "
+            f"({format_percentage(num_orders_with_delivery/total_orders*100)})",
+            f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
+            f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}",
+        ]
+    except Exception as e:
+        logger2.warning(f"Error in calculation of key metrics: {e}")
+        return ["## Key Metrics", f"Error generating section: {e}"]
+
+def _calculate_discount_distribution(orders: pd.DataFrame) -> list:
+    """Calculates overall Discount Distribution."""
+    try:
+        orders_copy = orders.copy() # Avoid SettingWithCopyWarning
+        orders_copy['discount_category'] = orders_copy['appliedDiscountsType'].fillna('NONE')
+        orders_copy.loc[(orders_copy['discount_category'] == 'NONE') & (orders_copy['totalDiscountValue'] > 0), 'discount_category'] = 'Other Discount'
+ 
+        num_orders_with_discounts = (orders_copy['totalDiscountValue'] > 0).sum()
+        total_orders = len(orders_copy)
+        percentage_orders_with_discounts = (num_orders_with_discounts / total_orders * 100) if total_orders > 0 else 0
+ 
+        discount_distribution = orders_copy.groupby('discount_category').agg(
+            num_orders=('id', 'count'),
+            total_discount=('totalDiscountValue', 'sum')
+        ).reset_index()
+ 
+        dd_combined = discount_distribution.copy()
+        dd_combined['discount_category'] = dd_combined['discount_category'].replace('NONE', 'No Discount')
+ 
+        lines_combined = [
+            "## Overall Discount Distribution",
+            f"- **Orders with Discounts:** {num_orders_with_discounts} ({format_percentage(percentage_orders_with_discounts)})",
+            "",
+            "| Discount Type | Number of Orders | Total Discount |",
+            "|---------------|------------------|----------------|",
+        ]
+        for _, row in dd_combined.iterrows():
+            lines_combined.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
+ 
+        return lines_combined
+    except Exception as e:
+        logger2.warning(f"Can not count discount statistics due to: {e}")
+        return ["## Overall Discount Distribution", f"Error generating section: {e}"]
+
+def _calculate_sales_by_status(orders: pd.DataFrame) -> list:
+    """Calculates overall sales by payment and delivery status."""
+    try:
+        orders_copy = orders.copy()
+        orders_copy['paymentStatus'] = orders_copy['paymentStatus'].replace({"PENDING": "UNPAID"})
+
+        total_sales_by_status_overall = (
+            orders_copy.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount']
+            .sum()
+            .reset_index()
+        )
+
+        lines_overall = [
+            "## Overall Total Sales by Payment and Delivery Status",
+            "| Payment Status | Delivery Status | Total Sales |",
+            "|----------------|-----------------|-------------|",
+        ]
+
+        for _, row in total_sales_by_status_overall.iterrows():
+            lines_overall.append(
+                f"| {format_status(row['paymentStatus'])} | {format_status(row['deliveryStatus'])} | {usd(row['totalAmount'])} |"
+            )
+        return lines_overall
+    except Exception as e:
+        logger2.warning(f"Error in calculation of Sales by Status: {e}")
+        return ["## Overall Total Sales by Payment and Delivery Status", f"Error generating section: {e}"]
+
+def _calculate_payment_status(orders: pd.DataFrame) -> list:
+    """Calculates overall payment status analysis."""
+    try:
+        orders_copy = orders.copy()
+        orders_copy['paymentStatus'] = orders_copy['paymentStatus'].replace({"PENDING": "UNPAID"})
+        
+        existing_payment_statuses = orders_copy['paymentStatus'].unique()
+        
+        payment_status_counts = orders_copy['paymentStatus'].value_counts()
+        total_orders = len(orders_copy)
+        payment_status_percent = (payment_status_counts / total_orders * 100).round(1)
+        
+        lines_payment = ["## Payment Status Analysis"]
+        for status in existing_payment_statuses:
+            if status in payment_status_counts:
+                lines_payment.append(
+                    f"- **{format_status(status)}:** {payment_status_counts[status]} "
+                    f"orders ({format_percentage(payment_status_percent[status])})"
+                )
+ 
+        return lines_payment
+    except Exception as e:
+        logger2.warning(f"Error in calculation of Payment Status: {e}")
+        return ["## Payment Status Analysis", f"Error generating section: {e}"]
+
+def _calculate_delivery_fees(orders: pd.DataFrame) -> list:
+    """Calculates overall delivery fee analysis."""
+    try:
+        total_orders = len(orders)
+        total_delivery_fees = orders['deliveryFee'].sum()
+        num_orders_with_delivery = (orders['deliveryFee'] > 0).sum()
+        avg_delivery_fee = total_delivery_fees / num_orders_with_delivery if num_orders_with_delivery > 0 else 0
+        std_fees_value = orders['deliveryFee'].std() if total_orders > 1 else 0
+
+        return [
+            "## Delivery Fees Analysis",
+            f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
+            f"- **Orders with Delivery Fees:** {num_orders_with_delivery}",
+            f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
+            f"- **Standard Deviation of Delivery Fee:** {usd(std_fees_value)}"
+        ]
+    except Exception as e:
+        logger2.warning(f"Error in calculation of Delivery Fees: {e}")
+        return ["## Delivery Fees Analysis", f"Error generating section: {e}"]
+
+def _calculate_fulfillment(orders: pd.DataFrame) -> list:
+    """Calculates overall fulfillment analysis."""
+    try:
+        orders_copy = orders.copy()
+        total_orders = len(orders_copy)
+        orders_copy['deliveryStatus'] = orders_copy['deliveryStatus'].fillna('Unknown')
+        fulfillment_counts = orders_copy['deliveryStatus'].value_counts()
+        fulfillment_percent = (fulfillment_counts / total_orders * 100).round(1)
+
+        lines_fulfillment_combined = ["## Fulfillment Analysis"]
+        for status in fulfillment_counts.index:
+            lines_fulfillment_combined.append(
+                f"- **{format_status(status)}:** {fulfillment_counts[status]} orders ({format_percentage(fulfillment_percent[status])})"
+            )
+        return lines_fulfillment_combined
+    except Exception as e:
+        logger2.warning(f"Error in calculation of Fulfillment Analysis: {e}")
+        return ["## Fulfillment Analysis", f"Error generating section: {e}"]
+
+def _calculate_sales_performance(orders: pd.DataFrame) -> list:
+    """Calculates overall sales performance overview."""
+    try:
+        total_revenue_all = orders['totalAmount'].sum()
+        avg_order_value_all = orders['totalAmount'].mean() if not orders.empty else 0
+        std_order_value = orders['totalAmount'].std() if len(orders) > 1 else 0
+
+        monthly_sales_all = orders.groupby('month').agg(
+            total_sales=('totalAmount', 'sum'),
+            order_count=('id', 'nunique')
+        ).reset_index()
+
+        monthly_sales_all['month_dt'] = pd.to_datetime(monthly_sales_all['month'], format='%m/%Y')
+        monthly_sales_all = monthly_sales_all.sort_values('month_dt')
+        monthly_sales_all['pct_change'] = monthly_sales_all['total_sales'].pct_change() * 100
+        monthly_sales_all = monthly_sales_all.sort_values('month_dt', ascending=False)
+
+        lines_monthly_all = [
+            "| Month     | Total Sales | Orders | Avg Sales/Order | % Change |",
+            "|-----------|-------------|--------|-----------------|----------|",
+        ]
+        for _, row in monthly_sales_all.iterrows():
+            avg_sales = row['total_sales'] / row['order_count'] if row['order_count'] else 0
+            formatted_month = format_month(row['month'])
+            pct_change = f"{row['pct_change']:.1f}%" if not pd.isna(row['pct_change']) else "-"
+            lines_monthly_all.append(
+                f"| {formatted_month} | {usd(row['total_sales'])} | "
+                f"{row['order_count']} | {usd(avg_sales)} | {pct_change} |"
+            )
+
+        lines_all = [
+            "## Sales Performance Overview - All Customers",
+            f"- **Total Revenue:** {usd(total_revenue_all)}",
+            f"- **Average Order Value:** {usd(avg_order_value_all)}",
+            f"- **Standard Deviation of Order Value:** {usd(std_order_value)}",
+            "",
+            "### Monthly Sales Trends",
+            ""
+        ] + lines_monthly_all
+        return lines_all
+    except Exception as e:
+        logger2.warning(f"Error in calculation of Sales Performance: {e}")
+        return ["## Sales Performance Overview - All Customers", f"Error generating section: {e}"]
+
+def _calculate_top_worst_products(orders: pd.DataFrame, products: pd.DataFrame) -> list:
+    """Calculates overall top/worst selling products."""
+    try:
+        total_revenue = products['totalAmount'].sum()
+        all_customers = orders['customer_name'].unique()
+        
+        customer_revenue = products.groupby('customer_name')['totalAmount'].sum().reset_index()
+        
+        category_map = products.drop_duplicates('product_variant')[['product_variant', 'productCategoryName']]
+        category_map = dict(zip(category_map['product_variant'], category_map['productCategoryName']))
+        
+        product_group = products.groupby('product_variant').agg(
+            units_sold=('quantity', 'sum'),
+            revenue=('totalAmount', 'sum'),
+            customer_list=('customer_name', lambda x: list(x.unique()))
+        ).reset_index()
+        
+        product_group['revenue_percentage'] = (product_group['revenue'] / total_revenue) * 100 if total_revenue > 0 else 0
+        product_group['customer_count'] = product_group['customer_list'].apply(len)
+        
+        sorted_products = product_group.sort_values('revenue', ascending=False)
+        
+        lines = []
+        
+        if len(sorted_products) > 0:
+            # --- Overall Best Performer ---
+            best = sorted_products.iloc[0]
+            best_customers = ", ".join(best['customer_list'])
+            non_buyers = [c for c in all_customers if c not in best['customer_list']]
+            best_category = category_map.get(best['product_variant'], "Unknown")
+            
+            lines.append("## Top Selling Product")
+            lines.append(f"- **Best Performer**: \"{best['product_variant']}\"")
+            lines.append(f"  - **Units Sold**: {best['units_sold']} across all customers")
+            lines.append(f"  - **Revenue Contribution**: {usd(best['revenue'])} ({best['revenue_percentage']:.1f}% of total revenue)")
+            lines.append(f"  - **Customer Reach**: Sold to {best['customer_count']} customers: {best_customers}")
+            
+            similar_products = sorted_products[
+                (sorted_products['product_variant'] != best['product_variant']) &
+                (sorted_products['product_variant'].map(category_map) == best_category)
+            ].head(2)
+            
+            lines.append("- **Opportunity**:")
+            if non_buyers:
+                non_buyers_revenue = customer_revenue[customer_revenue['customer_name'].isin(non_buyers)]
+                top_non_buyers = non_buyers_revenue.sort_values('totalAmount', ascending=False).head(5)
+                top_non_buyers_str = ", ".join(top_non_buyers['customer_name'].tolist())
+                if top_non_buyers_str:
+                    lines.append(f"  - Introduce to top non-buyers by revenue: {top_non_buyers_str}")
+            if not similar_products.empty:
+                similar_list = ", ".join([f"\"{p}\"" for p in similar_products['product_variant']])
+                lines.append(f"  - Cross-sell similar products: {similar_list} ({best_category})")
+            elif not non_buyers:
+                lines.append("  - No obvious opportunities for this product.")
+
+            # --- Overall Worst Performer ---
+            worst = sorted_products.iloc[-1]
+            worst_customers = ", ".join(worst['customer_list']) if worst['customer_list'] else "None"
+            
+            lines.append("")
+            lines.append("## Worst Selling Product")
+            lines.append(f"- **Worst Performer**: \"{worst['product_variant']}\"")
+            lines.append(f"  - **Units Sold**: {worst['units_sold']} across all customers")
+            lines.append(f"  - **Revenue Contribution**: {usd(worst['revenue'])} ({worst['revenue_percentage']:.1f}% of total revenue)")
+            lines.append(f"  - **Customer Reach**: Sold to {worst['customer_count']} customers: {worst_customers}")
+            lines.append("- **Consideration**:")
+            lines.append("  - Evaluate market fit and consider targeted promotions or discontinuation.")
+
+        return lines
+    except Exception as e:
+        logger2.warning(f"Error in calculation of Top-Worst Selling Products: {e}")
+        return ["## Top-Worst Selling Product Analysis", f"Error generating section: {e}"]
+
+async def generate_analytics_report_sectioned(
+    orders: pd.DataFrame, 
+    products: pd.DataFrame, 
+    customer_df: pd.DataFrame, 
+    uuid: str, 
+    report_type: str = "Full Report"
+):
+    """
+    Asynchronously generates analytics reports by running synchronous
+    Pandas calculations in a thread pool.
+    
+    Can generate a "Full Report" (running all sections in parallel)
+    or a single, specific report section.
+    """
+    
+    # --- 1. Synchronous Pre-processing ---
+    # This is fast and can run first.
+    products['product_variant'] = products['name'].astype(str) + ' - ' + products['sku'].astype(str)
+    
+    # --- 2. Asynchronous I/O (Saving CSVs) ---
+    # We can do this in the background while running calcs if we want,
+    # or just get it done first. Let's do it first.
+    try:
+        # Run CSV saving in parallel threads
+        await asyncio.gather(
+            asyncio.to_thread(orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
+            asyncio.to_thread(products.to_csv, f'data/{uuid}/pproducts.csv', index=False)
+        )
+    except Exception as e:
+        logger2.warning(f"Error saving debug CSVs for {uuid}: {e}")
+
+    # --- 3. Handle Single Section Requests ---
+    # These calls run the specific sync function in a thread and return.
+    
+    if report_type == "key_metrics":
+        lines = await asyncio.to_thread(_calculate_key_metrics, orders)
+        return "\n".join(lines)
+
+    if report_type == "discount_distribution":
+        lines = await asyncio.to_thread(_calculate_discount_distribution, orders)
+        return "\n".join(lines)
+
+    if report_type == "overall_total_sales_by_payment_and_delivery_status":
+        lines = await asyncio.to_thread(_calculate_sales_by_status, orders)
+        return "\n".join(lines)
+
+    if report_type == "payment_status_analysis":
+        lines = await asyncio.to_thread(_calculate_payment_status, orders)
+        return "\n".join(lines)
+
+    if report_type == "delivery_fees_analysis ":
+        lines = await asyncio.to_thread(_calculate_delivery_fees, orders)
+        return "\n".join(lines)
+
+    if report_type == "fulfillment_analysis":
+        lines = await asyncio.to_thread(_calculate_fulfillment, orders)
+        return "\n".join(lines)
+
+    if report_type == "sales_performance_overview":
+        lines = await asyncio.to_thread(_calculate_sales_performance, orders)
+        return "\n".join(lines)
+
+    if report_type == "top_worst_selling_product":
+        lines = await asyncio.to_thread(_calculate_top_worst_products, orders, products)
+        return "\n".join(lines)
+
+    # --- 4. Handle Full Report Request ---
+    # This runs ALL synchronous helper functions in parallel threads.
+    
+    if report_type == "Full Report":
+        # We wrap each sync function in asyncio.to_thread
+        tasks = [
+            asyncio.to_thread(_calculate_key_metrics, orders),
+            asyncio.to_thread(_calculate_discount_distribution, orders),
+            asyncio.to_thread(_calculate_sales_by_status, orders),
+            asyncio.to_thread(_calculate_payment_status, orders),
+            asyncio.to_thread(_calculate_delivery_fees, orders),
+            asyncio.to_thread(_calculate_fulfillment, orders),
+            asyncio.to_thread(_calculate_sales_performance, orders),
+            asyncio.to_thread(_calculate_top_worst_products, orders, products)
+        ]
+        
+        # Run all tasks concurrently
+        results = await asyncio.gather(*tasks)
+        
+        # Unpack results (must be in the same order as tasks)
+        (
+            key_metrics_lines,
+            discount_lines,
+            sales_by_status_lines,
+            payment_status_lines,
+            delivery_fees_lines,
+            fulfillment_lines,
+            sales_perf_lines,
+            top_worst_lines
+        ) = results
+
+        # Build the final report objects
+        full_report_list = []
+        sections_main = {}
+
+        # Helper to add sections
+        def add_to_report(name, lines):
+            if lines: # Only add if calculation was successful
+                section_text = "\n".join(lines)
+                sections_main[name] = section_text
+                full_report_list.extend(lines)
+                full_report_list.append("") # Add a newline
+
+        # Add all our parallel results
+        add_to_report("key_metrics", key_metrics_lines)
+        add_to_report("discount_distribution", discount_lines)
+        add_to_report("overall_total_sales_by_payment_and_delivery_status", sales_by_status_lines)
+        add_to_report("payment_status_analysis", payment_status_lines)
+        add_to_report("delivery_fees_analysis", delivery_fees_lines)
+        add_to_report("fulfillment_analysis", fulfillment_lines)
+        add_to_report("sales_performance_overview", sales_perf_lines)
+        add_to_report("top_worst_selling_product", top_worst_lines)
+
+        # Add the final AI-generated suggestions placeholder
+        add_to_report("suggestions_div", ["## Suggestions"])
+        
+        # Return the dict structure your endpoint expects
+        return {
+            "full_report": "\n".join(full_report_list).strip(),
+            "sections": sections_main
+        }
+
+    # Fallback for an unknown report type
+    logger2.warning(f"Unknown report type requested: {report_type}")
+    return {"error": f"Unknown report type: {report_type}"}
 
 ### Analysis Function
 def format_month(month: str) -> str:
@@ -679,6 +1094,7 @@ async def combine_dicts_async(A, B):
     result_string = " ".join(parts)
     return new_dict, result_string
 
+#TODO old and can be deleted?
 async def generate_analytics_report(directory, uuid):
     import time
     start = time.perf_counter()
@@ -755,7 +1171,8 @@ async def generate_analytics_report(directory, uuid):
 async def _create_advice_tool():
     # Load predefined recommendations asynchronously
     try:
-        async with aiofiles.open("Ai/group_customer_analyze/FAQ_SD.txt", "r", encoding="utf-8") as f:
+        promo_path = os.path.join('Ai','group_customer_analyze', 'Agents_rules', 'FAQ_SD.txt')
+        async with aiofiles.open(promo_path, "r", encoding="utf-8") as f:
             advice_text = await f.read()
     except FileNotFoundError:
         logger2.error("Advice file not found")
@@ -810,7 +1227,7 @@ async def _process_ai_request(prompt, file_path_product, file_path_orders, custo
             except UnicodeDecodeError:
                 logger2.warning(f"Failed decoding attempt with encoding: {encoding}")
         
-        llm = ChatOpenAI(model='gpt-4.1-mini')  # Ensure async support #model='o3-mini'  gpt-4.1-mini
+        llm = ChatOpenAI(model='gpt-4.1')  # Ensure async support #model='o3-mini'  gpt-4.1-mini
         
         # Create advice tool
         import time
@@ -823,7 +1240,7 @@ async def _process_ai_request(prompt, file_path_product, file_path_orders, custo
             llm,
             [df1, df2],
             agent_type="openai-tools",
-            verbose=True,
+            verbose=False,
             allow_dangerous_code=True,
             number_of_head_rows=5,
             max_iterations=5,
@@ -947,9 +1364,9 @@ async def _process_ai_request(prompt, file_path_product, file_path_orders, custo
         with get_openai_callback() as cb:
             agent.agent.stream_runnable = False
             start_time = time.time()
-            logger2.info("here 1 ")
+            #logger2.info("here 1 ")
             result = await agent.ainvoke({"input": formatted_prompt})
-            logger2.info("here 2 ")
+            #logger2.info("here 2 ")
             execution_time = time.time() - start_time
         
             in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
@@ -1078,6 +1495,180 @@ async def new_generate_analytics_report(orders_df, products_df, customer_df, uui
     items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
     new_dict = dict(items)                              # dict in format {section : ai_text}
 
+    items2 = list(sections.items())
+    items2.insert(8, ('product_per_state_analysis', ''))
+
+    new_dict2 = dict(items2)                            # dict in format {section : calculated statistics}
+    sectioned_report, full_report = await combine_dicts_async(new_dict, new_dict2)
+    print("Step 3.5 - combine_dicts_async:", time.perf_counter() - start)
+    return full_report, sectioned_report
+
+
+
+from typing import List, AsyncGenerator, Tuple, Any
+from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
+llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
+
+
+@function_tool
+def get_prepared_statistics(user_id:str) -> str:
+    """Each time, first call this tool to retrieve the user data that needs to be analyzed."""
+
+    logger2.info(f"Tool 'get_prepared_statistics' called ")
+    data_path = f"data/{user_id}/full_report.md"
+    try:
+        with open(data_path, "r", encoding="utf-8") as f:
+            statistics =  f.read()
+        logger2.info(f"Successfully read statistics from {data_path}")
+        return statistics
+    except FileNotFoundError:
+        logger2.error(f"Statistics file not found at: {data_path}")
+        return "Error: Statistics file not found."
+    except Exception as e:
+        logger2.error(f"Error reading {data_path}: {e}")
+        return f"Error: {e}"
+
+@function_tool
+def get_recommendation(Topic: str) -> str:
+    """Get 2-3 relevant predefined recommendations for chosen a business topic."""
+    logger2.info(f"Tool 'get_recommendation' called for: {Topic}")
+    filepath = "Ai/group_customer_analyze/Agents_rules/FAQ_SD.txt"
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            advice_text =  f.read()
+        logger2.info(f"Successfully read recommendations from {filepath}")
+        return advice_text
+    except FileNotFoundError:
+        logger2.error(f"Recommendations file not found at: {filepath}")
+        return "Error: Recommendations file not found."
+    except Exception as e:
+        logger2.error(f"Error reading {filepath}: {e}")
+        return f"Error: {e}"
+
+async def statistics_many_c_agent(USER_ID:str) -> Agent:
+    """Initializes a new Inventory agent and session."""
+
+    from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report
+
+    try:
+        instructions = await prompt_agent_create_full_report(USER_ID)
+        agent = Agent(
+            name="Technical Specialist in Data Analysis Agent",
+            instructions=instructions,
+            model=llm_model,
+            tools=[get_recommendation,
+                   get_prepared_statistics]
+
+        )
+
+        print(" New statistics_many_c_agent  ready.")
+    except Exception as e:
+        logger2.error(f"error creating agent: {e}")
+        agent = None
+    return agent
+
+async def statistics_runner(uuid:str):
+
+    agent = await statistics_many_c_agent(uuid)
+
+    runner = await Runner.run(
+        agent, 
+        input="BFollow the instructions carefully—build the report according to my data.."
+    )
+    answer = runner.final_output 
+    #print(answer)
+    return answer
+
+from test_agent_1 import create_agent_products_state_analysis, create_agent_sectioned
+
+async def state_runner(orders, products_df, uuid):
+    from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
+
+    try:
+        # Run CSV saving in parallel threads
+        products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
+        await asyncio.gather(
+            asyncio.to_thread(orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
+            asyncio.to_thread(products_df.to_csv, f'data/{uuid}/pproducts.csv', index=False)
+        )
+    except Exception as e:
+        logger2.warning(f"Error saving debug CSVs for {uuid}: {e}")
+    
+    await async_process_data(uuid)
+    await async_generate_report(uuid)
+    
+    agent = await create_agent_products_state_analysis((uuid))
+    try:
+        runner = await Runner.run(
+            agent, 
+            input="Based on the data return response"#,  session=session
+        )
+        answer = runner.final_output 
+        from pprint import pprint
+        #print(answer)
+        for i in range(len(runner.raw_responses)):
+            print("Token usage : ", runner.raw_responses[i].usage, '')
+    except Exception as e:
+        print(f"Error in product_per_state_analysis runner: {e}")
+
+    return answer
+
+async def new_generate_analytics_report_(orders_df, products_df, customer_df, uuid):
+    import time
+    start = time.perf_counter()
+
+        
+    if orders_df.empty or products_df.empty:
+        logger2.info("create_report_group_c data is empty so report is none")
+        return '', {}
+    
+    answer = generate_report(orders_df, products_df, customer_df, uuid)
+    print("Step 3.2 - concat data and generate report:", time.perf_counter() - start)
+    full_report = answer['full_report']
+    overall_report = answer['customers_Overall_report']
+    sections = answer['sections_main']
+    
+    try:
+        report_activities_dir = os.path.join("data", uuid)
+        
+        # save statistics report to md file for ai analyze
+        path_for_overall_report = os.path.join(report_activities_dir, "overall_report.txt")
+        path_for_full_report = os.path.join(report_activities_dir, "full_report.md")
+        
+        async with aiofiles.open(path_for_overall_report, mode="w", encoding="utf-8") as f:
+            await f.write(overall_report)
+    
+        async with aiofiles.open(path_for_full_report, mode="w", encoding="utf-8") as f:
+            await f.write(full_report)
+    except Exception as e:
+        logger2.error(f"Error saving group customer report result to file: {e}")
+    
+    # Run independent async tasks concurrently
+    try:
+
+        ai_task = asyncio.create_task(
+            statistics_runner(uuid)
+        )
+        state_analysis_task = asyncio.create_task(
+            state_runner(orders_df, products_df, uuid)
+        )
+
+        # Wait for both tasks to complete
+        ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
+        #print(ans)
+        print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
+    except Exception as e:
+        logger2.error("Error in creating report state or statistic report: ", e)
+        return '', {}
+    
+    raw = str(ans or "")              # answer of model for full report
+    sections_answer = parse_analysis_response(raw)  # func that parse answer to section
+    #pprint(sections_answer)
+    items = list(sections_answer.items())                                       # tuple of sectioned report
+    items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
+    #print(items)
+    new_dict = dict(items)                              # dict in format {section : ai_text}
+    #pprint(new_dict)
     items2 = list(sections.items())
     items2.insert(8, ('product_per_state_analysis', ''))
 
