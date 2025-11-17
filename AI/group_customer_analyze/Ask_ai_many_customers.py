@@ -845,7 +845,7 @@ async def create_Ask_ai_many_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLite
 
         )
         session = session_db
-        print("👍 New create_Ask_ai_many_c_agent and Session are ready.")
+
     except Exception as e:
         logger2.error(f"error creating agent: {e}")
         agent, session = None

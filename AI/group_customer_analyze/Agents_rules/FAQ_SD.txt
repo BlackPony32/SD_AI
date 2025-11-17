@@ -148,6 +148,7 @@ Products move from central warehouses (top echelon) → to regional centers (mid
 
 Each level only stores what it needs and relies on the one above it to supply more.
 
+
 Why businesses use echelon logic:
 Clear roles and responsibilities.
 Easier to manage resources.

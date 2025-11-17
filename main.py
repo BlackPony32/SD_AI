@@ -832,6 +832,25 @@ async def check_customer_ids(df_1: pd.DataFrame,
     
     return result_dict
 
+async def combine_sections(title, var1, var2):
+    """
+    Combines two markdown sections dynamically:
+    - Extracts the title from var1 (assuming it starts with '## Title')
+    - Removes the initial '---' from var2 if present
+    - Removes the duplicate '## Title' from var2 if it matches
+    - Combines var1 + '\n---\n' + processed var2 + '\n---'
+    - Returns a dict with {title: combined_text}
+    
+    This works for any title in the list like "Key Metrics", "Discount Distribution", etc.
+    """
+    lines1 = var1.splitlines(keepends=False)
+
+    processed_var2 = var2.split("\n",2)[2]
+    
+
+    combined = '\n'.join(lines1) + '\n---\n' + processed_var2
+    
+    return {title: combined}
 
 from agents import Agent, Runner
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_sectioned, prompt_for_state_agent
@@ -988,6 +1007,7 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
                 "uuid": uuid
             })
         elif report_type.value =="product_per_state_analysis":
+            from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
             from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
 
             try:
@@ -1013,7 +1033,7 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
 
                 answer = runner.final_output 
                 from pprint import pprint
-                print(answer)
+                #print(answer)
                 for i in range(len(runner.raw_responses)):
                     print("Token usage : ", runner.raw_responses[i].usage, '')
             except Exception as e:
@@ -1031,12 +1051,13 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
             except Exception as e:
                 logger2.error(f"full report error in 'state' topic generate: {e}")
             
+            sectioned_report = {'product_per_state_analysis' : answer}
             return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
                 "incorrect_ids" : incorrect_ids,
-                "answer": answer,
-                #"statistics_of_topic": statistics_of_topic,
+                "sections": sectioned_report,
+                "report": full_report.get('full_report'),
                 "uuid": uuid
             })
         else:
@@ -1057,7 +1078,10 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
 
                 answer = runner.final_output 
                 from pprint import pprint
+                #print(statistics_of_topic)
                 #print(answer)
+                sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
+
                 for i in range(len(runner.raw_responses)):
                     print("Token usage : ", runner.raw_responses[i].usage, '')
             except Exception as e:
@@ -1075,12 +1099,13 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
             except Exception as e:
                 logger2.error(f"full report error in specific topic generate: {e}")
 
+            print(sectioned_answer.get(topic))
             return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
                 "incorrect_ids" : incorrect_ids,
-                "answer": answer,
-                "statistics_of_topic": statistics_of_topic,
+                "sections": sectioned_answer,
+                "report": full_report.get('full_report'),
                 "uuid": uuid
             })
     
