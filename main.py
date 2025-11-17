@@ -527,36 +527,50 @@ async def ask_ai_endpoint(
     
     return {"data": answer, "prompt": prompt, "cost": cost}
 
-@app.get("/logs/last/{num_lines}", response_class=PlainTextResponse)
-async def get_last_n_log_lines(num_lines: int):
-    """
-    Return the last `num_lines` from the log file.
+from enum import Enum
+class LogFile(str, Enum):
+    """Enumeration for the allowed log file names."""
+    project = "project_log.log"
+    project_many = "project_log_many.log"
 
-    Raises 404 if the file is missing or empty, 422 if `num_lines` is invalid, and 500 on unexpected errors.
+
+@app.get("/logs/last/{num_lines}", response_class=PlainTextResponse)
+async def get_last_n_log_lines(
+    num_lines: int,
+    log_file: LogFile = Query(
+        LogFile.project, 
+        description="The log file to read from. Defaults to 'project_log.log'."
+    )
+    # --- END OF CHANGE ---
+):
     """
-    LOG_FILE = "project_log.log"
-    # Validate input
+    Return the last `num_lines` from the specified log file.
+
+    If `log_file` is not provided, it defaults to 'project_log.log'.
+    """
+    
+    # Get the actual filename string from the enum value
+    LOG_FILE = log_file.value
+
+    # Validate num_lines input
     if num_lines <= 0:
         raise HTTPException(status_code=422, detail="`num_lines` must be a positive integer.")
+    
     try:
         with open(LOG_FILE, "r") as file:
             lines = file.readlines()
 
         if not lines:
-            # No content in the log
-            raise HTTPException(status_code=404, detail="Log file is empty.")
+            raise HTTPException(status_code=404, detail=f"Log file '{LOG_FILE}' is empty.")
 
-        # Safely slice the last lines (if num_lines exceeds total lines, return all)
         last_lines = lines[-num_lines:]
         return "".join(last_lines)
 
     except HTTPException:
-        # Re-raise HTTP errors so FastAPI handles them correctly
         raise
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Log file not found")
+        raise HTTPException(status_code=404, detail=f"Log file '{LOG_FILE}' not found.")
     except Exception as e:
-        # Unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
 
@@ -609,102 +623,10 @@ async def fetch_customer_data(customer_id: str, entities: List[str]):
             return (customer_id, None)
 
 
-@app.post("/generate-reports-group-old")
-async def create_group_reports(request: ReportRequest = Body(...)):
-    """Generate group reports for multiple customers with improved asynchrony."""
-    start = time.perf_counter()
-    customer_ids = request.customer_ids
-    uuid = str(uuid4())
-    
-    # Create directory structure
-    folder_path = os.path.join('data', uuid, 'work_data_folder')
-    await asyncio.to_thread(os.makedirs, folder_path, exist_ok=True)
-    
-    # Fetch data for all customers
-    entities = ['orders', 'order_products', 'customer']
-    tasks = [fetch_customer_data(customer_id, entities) for customer_id in customer_ids]
-    results = await asyncio.gather(*tasks)
-    print("Step 0 - fetch data:", time.perf_counter() - start)
-    
-    # Process fetched data
-    data_orders, data_products, data_customer, customer_names = await process_fetch_results(results, customer_ids, entities)
-    
-    # Save data for all entities
-    save_tasks = [
-        save_customer_data(customer_ids, 'orders', data_orders, uuid, customer_names),
-        save_customer_data(customer_ids, 'order_products', data_products, uuid, customer_names),
-        save_customer_data(customer_ids, 'customer', data_customer, uuid, customer_names)
-    ]
-    save_results = await asyncio.gather(*save_tasks)
-    print("Step 1 - saved customer data:", time.perf_counter() - start)
-    
-    # Validate save results
-    success_count, failed_customer_names = await validate_save_results(save_results, customer_ids, customer_names)
-    
-    logger2.info(f"Saved data for: {uuid}")
-    
-    # Generate file paths
-    ord_path, prod_path, customer_path = await generate_file_paths(customer_ids, uuid)
-    print("Step 2 - generated file paths:", time.perf_counter() - start)
-    
-    try:
-        # Create user data
-        data_created, empty_files = await create_group_user_data(ord_path, prod_path, "test", uuid)
-        if not data_created:
-            return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                content={
-                    "detail": [
-                        {
-                            "loc": ["body", "data_creation"],
-                            "msg": "Report cannot be generated due to data validation errors",
-                            "type": "data_validation_error"
-                        }
-                    ]
-                }
-            )
-        
-        # Process empty files
-        customer_names_empty = [
-            customer_names.get(extract_customer_id(file_path), f"Unknown ({extract_customer_id(file_path)})")
-            for file_path in empty_files
-        ] if empty_files else []
-        
-        # Generate analytics reports
-        print("Step 3 - before generate report:", time.perf_counter() - start)
-        full_report, sectioned_report = await generate_analytics_report(f'data/{uuid}', uuid)
-        
-        # Save full report
-        async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
-            await f.write(full_report)
-        print("Step 4 - after generate report:", time.perf_counter() - start)
-        
-        # Create and return response
-        return await create_response(success_count, len(customer_ids), failed_customer_names, customer_names_empty, sectioned_report, full_report, uuid)
-    
-    except Exception as e:
-        logger2.error(f"Report generation failed: {str(e)}")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "detail": [
-                    {
-                        "loc": ["server", "report_generation"],
-                        "msg": "Internal server error during report generation",
-                        "type": "internal_server_error"
-                    }
-                ]
-            }
-        )
-
-
-
-
 class AI_Request(BaseModel):
     uuid: str
     prompt: str
     
-
 
 #____
 @app.post("/analyze_routes/{user_id}")
@@ -758,39 +680,50 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
 
     try:
         # Use AI function to get response
-        response = await Ask_ai_many_customers(prompt, user_uuid)
+        #response = await Ask_ai_many_customers(prompt, user_uuid)
+        from AI.group_customer_analyze.Ask_ai_many_customers import create_Ask_ai_many_c_agent
+        agent, session = await create_Ask_ai_many_c_agent(user_uuid)
+
+        runner = await Runner.run(
+                agent, 
+                input=prompt,
+                session=session
+                )
+
+        answer = runner.final_output 
+        from pprint import pprint
+        print(answer)
+
         
         # Check if response indicates an invalid UUID
-        if response.get('error') == 'invalid_uuid':
-            return JSONResponse(
-                status_code=status.HTTP_404_NOT_FOUND,
-                content={
-                    "detail": [
-                        {
-                            "loc": ["body", "uuid"],
-                            "msg": "Invalid UUID provided",
-                            "type": "value_error"
-                        }
-                    ]
-                }
-            )
+        #if answer.get('error') == 'invalid_uuid':
+        #    return JSONResponse(
+        #        status_code=status.HTTP_404_NOT_FOUND,
+        #        content={
+        #            "detail": [
+        #                {
+        #                    "loc": ["body", "uuid"],
+        #                    "msg": "Invalid UUID provided",
+        #                    "type": "value_error"
+        #                }
+        #            ]
+        #        }
+        #    )
         
-        answer = response.get('output')
-        cost = response.get('cost', 0.0)
         
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
                 "data": answer,
                 "prompt" : prompt,
-                "cost": cost
+                "cost": 'cost'
             }
         )
         
     except Exception as e:
         logger2.error(f"Error executing LLM: {str(e)}")
         return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_502_BAD_GATEWAY,
             content={
                 "detail": [
                     {
@@ -804,6 +737,33 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
 
 
 #____updated version
+from pydantic import BaseModel, Field
+from typing import List
+from enum import Enum
+
+# Define an Enum for all allowed report types
+class ReportType(str, Enum):
+    FULL_REPORT = "full_report"
+    KEY_METRICS = "key_metrics"
+    DISCOUNT_DISTRIBUTION = "discount_distribution"
+    OVERALL_TOTAL_SALES = "overall_total_sales_by_payment_and_delivery_status"
+    PAYMENT_STATUS = "payment_status_analysis"
+    DELIVERY_FEES = "delivery_fees_analysis"
+    FULFILLMENT = "fulfillment_analysis"
+    SALES_PERFORMANCE = "sales_performance_overview"
+    PRODUCT_PER_STATE_ANALYSIS = "product_per_state_analysis"
+    TOP_WORST_PRODUCTS = "top_worst_selling_product"
+
+# Update your ReportRequest model
+class ReportRequest(BaseModel):
+    customer_ids: List[str]
+    report_type: ReportType = Field(
+        default=ReportType.FULL_REPORT,
+        title="Report Type",
+        description="Specify which report section to generate. Defaults to the full report."
+    )
+    entity: AllowedEntity    # Single entity, restricted to AllowedEntity values
+
 def _sync_comparison_logic(df_1: pd.DataFrame, 
                            df_2: pd.DataFrame, 
                            customer_id_s):
@@ -872,11 +832,18 @@ async def check_customer_ids(df_1: pd.DataFrame,
     
     return result_dict
 
+from test_agent_1 import create_agent_products_state_analysis, create_agent_sectioned
+from agents import Runner
+
 @app.post("/generate-reports-group")
 async def create_group_reports_new(request: ReportRequest = Body(...)):
-    """Generate group reports for multiple customers with improved asynchrony."""
+    """
+    Generate group reports for multiple customers.
+    Optimized to only run analysis for the requested report_type.
+    """
     start_time = time.perf_counter()
     customer_ids = request.customer_ids
+    report_type = request.report_type
     uuid = str(uuid4())
     
     # Create directory structure
@@ -954,45 +921,138 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         right_on='combinedid', 
         how='left'
     ).rename(columns={'displayedName': 'customer_name', 'customerId_x': 'id'})
-    merged = merged.drop('combinedid_y', axis=1).rename(columns={'combinedid_x': 'id'})
+    orders = merged.drop('combinedid_y', axis=1).rename(columns={'combinedid_x': 'id'})
     # Save merged data
     merged_path = os.path.join(user_folder,  'file_a_updated.csv') #orders
-    await save_df(merged, str(merged_path))
+    await save_df(orders, str(merged_path))
 
     #products
-    customer_map = merged.set_index('id')['customer_name']
+    customer_map = orders.set_index('id')['customer_name']
 
-    # Додаємо нову колонку в df_B.
-    # .map() шукає кожне значення з 'order_id' у 'customer_map'
-    # і повертає відповідне 'customer_name'.
-    # Якщо відповідника немає (як для 105), він ставить NaN.
     products_df['customer_name'] = products_df['orderId'].map(customer_map)
     # Видалення рядків, де 'customer_name' є NaN (тобто ордера, що були видалені через archived ot canceled status)
     products_df.dropna(subset=['customer_name'], inplace=True)
     products_df.drop(columns=['id'], inplace=True)
+    
     try:
-
         # Generate analytics reports
-        print("Step 4 - before generate report:", time.perf_counter() - start_time)
-        from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report
-        full_report, sectioned_report = await new_generate_analytics_report(merged, products_df, customer_df, uuid)
-        
-        # Save full report
-        async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
-            await f.write(full_report)
-        print("Step 5 - after generate report:", time.perf_counter() - start_time)
-        
-        incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
-        # Create and return response
-        return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={
-            "incorrect_ids" : incorrect_ids,
-            "sections": sectioned_report,
-            "report": full_report,
-            "uuid": uuid
-        }
-    )
+        print(f"Step 4 - Before generate report (Type: {report_type.value}): {time.perf_counter() - start_time:.2f}s")
+        if report_type.value =="full_report":
+            from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report_
+            full_report, sectioned_report = await new_generate_analytics_report_(orders, products_df, customer_df, uuid)
+
+            # Save full report
+            async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
+                await f.write(full_report)
+            print("Step 5 - after generate report:", time.perf_counter() - start_time)
+
+            incorrect_ids = await check_customer_ids(orders, customer_df, customer_ids)
+            # Create and return response
+            return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "incorrect_ids" : incorrect_ids,
+                "sections": sectioned_report,
+                "report": full_report,
+                "uuid": uuid
+            })
+        elif report_type.value =="product_per_state_analysis":
+            from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
+
+            try:
+                # Run CSV saving in parallel threads
+                products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
+                await asyncio.gather(
+                    asyncio.to_thread(orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
+                    asyncio.to_thread(products_df.to_csv, f'data/{uuid}/pproducts.csv', index=False)
+                )
+            except Exception as e:
+                logger2.warning(f"Error saving debug CSVs for {uuid}: {e}")
+
+            await async_process_data(uuid)
+            await async_generate_report(uuid)
+
+            agent = await create_agent_products_state_analysis((uuid))
+
+            try:
+                runner = await Runner.run(
+                    agent, 
+                    input="Based on the data return response"#,  session=session
+                )
+
+                answer = runner.final_output 
+                from pprint import pprint
+                print(answer)
+                for i in range(len(runner.raw_responses)):
+                    print("Token usage : ", runner.raw_responses[i].usage, '')
+            except Exception as e:
+                print(f"Error in product_per_state_analysis runner: {e}")
+
+            try:
+                incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+
+                full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
+                # Save full report
+                async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
+                    await f.write(full_report.get('full_report') )
+
+                print("Step 5 - after generate report:", time.perf_counter() - start_time)
+            except Exception as e:
+                logger2.error(f"full report error in 'state' topic generate: {e}")
+            
+            return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "incorrect_ids" : incorrect_ids,
+                "answer": answer,
+                #"statistics_of_topic": statistics_of_topic,
+                "uuid": uuid
+            })
+        else:
+            try:
+                topic = report_type.value
+                print(topic)
+                from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+                #from test_agent_1 import create_agent_sectioned
+                
+                statistics_of_topic = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid, report_type=topic)
+                #print(statistics_of_topic)
+                agent = await create_agent_sectioned(uuid, topic, statistics_of_topic)
+
+                runner = await Runner.run(
+                agent, 
+                input="Based on the data return response"#,  session=session
+                )
+
+                answer = runner.final_output 
+                from pprint import pprint
+                #print(answer)
+                for i in range(len(runner.raw_responses)):
+                    print("Token usage : ", runner.raw_responses[i].usage, '')
+            except Exception as e:
+                print(f"Error in create_agent_sectioned runner: {e}")
+            
+            try:
+                incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+
+                full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
+                # Save full report
+                async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
+                    await f.write(full_report.get('full_report') )
+
+                print("Step 5 - after generate report:", time.perf_counter() - start_time)
+            except Exception as e:
+                logger2.error(f"full report error in specific topic generate: {e}")
+
+            return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "incorrect_ids" : incorrect_ids,
+                "answer": answer,
+                "statistics_of_topic": statistics_of_topic,
+                "uuid": uuid
+            })
+    
         #return await create_response('success_count', len(customer_ids), 'failed_customer_names', 'customer_names_empty', sectioned_report, full_report, uuid)
     
     except Exception as e:
