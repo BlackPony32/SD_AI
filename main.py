@@ -832,8 +832,39 @@ async def check_customer_ids(df_1: pd.DataFrame,
     
     return result_dict
 
-from test_agent_1 import create_agent_products_state_analysis, create_agent_sectioned
-from agents import Runner
+
+from agents import Agent, Runner
+from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_sectioned, prompt_for_state_agent
+async def create_agent_sectioned(USER_ID, topic, statistics) -> Agent:
+    """Initializes a new Orders agent and session."""
+
+    try:
+        instructions = await prompt_agent_create_sectioned(USER_ID, topic, statistics)
+
+        agent = Agent(
+            name="Customer_Orders_Assistant",
+            instructions=instructions
+        )
+        print(" New create_agent_sectioned are ready.")
+    except Exception as e:
+        print("create_agent_sectioned error: ", e)
+    return agent
+
+async def create_agent_products_state_analysis(USER_ID) -> Agent:
+    """Initializes a new Orders agent and session."""
+
+    try:
+        #logger.info("✅ Agent run .")
+        instructions = await prompt_for_state_agent(USER_ID)
+
+        agent = Agent(
+            name="Customer_product_state_Assistant",
+            instructions=instructions
+        )
+        print(" New create_agent_products_state_analysis are ready.")
+    except Exception as e:
+        print(e)
+    return agent
 
 @app.post("/generate-reports-group")
 async def create_group_reports_new(request: ReportRequest = Body(...)):

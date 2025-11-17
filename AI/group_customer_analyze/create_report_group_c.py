@@ -1579,7 +1579,26 @@ async def statistics_runner(uuid:str):
     #print(answer)
     return answer
 
-from test_agent_1 import create_agent_products_state_analysis, create_agent_sectioned
+
+from agents import Agent, Runner
+from AI.group_customer_analyze.Agents_rules.prompts import prompt_for_state_agent
+
+
+async def create_agent_products_state_analysis(USER_ID) -> Agent:
+    """Initializes a new Orders agent and session."""
+
+    try:
+        #logger.info("✅ Agent run .")
+        instructions = await prompt_for_state_agent(USER_ID)
+
+        agent = Agent(
+            name="Customer_product_state_Assistant",
+            instructions=instructions
+        )
+        print(" New create_agent_products_state_analysis are ready.")
+    except Exception as e:
+        print(e)
+    return agent
 
 async def state_runner(orders, products_df, uuid):
     from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
