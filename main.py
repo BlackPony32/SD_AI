@@ -835,10 +835,6 @@ async def check_customer_ids(df_1: pd.DataFrame,
 async def combine_sections(title, var1, var2):
     """
     Combines two markdown sections dynamically:
-    - Extracts the title from var1 (assuming it starts with '## Title')
-    - Removes the initial '---' from var2 if present
-    - Removes the duplicate '## Title' from var2 if it matches
-    - Combines var1 + '\n---\n' + processed var2 + '\n---'
     - Returns a dict with {title: combined_text}
     
     This works for any title in the list like "Key Metrics", "Discount Distribution", etc.
@@ -988,126 +984,177 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         # Generate analytics reports
         print(f"Step 4 - Before generate report (Type: {report_type.value}): {time.perf_counter() - start_time:.2f}s")
         if report_type.value =="full_report":
-            from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report_
-            full_report, sectioned_report = await new_generate_analytics_report_(orders, products_df, customer_df, uuid)
-
-            # Save full report
-            async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
-                await f.write(full_report)
-            print("Step 5 - after generate report:", time.perf_counter() - start_time)
-
-            incorrect_ids = await check_customer_ids(orders, customer_df, customer_ids)
-            # Create and return response
-            return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "incorrect_ids" : incorrect_ids,
-                "sections": sectioned_report,
-                "report": full_report,
-                "uuid": uuid
-            })
-        elif report_type.value =="product_per_state_analysis":
-            from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
-            from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
-
             try:
-                # Run CSV saving in parallel threads
-                products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
-                await asyncio.gather(
-                    asyncio.to_thread(orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
-                    asyncio.to_thread(products_df.to_csv, f'data/{uuid}/pproducts.csv', index=False)
-                )
-            except Exception as e:
-                logger2.warning(f"Error saving debug CSVs for {uuid}: {e}")
+                from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report_
+                full_report, sectioned_report = await new_generate_analytics_report_(orders, products_df, customer_df, uuid)
 
-            await async_process_data(uuid)
-            await async_generate_report(uuid)
-
-            agent = await create_agent_products_state_analysis((uuid))
-
-            try:
-                runner = await Runner.run(
-                    agent, 
-                    input="Based on the data return response"#,  session=session
-                )
-
-                answer = runner.final_output 
-                from pprint import pprint
-                #print(answer)
-                for i in range(len(runner.raw_responses)):
-                    print("Token usage : ", runner.raw_responses[i].usage, '')
-            except Exception as e:
-                print(f"Error in product_per_state_analysis runner: {e}")
-
-            try:
-                incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
-
-                full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
                 # Save full report
-                async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
-                    await f.write(full_report.get('full_report') )
-
+                async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
+                    await f.write(full_report)
                 print("Step 5 - after generate report:", time.perf_counter() - start_time)
+
+                incorrect_ids = await check_customer_ids(orders, customer_df, customer_ids)
+                # Create and return response
+                return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "incorrect_ids" : incorrect_ids,
+                    "sections": sectioned_report,
+                    "report": full_report,
+                    "uuid": uuid
+                })
             except Exception as e:
-                logger2.error(f"full report error in 'state' topic generate: {e}")
-            
-            sectioned_report = {'product_per_state_analysis' : answer}
-            return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "incorrect_ids" : incorrect_ids,
-                "sections": sectioned_report,
-                "report": full_report.get('full_report'),
-                "uuid": uuid
-            })
+                logger2.warning(f"The problem of displaying of statistics in the 'full_report' block: {e}")
+                try:
+                    #If agent can not answer then response only statistics:
+                    from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+                    raw_stats = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
+                    incorrect_ids = await check_customer_ids(orders, customer_df, customer_ids)
+                    return JSONResponse(
+                        status_code=status.HTTP_200_OK,
+                        content={
+                        "incorrect_ids" : incorrect_ids,
+                        "sections": raw_stats.get('sections'),
+                        "report": raw_stats.get('full_report'),
+                        "uuid": uuid
+                    })
+                except Exception as e:
+                    logger2.warning(f"The problem of displaying an alternative version of statistics in the “full_report” block: {e}")
+
+        elif report_type.value =="product_per_state_analysis":
+            try:
+                from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+                from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
+
+                try:
+                    # Run CSV saving in parallel threads
+                    products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
+                    await asyncio.gather(
+                        asyncio.to_thread(orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
+                        asyncio.to_thread(products_df.to_csv, f'data/{uuid}/pproducts.csv', index=False)
+                    )
+                except Exception as e:
+                    logger2.warning(f"Error saving debug CSVs for {uuid}: {e}")
+
+                await async_process_data(uuid)
+                await async_generate_report(uuid)
+
+                agent = await create_agent_products_state_analysis((uuid))
+
+                try:
+                    runner = await Runner.run(
+                        agent, 
+                        input="Based on the data return response"#,  session=session
+                    )
+
+                    answer = runner.final_output 
+                    from pprint import pprint
+                    #print(answer)
+                    for i in range(len(runner.raw_responses)):
+                        print("Token usage : ", runner.raw_responses[i].usage, '')
+                except Exception as e:
+                    print(f"Error in product_per_state_analysis runner: {e}")
+
+                try:
+                    incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+
+                    full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
+                    # Save full report
+                    async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
+                        await f.write(full_report.get('full_report') )
+
+                    print("Step 5 - after generate report:", time.perf_counter() - start_time)
+                except Exception as e:
+                    logger2.error(f"full report error in 'state' topic generate: {e}")
+
+                sectioned_report = {'product_per_state_analysis' : answer}
+                return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "incorrect_ids" : incorrect_ids,
+                    "sections": sectioned_report,
+                    "report": full_report.get('full_report'),
+                    "uuid": uuid
+                })
+            except Exception as e:
+                logger2.warning(f"The problem of displaying of statistics in the 'product_per_state_analysis' block: {e}")
+                try:
+                    #If agent can not answer then response only statistics (prepared data):
+                    from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+                    incorrect_ids = await check_customer_ids(orders, customer_df, customer_ids)
+                    full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
+                    return JSONResponse(
+                        status_code=status.HTTP_200_OK,
+                        content={
+                        "incorrect_ids" : incorrect_ids,
+                        "sections": {'product_per_state_analysis':'You do not have enough data to analyze the states, or they do not meet the standards. Please try again later.'},
+                        "report": full_report.get('full_report'),
+                        "uuid": uuid
+                    })
+                except Exception as e:
+                    logger2.warning(f"The problem of displaying an alternative version of statistics in the 'product_per_state_analysis' block: {e}")
         else:
             try:
-                topic = report_type.value
-                print(topic)
-                from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
-                #from test_agent_1 import create_agent_sectioned
+                    topic = report_type.value
+                    print(topic)
+                    from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+                    #from test_agent_1 import create_agent_sectioned
+
+                    statistics_of_topic = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid, report_type=topic)
+                    #print(statistics_of_topic)
+                    agent = await create_agent_sectioned(uuid, topic, statistics_of_topic)
+
+                    runner = await Runner.run(
+                    agent, 
+                    input="Based on the data return response"#,  session=session
+                    )
+
+                    answer = runner.final_output 
+                    from pprint import pprint
+                    #print(statistics_of_topic)
+                    #print(answer)
+                    sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
+
+                    for i in range(len(runner.raw_responses)):
+                        print("Token usage : ", runner.raw_responses[i].usage, '')
+
+                    incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+
+                    full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
+                    # Save full report
+                    async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
+                        await f.write(full_report.get('full_report') )
+
+                    print("Step 5 - after generate report:", time.perf_counter() - start_time)
                 
-                statistics_of_topic = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid, report_type=topic)
-                #print(statistics_of_topic)
-                agent = await create_agent_sectioned(uuid, topic, statistics_of_topic)
-
-                runner = await Runner.run(
-                agent, 
-                input="Based on the data return response"#,  session=session
-                )
-
-                answer = runner.final_output 
-                from pprint import pprint
-                #print(statistics_of_topic)
-                #print(answer)
-                sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
-
-                for i in range(len(runner.raw_responses)):
-                    print("Token usage : ", runner.raw_responses[i].usage, '')
+                    #print(sectioned_answer.get(topic))
+                    return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content={
+                        "incorrect_ids" : incorrect_ids,
+                        "sections": sectioned_answer,
+                        "report": full_report.get('full_report'),
+                        "uuid": uuid
+                    })
             except Exception as e:
-                print(f"Error in create_agent_sectioned runner: {e}")
-            
-            try:
-                incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+                logger2.warning(f"The problem of displaying of statistics in the {report_type.value} block: {e}")
+                try:
+                    #If agent can not answer then response only statistics:
+                    from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+                    raw_stats = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid, report_type.value)
 
-                full_report = await generate_analytics_report_sectioned(orders, products_df, customer_df, uuid)
-                # Save full report
-                async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
-                    await f.write(full_report.get('full_report') )
-
-                print("Step 5 - after generate report:", time.perf_counter() - start_time)
-            except Exception as e:
-                logger2.error(f"full report error in specific topic generate: {e}")
-
-            print(sectioned_answer.get(topic))
-            return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "incorrect_ids" : incorrect_ids,
-                "sections": sectioned_answer,
-                "report": full_report.get('full_report'),
-                "uuid": uuid
-            })
+                    incorrect_ids = await check_customer_ids(merged, customer_df, customer_ids)
+                    sectioned_report = {f'{report_type.value}' : raw_stats}
+                    return JSONResponse(
+                        status_code=status.HTTP_200_OK,
+                        content={
+                        "incorrect_ids" : incorrect_ids,
+                        "sections": sectioned_report,
+                        "report": raw_stats,
+                        "uuid": uuid
+                    })
+                except Exception as e:
+                    logger2.warning(f"The problem of displaying an alternative version of statistics in the {report_type.value} block: {e}")
     
         #return await create_response('success_count', len(customer_ids), 'failed_customer_names', 'customer_names_empty', sectioned_report, full_report, uuid)
     

@@ -367,7 +367,7 @@ async def generate_analytics_report_sectioned(
         lines = await asyncio.to_thread(_calculate_payment_status, orders)
         return "\n".join(lines)
 
-    if report_type == "delivery_fees_analysis ":
+    if report_type == "delivery_fees_analysis":
         lines = await asyncio.to_thread(_calculate_delivery_fees, orders)
         return "\n".join(lines)
 
@@ -1171,7 +1171,7 @@ async def generate_analytics_report(directory, uuid):
 async def _create_advice_tool():
     # Load predefined recommendations asynchronously
     try:
-        promo_path = os.path.join('Ai','group_customer_analyze', 'Agents_rules', 'FAQ_SD.txt')
+        promo_path = os.path.join('AI','group_customer_analyze', 'Agents_rules', 'FAQ_SD.txt')
         async with aiofiles.open(promo_path, "r", encoding="utf-8") as f:
             advice_text = await f.read()
     except FileNotFoundError:
@@ -1556,8 +1556,7 @@ async def statistics_many_c_agent(USER_ID:str) -> Agent:
             name="Technical Specialist in Data Analysis Agent",
             instructions=instructions,
             model=llm_model,
-            tools=[get_recommendation,
-                   get_prepared_statistics]
+            tools=[get_prepared_statistics] #get_recommendation,
 
         )
 
