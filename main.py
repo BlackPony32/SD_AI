@@ -678,6 +678,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
     user_uuid = request.uuid
     prompt = request.prompt
 
+    pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt}'
     try:
         # Use AI function to get response
         #response = await Ask_ai_many_customers(prompt, user_uuid)
@@ -686,7 +687,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
 
         runner = await Runner.run(
                 agent, 
-                input=prompt,
+                input=pre_prompt,
                 session=session
                 )
 

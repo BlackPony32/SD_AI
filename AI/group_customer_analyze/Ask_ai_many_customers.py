@@ -205,7 +205,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
 
 
 @function_tool
@@ -329,7 +329,7 @@ def get_top_n_customers(user_id:str, n : int, by_type:str)-> str:
     """
     
     # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_customers' called called for: {user_id}")
+    logger2.info(f"Tool 'get_top_n_customers' called called for: {user_id} and type = {by_type} for {n}")
     dataf = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
     try:
         relevant_cols = ['customer_name', 'totalAmount', 'totalQuantity', 'id']
@@ -402,7 +402,7 @@ def get_top_n_products(user_id:str, n : int, by_type:str)-> str:
     """
     
     # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_products' called called for: {user_id}")
+    logger2.info(f"Tool 'get_top_n_products' called called for: {user_id} and type = {by_type} for {n}")
     dataf = pd.read_csv(os.path.join("data", user_id, "pproducts.csv"))
     # Select and copy the relevant columns
     try:
@@ -706,7 +706,7 @@ def get_product_details(user_id:str, name:str=None, sku:str=None, category:str=N
     Returns:
         str: A formatted string with full product info.
     """
-    logger2.info(f"Tool 'get_product_details' called called for: {user_id}")
+    logger2.info(f"Tool 'get_product_details' called called for: {user_id} and name = {name} sku = {sku} category = {category}")
     df_products = pd.read_csv(os.path.join("data", user_id, "pproducts.csv"))
     if df_products is None:
         return "Error: The products DataFrame is None. Please check file loading."
@@ -776,11 +776,11 @@ def get_customers(user_id:str)-> dict[str, Any]:
     return customer_dict
 
 @function_tool
-def get_orders_by_customer(user_id:str, customer_id:str)-> str:
+def get_orders_by_customer_id(user_id:str, customer_id:str)-> str:
     """
     Returns a DataFrame in md format with specific order details for a given customer_id - use get_customers tool before.
     """
-    logger2.info(f"Tool 'get_orders_by_customer' called called for: {user_id}")
+    logger2.info(f"Tool 'get_orders_by_customer' called called for: {user_id} and {customer_id}")
     # Filter DataFrame by customer_id
     dataframe = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
     customer_orders_df = dataframe[dataframe['customerId'] == customer_id].copy()
@@ -841,7 +841,7 @@ async def create_Ask_ai_many_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLite
             get_product_catalog,
             get_product_details,
             get_customers,
-            get_orders_by_customer]
+            get_orders_by_customer_id]
 
         )
         session = session_db
