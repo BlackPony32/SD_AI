@@ -221,7 +221,7 @@ def data_clean_orders(orders_df: pd.DataFrame):
             orders_df = orders_df[status_mask & archived_mask]
             if orders_df.empty:
                 logger2.warning("No valid orders found after filtering. All orders are either canceled or archived. Please try a different file.")
-                return pd.DataFrame()
+                return orders_df
             logger2.info(f"Filtered orders, remaining: {len(orders_df)}")
         except Exception as e:
             logger2.error(f"Error filtering orders: {str(e)}")
@@ -468,7 +468,7 @@ def one_file_preprocess_orders(file_path):
         for col in EXPECTED_COLUMNS["orders"]:
             if col not in df.columns:
                 df[col] = pd.NA
-                logger2.warning(f"Added missing column '{col}' to orders DataFrame")
+                logger2.info(f"Added missing column '{col}' to orders DataFrame")
     if df.empty:
         logger2.warning(f"Orders DataFrame is empty from file: {file_path}")
         return df, file_path  # Return tuple with file_path
@@ -524,7 +524,7 @@ def one_file_preprocess_products(file_path):
         for col in EXPECTED_COLUMNS["products"]:
             if col not in df.columns:
                 df[col] = pd.NA
-                logger2.warning(f"Added missing column '{col}' to products DataFrame")
+                logger2.info(f"Added missing column '{col}' to products DataFrame")
     if df.empty:
         logger2.warning(f"Products DataFrame is empty from file: {file_path}")
         return df, file_path  # Return tuple with file_path
