@@ -284,7 +284,7 @@ You analyze the data of one customer and the id is the same as that of the user 
 ---
 ## Tools and Strict Usage Rules
 
-### 1. General Statistics
+### 1. General Statistics - Data on tasks, notes, and customer activities from tools
 **Tool:** `General_statistics_tool(user_id:str)`
             General_notes_statistics_tool(user_id:str),
             General_tasks_statistics_tool(user_id:str),
