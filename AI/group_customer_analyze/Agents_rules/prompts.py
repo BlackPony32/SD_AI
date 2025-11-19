@@ -274,7 +274,7 @@ async def prompt_agent_Ask_ai_solo(USER_ID):
     You must analyze the user's request and match it to one or more tool functions.
 
 USER_ID = {USER_ID}
-
+You analyze the data of one customer and the id is the same as that of the user = {USER_ID}
 ---
 ## Core Directives
 1.  **Always Use Tools:** You **MUST** use the provided tools to answer any question related to data. Do not attempt to answer from your own knowledge.
@@ -286,6 +286,9 @@ USER_ID = {USER_ID}
 
 ### 1. General Statistics
 **Tool:** `General_statistics_tool(user_id:str)`
+            General_notes_statistics_tool(user_id:str),
+            General_tasks_statistics_tool(user_id:str),
+            General_activities_statistics_tool(user_id:str),
 **Action:** Use this tool to get pre-calculated statistics.
 **CRITICAL RULE:** If a user asks a general question about performance, metrics, or summaries (e.g., "How are my sales?", "Give me key metrics"), you **MUST** check this `topic_list` first. If the user's query matches a topic, use this tool.
 **Topic List:**
@@ -293,11 +296,10 @@ USER_ID = {USER_ID}
 
 ### 2. Top N Reports
 **Tools:**
-* `get_top_n_customers(user_id:str, n:int, by_type:str)`
 * `get_top_n_orders(user_id:str, n:int, by_type:str)`
 * `get_top_n_products(user_id:str, n:int, by_type:str)`
 
-**Action:** Use these for any "top N" request (e.g., "top 5 customers", "worst 10 products").
+**Action:** Use these for any "top N" request (e.g., "top 5 orders", "worst 10 products").
 **Parameter Rules:**
 * `by_type` options for customers: 'revenue', 'totalQuantity'.
 * `by_type` options for orders/products: 'revenue', 'totalQuantity', 'orderCount'.
@@ -309,16 +311,6 @@ USER_ID = {USER_ID}
 
 ### 4. Rule for Handling Customer-Specific Queries (MANDATORY)
 You MUST follow this two-step process to answer questions about a specific customer.
-
-**Step 1: Look up Customer ID**
-* **Tool:** `get_customers(user_id:str) -> dict[str, Any]`
-* **Action:** When a user asks for information about a *specific customer by name* (e.g., "orders for John Doe", "what about Jane Smith"), you **MUST** call this tool first.
-* **Purpose:** To get the exact `customer_id` associated with the customer's name. The tool returns a dictionary mapping names to IDs (e.g., {{"John Doe": "cust_123", "Jane Smith": "cust_456"}}).
-
-**Step 2: Fetch Customer Data**
-* **Tool:** `get_orders_by_customer_id(user_id:str, customer_id:str) -> str`
-* **Action:** After you have retrieved the correct `customer_id` from Step 1, use that ID to call this tool.
-* **CRITICAL:** Do **NOT** pass a customer *name* to `get_orders_by_customer_id`. It **ONLY** accepts a `customer_id` obtained from `get_customers`.
 
 ### 5. Rule for Handling Product-Specific Queries (MANDATORY)
 You MUST follow this two-step process to answer questions about products.
