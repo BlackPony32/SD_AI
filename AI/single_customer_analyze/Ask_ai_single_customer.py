@@ -1183,6 +1183,9 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
             model=llm_model,
             tools=[
             General_statistics_tool,
+            General_notes_statistics_tool,
+            General_tasks_statistics_tool,
+            General_activities_statistics_tool,
             get_top_n_orders,
             get_top_n_products,
             get_order_details,
