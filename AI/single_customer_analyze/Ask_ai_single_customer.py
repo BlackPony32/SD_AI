@@ -1,5 +1,4 @@
 from typing import List, AsyncGenerator, Tuple, Any
-from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report, prompt_agent_create_sectioned, prompt_for_state_agent
 
 from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
 
@@ -25,7 +24,7 @@ from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_f
 import pandas as pd
 
 from AI.utils import get_logger
-logger2 = get_logger("logger2", "project_log_many.log", False)
+logger1 = get_logger("logger1", "project_log.log", False)
 
 llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
 
@@ -44,7 +43,7 @@ def get_all_data(customer_id):
 
     return activities_df, notes_df, order_products_df, orders_df, tasks_df
 
-#activities_df, notes_df, order_products_df, orders_df, tasks_df = get_all_data('b17f86d1-9bf9-4d75-aedd-d25b0ddc9562')
+activities_df, notes_df, order_products_df, orders_df, tasks_df = get_all_data('b17f86d1-9bf9-4d75-aedd-d25b0ddc9562')
 
 def _tasks_to_records(df) -> List[Dict[str, Any]]:
     return df.where(pd.notnull(df), None).to_dict(orient="records")
@@ -620,104 +619,202 @@ def customer_profile(
     return profile
 
 #___
+from pathlib import Path
 
 @function_tool
-def General_statistics_tool(user_id:str) -> str:
-    """Each time, first call this tool to retrieve the user data that needs to be analyzed."""
+def General_statistics_tool(user_id: str) -> str:
+    """
+    Retrieves user data from 'report.md' and 'reorder.md'.
+    Uses fallback encodings to prevent crashes on bad characters.
+    """
+    logger1.info(f"Tool 'General_statistics_tool' called for user: {user_id}")
+    
+    # 1. Setup Pathlib paths
+    base_dir = Path("data") / user_id
+    files_to_read = [
+        base_dir / "report.md",
+        base_dir / "reorder.md"
+    ]
+    
+    encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']
+    collected_content = []
 
-    logger2.info(f"Tool 'General_statistics_tool' called ")
-    data_path = f"data/{user_id}/report.md"
-    try:
-        with open(data_path, "r", encoding="utf-8") as f:
-            statistics =  f.read()
-        logger2.info(f"Successfully read statistics from {data_path}")
-        return statistics
-    except FileNotFoundError:
-        logger2.error(f"Statistics file not found at: {data_path}")
-        return "Error: Statistics file not found."
-    except Exception as e:
-        logger2.error(f"Error reading {data_path}: {e}")
-        return f"Error: {e}"
+    # 2. Iterate through both files
+    for file_path in files_to_read:
+        if not file_path.exists():
+            logger1.warning(f"File not found: {file_path}")
+            continue
+
+        file_content = None
+        
+        # 3. Attempt to read with multiple encodings
+        for enc in encodings_to_try:
+            try:
+                with file_path.open("r", encoding=enc) as f:
+                    file_content = f.read()
+                logger1.info(f"Successfully read {file_path.name} using {enc}")
+                break # Stop trying encodings if one works
+            except UnicodeDecodeError:
+                continue # Try next encoding
+            except Exception as e:
+                logger1.error(f"Error reading {file_path}: {e}")
+                break
+
+        if file_content:
+            # Add a header so the AI knows which file this text came from
+            collected_content.append(f"--- Content from {file_path.name} ---\n{file_content}")
+        else:
+            logger1.error(f"Failed to decode {file_path.name} with any supported encoding.")
+
+    # 4. Return combined results
+    if not collected_content:
+        return "Error: No data found or readable in report/reorder files."
+        
+    return "\n\n".join(collected_content)
 
 @function_tool
 def General_notes_statistics_tool(user_id:str) -> str:
     """Each time, first call this tool to retrieve the user data that needs to be analyzed."""
-
-    logger2.info(f"Tool 'General_notes_statistics_tool' called ")
+    
+    logger1.info(f"Tool 'General_notes_statistics_tool' called")
     data_path = f"data/{user_id}/report_notes.md"
+    
+    # List of encodings to try, in order of preference
+    # 1. utf-8: The standard.
+    # 2. cp1252: The default for Windows (likely the culprit for 0xef).
+    # 3. utf-16: Common if the file was created by PowerShell or Windows Notepad.
+    # 4. latin-1: The "catch-all" - it rarely raises errors but might produce symbols.
+    encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']
+
     try:
-        with open(data_path, "r", encoding="utf-8") as f:
-            statistics =  f.read()
-        logger2.info(f"Successfully read statistics from {data_path}")
-        return statistics
+        # Check if file exists first to avoid looping unnecessarily
+        with open(data_path, "rb") as f:
+            pass
     except FileNotFoundError:
-        logger2.error(f"Statistics file not found at: {data_path}")
+        logger1.error(f"Statistics file not found at: {data_path}")
         return "Error: Statistics file not found."
-    except Exception as e:
-        logger2.error(f"Error reading {data_path}: {e}")
-        return f"Error: {e}"
+
+    # Start the loop
+    for enc in encodings_to_try:
+        try:
+            logger1.info(f"Attempting to read {data_path} with encoding: {enc}")
+            with open(data_path, "r", encoding=enc) as f:
+                statistics = f.read()
+            
+            # If we reach this line, it worked!
+            logger1.info(f"Successfully read statistics using encoding: {enc}")
+            return statistics
+            
+        except UnicodeDecodeError:
+            # If this encoding fails, log it and loop to the next one
+            logger1.warning(f"Failed to read with {enc}, trying next...")
+            continue
+        except Exception as e:
+            # Catch other errors (like permissions) immediately
+            logger1.error(f"Unexpected error reading {data_path}: {e}")
+            return f"Error: {e}"
+
+    # If the loop finishes without returning, nothing worked
+    logger1.error(f"All encoding attempts failed for {data_path}")
+    return "Error: Unable to decode file with standard encodings."
 
 @function_tool
-def General_tasks_statistics_tool(user_id:str) -> str:
+def General_tasks_statistics_tool(user_id: str) -> str:
     """Each time, first call this tool to retrieve the user data that needs to be analyzed."""
 
-    logger2.info(f"Tool 'General_tasks_statistics_tool' called ")
-    data_path = f"data/{user_id}/report_task.md"
-    try:
-        with open(data_path, "r", encoding="utf-8") as f:
-            statistics =  f.read()
-        logger2.info(f"Successfully read statistics from {data_path}")
-        return statistics
-    except FileNotFoundError:
-        logger2.error(f"Statistics file not found at: {data_path}")
+    logger1.info(f"Tool 'General_tasks_statistics_tool' called")
+    
+    # 1. Setup Path
+    file_path = Path("data") / user_id / "report_task.md"
+    
+    # 2. Check existence
+    if not file_path.exists():
+        logger1.error(f"Statistics file not found at: {file_path}")
         return "Error: Statistics file not found."
-    except Exception as e:
-        logger2.error(f"Error reading {data_path}: {e}")
-        return f"Error: {e}"
+
+    # 3. Encoding Loop
+    encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']
+    
+    for enc in encodings_to_try:
+        try:
+            with file_path.open("r", encoding=enc) as f:
+                statistics = f.read()
+            logger1.info(f"Successfully read statistics from {file_path} using {enc}")
+            return statistics
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            logger1.error(f"Error reading {file_path}: {e}")
+            return f"Error: {e}"
+
+    logger1.error(f"Failed to decode {file_path} with any standard encoding.")
+    return "Error: Unable to decode file."
 
 @function_tool
-def General_activities_statistics_tool(user_id:str) -> str:
+def General_activities_statistics_tool(user_id: str) -> str:
     """Each time, first call this tool to retrieve the user data that needs to be analyzed."""
 
-    logger2.info(f"Tool 'General_activities_statistics_tool' called ")
-    data_path = f"data/{user_id}/report_activities.md"
-    try:
-        with open(data_path, "r", encoding="utf-8") as f:
-            statistics =  f.read()
-        logger2.info(f"Successfully read statistics from {data_path}")
-        return statistics
-    except FileNotFoundError:
-        logger2.error(f"Statistics file not found at: {data_path}")
+    logger1.info(f"Tool 'General_activities_statistics_tool' called")
+    
+    # 1. Setup Path
+    file_path = Path("data") / user_id / "report_activities.md"
+    
+    # 2. Check existence
+    if not file_path.exists():
+        logger1.error(f"Statistics file not found at: {file_path}")
         return "Error: Statistics file not found."
-    except Exception as e:
-        logger2.error(f"Error reading {data_path}: {e}")
-        return f"Error: {e}"
+
+    # 3. Encoding Loop
+    encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']
+    
+    for enc in encodings_to_try:
+        try:
+            with file_path.open("r", encoding=enc) as f:
+                statistics = f.read()
+            logger1.info(f"Successfully read statistics from {file_path} using {enc}")
+            return statistics
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            logger1.error(f"Error reading {file_path}: {e}")
+            return f"Error: {e}"
+
+    logger1.error(f"Failed to decode {file_path} with any standard encoding.")
+    return "Error: Unable to decode file."
 
 @function_tool
-def get_top_n_orders(user_id:str, n : int, by_type:str) -> str:
+def get_top_n_orders(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
     """
-    Gets the top N orders from the DataFrame based on revenue or quantity.
+    Gets the top (or bottom) N orders from the DataFrame based on revenue or quantity.
 
     Args:
-        user_id str: Use given user id.
-        n (int): The number of top orders to return.
-        by_type (str): The criteria to sort by. 
-                       Must be 'revenue' or 'totalQuantity'.
+        user_id (str): Use given user id.
+        n (int): The number of orders to return.
+        by_type (str): The criteria to sort by. Must be 'revenue' or 'totalQuantity'.
+        sort_order (str): 'desc' for Top/Best (High to Low), 'asc' for Bottom/Worst (Low to High).
 
     Returns:
-        str: A formatted string of the top N orders.
+        str: A formatted string of the N orders.
     """
     
-    # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_orders' called called for: {user_id}")
-    dataf = pd.read_csv(os.path.join("data", user_id, "work_ord.csv"))
+    logger1.info(f"Tool 'get_top_n_orders' called for: {user_id} with order: {sort_order}")
+    
+    # 1. Setup Path using pathlib
+    csv_path = Path("data") / user_id / "work_ord.csv"
+    
+    if not csv_path.exists():
+         return f"Error: Data file not found at {csv_path}"
+
     try:
+        dataf = pd.read_csv(csv_path)
         relevant_cols = ['customId_customId', 'totalAmount', 'totalQuantity']
         df_copy = dataf[relevant_cols].copy()
     except KeyError as e:
-        return f"Error: Missing expected column in DataFrame: {e}. Available columns: {dataf.columns.tolist()}"
+        return f"Error: Missing expected column: {e}. Available: {dataf.columns.tolist()}"
+    except Exception as e:
+        return f"Error reading CSV: {e}"
 
-    # Determine the sort column
+    # 2. Determine the sort column
     if by_type == 'revenue':
         sort_column = 'totalAmount'
     elif by_type == 'totalQuantity':
@@ -725,20 +822,26 @@ def get_top_n_orders(user_id:str, n : int, by_type:str) -> str:
     else:
         return "Invalid 'by_type' parameter. Please choose 'revenue' or 'totalQuantity'."
 
-    # Sort the DataFrame and get the top N
-    top_n_df = df_copy.sort_values(by=sort_column, ascending=False).head(n)
+    # 3. Determine Sort Direction (The Logic Change)
+    # 'asc' means ascending=True (Smallest numbers first -> "Worst")
+    # 'desc' means ascending=False (Biggest numbers first -> "Best")
+    is_ascending = True if sort_order == 'asc' else False
 
-    # Fill potential NaN values in text fields for clean printing
-    top_n_df_filled = top_n_df.fillna({'customId_customId': 'N/A'})
+    # 4. Sort and take N
+    target_df = df_copy.sort_values(by=sort_column, ascending=is_ascending).head(n)
 
-    # Format the output string
+    # 5. Format output
+    target_df_filled = target_df.fillna({'customId_customId': 'N/A'})
+
+    # Dynamic Title based on sort order
+    direction_label = "Bottom" if sort_order == 'asc' else "Top"
+    
     output_strings = []
-    output_strings.append(f"--- Top {n} Orders by {by_type.capitalize()} ---")
-    output_strings.append("\nCustom ID -  Revenue - Total Quantity")
-    output_strings.append("-" * 60) # Separator line
+    output_strings.append(f"--- {direction_label} {n} Orders by {by_type.capitalize()} ---")
+    output_strings.append("\nCustom ID - Revenue - Total Quantity")
+    output_strings.append("-" * 60)
 
-    for index, row in top_n_df_filled.iterrows():
-        # Format totalAmount as currency and totalQuantity as an integer
+    for index, row in target_df_filled.iterrows():
         formatted_row = (
             f"{row['customId_customId']} - "
             f"${row['totalAmount']:.2f} - "
@@ -750,53 +853,62 @@ def get_top_n_orders(user_id:str, n : int, by_type:str) -> str:
 
 
 @function_tool
-def get_top_n_products(user_id:str, n : int, by_type:str)-> str:
+def get_top_n_products(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
     """
-    Gets the top N products from the DataFrame based on aggregated 
-    revenue or quantity.
+    Gets the top (or bottom) N products from the DataFrame based on aggregated 
+    revenue, quantity, or order count.
 
     Args:
-        user_id str: Use given user id.
-        n (int): The number of top customers to return.
+        user_id (str): Use given user id.
+        n (int): The number of products to return.
         by_type (str): The criteria to sort by. 
                        Must be 'revenue', 'totalQuantity', or 'orderCount'.
+        sort_order (str): 'desc' for Top/Best (High to Low), 'asc' for Bottom/Worst (Low to High).
 
     Returns:
-        str: A formatted string of the top N customers.
+        str: A formatted string of the products.
     """
     
-    # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_products' called called for: {user_id}")
-    dataf = pd.read_csv(os.path.join("data", user_id, "work_prod.csv"))
-    dataf['product_variant'] = dataf['name'].astype(str) + ' - ' + dataf['sku'].astype(str)
-    # Select and copy the relevant columns
+    logger1.info(f"Tool 'get_top_n_products' called for: {user_id} with order: {sort_order}")
+    
+    # 1. Setup Path using pathlib
+    csv_path = Path("data") / user_id / "work_prod.csv"
+    
+    if not csv_path.exists():
+        return f"Error: Data file not found at {csv_path}"
+
     try:
+        dataf = pd.read_csv(csv_path)
+        
+        # Create variant name
+        dataf['product_variant'] = dataf['name'].astype(str) + ' - ' + dataf['sku'].astype(str)
+        
         relevant_cols = ['product_variant', 'totalAmount', 'quantity', 'orderId']
         df_copy = dataf[relevant_cols].copy()
     except KeyError as e:
         return f"Error: Missing expected column in DataFrame: {e}. Available columns: {dataf.columns.tolist()}"
+    except Exception as e:
+        return f"Error reading CSV: {e}"
 
-    # Aggregate data by product_variant
+    # 2. Aggregate data by product_variant
     product_agg = df_copy.groupby('product_variant').agg(
         totalRevenue=('totalAmount', 'sum'),
         totalQuantity=('quantity', 'sum'),
         orderCount=('orderId', 'nunique'), # Count distinct orders
     ).reset_index()
 
-    # Calculate average revenue per order
+    # 3. Calculate averages
     product_agg['avgRevenuePerOrder'] = product_agg.apply(
         lambda row: row['totalRevenue'] / row['orderCount'] if row['orderCount'] > 0 else 0,
         axis=1
     )
     
-    # Calculate average quantity per order
     product_agg['avgQuantityPerOrder'] = product_agg.apply(
         lambda row: row['totalQuantity'] / row['orderCount'] if row['orderCount'] > 0 else 0,
         axis=1
     )
 
-
-    # Determine the sort column
+    # 4. Determine the sort column
     if by_type == 'revenue':
         sort_column = 'totalRevenue'
     elif by_type == 'totalQuantity':
@@ -807,17 +919,24 @@ def get_top_n_products(user_id:str, n : int, by_type:str)-> str:
         return ("Invalid 'by_type' parameter. Please choose 'revenue', "
                 "'totalQuantity', or 'orderCount'.")
 
-    # Sort the DataFrame and get the top N
-    top_n_df = product_agg.sort_values(by=sort_column, ascending=False).head(n)
+    # 5. Determine Sort Direction
+    # 'asc' means ascending=True (Smallest numbers first -> "Worst")
+    # 'desc' means ascending=False (Biggest numbers first -> "Best")
+    is_ascending = True if sort_order == 'asc' else False
 
-    # Fill potential NaN values in text fields for clean printing
+    # Sort the DataFrame and get the top N
+    top_n_df = product_agg.sort_values(by=sort_column, ascending=is_ascending).head(n)
+
+    # Fill potential NaN values
     top_n_df_filled = top_n_df.fillna({'product_variant': 'N/A'})
 
-    # Format the output string
+    # 6. Format the output string
+    direction_label = "Bottom" if sort_order == 'asc' else "Top"
+    
     output_strings = []
-    output_strings.append(f"--- Top {n} Products by {by_type.capitalize()} ---")
-    output_strings.append("\nProduct - Total Revenue - Total Quantity - Order Count -  Avg. Qty/Order")
-    output_strings.append("-" * 100) # Separator line
+    output_strings.append(f"--- {direction_label} {n} Products by {by_type.capitalize()} ---")
+    output_strings.append("\nProduct - Total Revenue - Total Quantity - Order Count - Avg. Qty/Order")
+    output_strings.append("-" * 100) 
 
     for index, row in top_n_df_filled.iterrows():
         formatted_row = (
@@ -848,7 +967,7 @@ def get_order_details(order_custom_id:int, user_id:str):
     output_strings = []
     # Select and copy the relevant columns
     try:
-        logger2.info(f"Tool 'get_order_details' called called for: {user_id}")
+        logger1.info(f"Tool 'get_order_details' called called for: {user_id}")
         df_orders = pd.read_csv(os.path.join("data", user_id, "work_ord.csv"))
         df_products = pd.read_csv(os.path.join("data", user_id, "work_prod.csv"))
         df_orders['customId_customId'] = pd.to_numeric(df_orders['customId_customId'], errors='coerce')
@@ -893,7 +1012,7 @@ def get_order_details(order_custom_id:int, user_id:str):
     output_strings.append(f"Delivery:       {order_row.get('deliveryStatus', 'N/A')}")
     
     # --- 3. Financial Information ---
-    output_strings.append("\n--- Financials ---")
+    output_strings.append("\n--- Financial ---")
     output_strings.append(f"Subtotal (excl. delivery): ${order_row.get('totalAmountWithoutDelivery', 0):.2f}")
     output_strings.append(f"Discount:              ${order_row.get('totalDiscountValue', 0):.2f}")
     output_strings.append(f"Delivery Fee:          ${order_row.get('deliveryFee', 0):.2f}")
@@ -943,7 +1062,7 @@ def get_product_catalog(user_id:str)-> str:
               Returns None if the DataFrame is invalid.
     """
     try:
-        logger2.info(f"Tool 'get_product_catalog' called called for: {user_id}")
+        logger1.info(f"Tool 'get_product_catalog' called called for: {user_id}")
         df_products = pd.read_csv(os.path.join("data", user_id, "work_prod.csv"))
     
         # Clean the 'combined﻿id' column name if it exists
@@ -1004,12 +1123,12 @@ def _generate_product_report(df_to_report, report_title):
     total_revenue = df_to_report['totalAmount'].sum()
     total_quantity = df_to_report['quantity'].sum()
     total_orders = df_to_report['orderId'].nunique()
-    total_customers = df_to_report['customer_name'].nunique()
+
     
     output_strings.append(f"Total Revenue:     ${total_revenue:,.2f}")
     output_strings.append(f"Total Units Sold:  {total_quantity:,}")
     output_strings.append(f"Total Orders:      {total_orders:,}")
-    output_strings.append(f"Unique Customers:  {total_customers:,}")
+
 
     if total_quantity > 0:
         avg_price_per_unit = total_revenue / total_quantity
@@ -1019,15 +1138,6 @@ def _generate_product_report(df_to_report, report_title):
         avg_revenue_per_order = total_revenue / total_orders
         output_strings.append(f"Avg. Revenue / Order: ${avg_revenue_per_order:,.2f}")
 
-    # --- 3. Top Customers for this group ---
-    output_strings.append(f"\n--- Top 5 Customers (for this group) ---")
-    customer_sales = df_to_report.groupby('customer_name')['totalAmount'].sum().sort_values(ascending=False).head(5)
-    
-    if customer_sales.empty:
-        output_strings.append("No customer sales data available.")
-    else:
-        for customer, revenue in customer_sales.items():
-            output_strings.append(f"{customer:<30} | ${revenue:,.2f}")
 
     # --- 4. Order Dates ---
     try:
@@ -1069,11 +1179,11 @@ def get_product_details(user_id:str, name:str=None, sku:str=None, category:str=N
     Returns:
         str: A formatted string with full product info.
     """
-    logger2.info(f"Tool 'get_product_details' called called for: {user_id}")
-    df_products = pd.read_csv(os.path.join("data", user_id, "pproducts.csv"))
+    logger1.info(f"Tool 'get_product_details' called called for: {user_id}")
+    df_products = pd.read_csv(os.path.join("data", user_id, "work_prod.csv"))
     if df_products is None:
         return "Error: The products DataFrame is None. Please check file loading."
-        
+    df_products['product_variant'] = df_products['name'].astype(str) + ' - ' + df_products['sku'].astype(str)    
     # --- UPDATED ---
     if name is None and sku is None and category is None:
         return "Error: Please provide at least one filter (name, sku, or category)."
@@ -1128,7 +1238,7 @@ def get_orders_by_customer_id(user_id:str, customer_id:str)-> str:
     """
     Returns a DataFrame in md format with specific order details for a given customer_id - use get_customers tool before.
     """
-    logger2.info(f"Tool 'get_orders_by_customer' called called for: {user_id} and {customer_id}")
+    logger1.info(f"Tool 'get_orders_by_customer' called called for: {user_id} and {customer_id}")
     # Filter DataFrame by customer_id
     dataframe = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
     customer_orders_df = dataframe[dataframe['customerId'] == customer_id].copy()
@@ -1170,10 +1280,10 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
             session_id=USER_ID,
             create_tables=True,
             db_path=f"data/{USER_ID}/conversations.db",
-            logger=logger2
+            logger=logger1
         )
     except Exception as e:
-        logger2.error(f"error creating session: {e}")
+        logger1.error(f"error creating session: {e}")
 
     try:
         instructions = await prompt_agent_Ask_ai_solo(USER_ID)
@@ -1197,6 +1307,6 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
         session = session_db
 
     except Exception as e:
-        logger2.error(f"error creating agent: {e}")
+        logger1.error(f"error creating agent: {e}")
         agent, session = None
     return agent, session

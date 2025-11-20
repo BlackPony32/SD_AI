@@ -29,7 +29,6 @@ from AI.single_customer_analyze.Notes_analytics import notes_report
 from AI.group_customer_analyze.many_customer import save_customer_data, get_exported_data_many
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
-from AI.group_customer_analyze.Ask_ai_many_customers import Ask_ai_many_customers
 
 from AI.group_customer_analyze.many_customer import get_exported_data_one_file
 from AI.utils import (
@@ -46,9 +45,7 @@ from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
 
 
-from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
-from langchain_community.callbacks import get_openai_callback
 import pandas as pd
 from dotenv import load_dotenv
 import logging
@@ -335,174 +332,6 @@ async def create_reports(customer_id: str, request: ReportRequest):
 
 from functools import partial
 
-#TODO rename Ask_AI to Ask_AI_orders
-async def Ask_AI(prompt: str, file_path_product, file_path_orders, customer_id):
-    
-    try:
-        process_func = partial(
-            _process_ai_request,
-            prompt=prompt,
-            customer_id = customer_id,
-            file_path_product=file_path_product,
-            file_path_orders=file_path_orders
-        )
-        
-        # Run in process pool
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            app.state.process_executor,
-            process_func
-        )
-        logger1.info(f"User prompt: {prompt}")
-        return result
-    
-    except Exception as e:
-        logger1.error(f"Analysis failed: {e}")
-        raise
-
-def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
-    try:
-        encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
-        for encoding in encodings:
-            try:
-                df1 = pd.read_csv(file_path_product, encoding=encoding, low_memory=False)
-                df2 = pd.read_csv(file_path_orders, encoding=encoding, low_memory=False)
-                break
-            except UnicodeDecodeError:
-                logger1.warning(f"Failed decoding attempt with encoding: {encoding}")
-        #df = df1.merge(df2, on="orderId", how="left")
-        #df.to_csv('data.csv',index=False)
-        llm = ChatOpenAI(model='o3-mini') #model='o3-mini'
-        
-        agent = create_pandas_dataframe_agent(
-            llm,
-            [df1, df2],
-            agent_type="openai-tools",
-            verbose=True,
-            allow_dangerous_code=True,
-            number_of_head_rows=5,
-            max_iterations=5
-        )
-         
-        #report_path = f'data//{customer_id}//report.md'
-        try:
-            report_path = os.path.join('data', customer_id, 'report.md')
-            with open(report_path, "r") as file:
-                report = file.read()
-        except Exception as e:
-            report = 'No data given'
-            logger1.warning(f"Can not read report.md due to {e} ")
-        
-        try:
-            additional_info_path = os.path.join('data', customer_id, 'additional_info.md')
-            with open(additional_info_path, "r") as file:
-                additional_info = file.read()
-        except Exception as e:
-            additional_info = 'No data given'
-            logger1.warning(f"Can not read additional_info.md due to {e} ")
-        
-        try:
-            reorder_path = os.path.join('data', customer_id, 'reorder.md')
-            with open(reorder_path, "r") as file:
-                reorder = file.read()
-        except Exception as e:
-            reorder = 'No data given'
-            logger1.warning(f"Can not read reorder.md due to {e} ")
-         
-        
-        try:
-            report_activities_path = os.path.join('data', customer_id, 'report_activities.md')
-            with open(report_activities_path, "r") as file:
-                report_activities = file.read()
-        except Exception as e:
-            report_activities = 'No data given'
-            logger1.warning(f"Can not read report_activities.md due to {e} ")
-        
-        formatted_prompt = f"""
-        You are an AI assistant providing business insights based on two related datasets:  
-        - **df1** (Orders) contains critical order-related data or can be user activities data.  
-        - **df2** (Products) contains details about products within each order or can be user tasks data.  
-
-        Also you can use some report that i gain from data: {report}
-        Useful additional data: {additional_info}
-        Report activities additional data: {report_activities}
-        And useful additional reorder data: {reorder}
-        
-        **Important Rules to Follow:**  
-        - **Unique Values:** When answering questions about orders or products, always consider unique values.  
-        - **Neutral Wording:** Do not mention "df1" or "df2" in your response. Instead, phrase answers as "According to the user's data."  
-        - **No Column/File References:** Do not refer to specific file names or column names—focus on insights and conclusions.  
-        - **Well-Structured Markdown Formatting:** Ensure responses are clear and organized using appropriate Markdown formatting.  
-        - **No Code or Visualizations:** Do not include Python code or suggest data visualizations in your answers.  
-        - If you are sure that the question has nothing to do with the data, answer - "Your question is not related to the analysis of your data, please ask another question."
-
-        **Example Response:**  
-        **Sales Trends**  
-        - **Peak sales month:** **2023-04** (**$1,474.24**)  
-        According to the user's data, overall sales reflect a steady momentum underpinned by a balanced mix of confirmed transactions and
-        those in earlier stages. Completed orders with confirmed payments form a solid base, suggesting that key customer
-        segments are both engaged and reliable. Pending transactions indicate opportunities for growth, while recurring
-        product lines highlight sustained customer interest. The pricing strategy, with consistent margins between wholesale
-        and retail values, supports profitability and long-term stability.  
-
-        **Question:**  
-        {prompt}"""
-
-        
-        logger1.info("\n===== Metadata =====")
-        MODEL_RATES = {
-            "gpt-4.1":      {"prompt": 2.00,   "completion": 8.00},
-            "gpt-4.1-mini": {"prompt": 0.40,   "completion": 1.60},
-            "gpt-4.1-nano": {"prompt": 0.10,   "completion": 0.40},
-            "gpt-4o":       {"prompt": 2.50,   "completion": 10.00},
-            "gpt-4o-mini":  {"prompt": 0.15,   "completion": 0.60},
-            "gpt-4.5":      {"prompt": 75.00,  "completion": 150.00},
-            "o3":           {"prompt": 2.00,   "completion": 8.00},
-            "o3-mini":      {"prompt": 1.10,   "completion": 4.40},
-            "o4-mini":      {"prompt": 1.10,   "completion": 4.40},
-        }
-        
-        def calculate_cost(model_name, prompt_tokens, completion_tokens):
-            rates = MODEL_RATES.get(model_name)
-            if not rates:
-                raise ValueError(f"Unknown model: {model_name}")
-            # assume rates are $ per 1 000 000 tokens:
-            cost_per_prompt_token     = rates["prompt"]     / 1_000_000
-            cost_per_completion_token = rates["completion"] / 1_000_000
-        
-            input_cost  = prompt_tokens    * cost_per_prompt_token
-            output_cost = completion_tokens * cost_per_completion_token
-            total_cost  = input_cost + output_cost
-            return total_cost, input_cost, output_cost
-        
-        with get_openai_callback() as cb:
-            agent.agent.stream_runnable = False
-            start_time = time.time()
-            result = agent.invoke({"input": formatted_prompt})
-            execution_time = time.time() - start_time
-        
-            in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
-            cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
-        
-            logger1.info(f"Input Cost:  ${in_cost:.6f}")
-            logger1.info(f"Output Cost: ${out_cost:.6f}")
-            logger1.info(f"Total Cost:  ${cost:.6f}")
-        
-            result['metadata'] = {
-                'total_tokens': in_toks+out_toks,
-                'prompt_tokens': in_toks,
-                'completion_tokens': out_toks,
-                'execution_time': f"{execution_time:.2f} seconds",
-                'model': llm.model_name,
-            }
-
-        
-        for k, v in result['metadata'].items(): 
-            logger1.info(f"{k.replace('_', ' ').title()}: {v}")
-        return {"output": result.get('output'), "cost": cost}
-
-    except Exception as e:
-        logger1.error(f"Error in AI processing: {str(e)}")
 
 class ChatRequest(BaseModel):
     prompt: str
@@ -643,20 +472,6 @@ async def clean_chat(customer_id: str, background_tasks: BackgroundTasks):
 class ReportRequest(BaseModel):
     customer_ids: list[str]  # List of customer IDs
     entity: AllowedEntity    # Single entity, restricted to AllowedEntity values
-
-sem = asyncio.Semaphore(15)
-
-async def fetch_customer_data(customer_id: str, entities: List[str]):
-    """
-    Fetch data for multiple entities with semaphore control
-    """
-    async with sem:
-        try:
-            result = await get_exported_data_many(customer_id, entities)
-            return (customer_id, result)
-        except Exception as e:
-            logger2.error(f"Error fetching data for customer {customer_id}: {e}")
-            return (customer_id, None)
 
 
 class AI_Request(BaseModel):

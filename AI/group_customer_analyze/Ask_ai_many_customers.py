@@ -16,175 +16,7 @@ from AI.utils import get_logger
 
 logger2 = get_logger("logger2", "project_log_many.log", False)
 
-def _create_advice_tool(user_uuid: str):
-    """ More detailed information about each customer"""
-    try:
-       path_for_customers_Overall_report = os.path.join("data", user_uuid, "overall_report.txt")
-       
-       with open(path_for_customers_Overall_report, "r", encoding="utf-8") as f:
-           advice_text = f.read()
-    except FileNotFoundError:
-        logger2.error("overall_report file not found")
-        return None
-    # Split text into chunks
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_text(advice_text)
-    
-    # Create vector store
-    emb = OpenAIEmbeddings()
-    index = FAISS.from_texts(chunks, emb)
-    
-    # Define advice retrieval tool
-    @tool("AdviceTool")
-    def get_data(query: str) -> str:
-        '''Use this tool to fetch detailed customer statistics and insights from the overall report. Input should be a specific topic or question.'''
-        docs = index.similarity_search(query, k=12)
-        return "\n".join(d.page_content for d in docs)
-        
-    return get_data
 
-
-async def Ask_ai_many_customers(prompt: str, user_uuid: str):
-    try:
-        encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
-        file_path_product = os.path.join('data', user_uuid, 'oorders.csv')
-        file_path_orders = os.path.join('data', user_uuid, 'pproducts.csv')
-        for encoding in encodings:
-            try:
-                df1 = pd.read_csv(file_path_product, encoding=encoding, low_memory=False)
-                df2 = pd.read_csv(file_path_orders, encoding=encoding, low_memory=False)
-                break
-            except UnicodeDecodeError:
-                logger2.warning(f"Failed decoding attempt with encoding: {encoding}")
-
-        llm = ChatOpenAI(model='gpt-4.1-mini') #model='o3-mini'  gpt-4.1-mini
-
-        # Create advice tool
-        advice_tool = _create_advice_tool(user_uuid)
-
-        # Create agent with extra tool
-        agent = create_pandas_dataframe_agent(
-            llm,
-            [df1, df2],
-            agent_type="openai-tools",
-            verbose=True,
-            allow_dangerous_code=True,
-            number_of_head_rows=5,
-            max_iterations=5,
-            extra_tools=[advice_tool] if advice_tool else []  # Add tool if available
-        )
-         
-
-        try:
-            full_report_path = os.path.join('data', user_uuid, 'full_report.md')
-            with open(full_report_path, "r") as file:
-                full_report = file.read()
-        except Exception as e:
-            full_report = 'No data given'
-            logger2.warning(f"Can not read additional_info.md due to {e} ")
-        
-        try:
-            promo_rules_path = os.path.join('AI', 'group_customer_analyze', 'promo_rules.txt')
-            with open(promo_rules_path, "r") as file:
-                recommendations = file.read()
-        except Exception as e:
-            recommendations = 'No data given'
-            logger2.warning(f"Can not read additional_info.md due to {e} ")
-
-
-        formatted_prompt = f"""
-        You are an AI assistant which answers users' questions about the data you have 
-        providing business insights based on two related datasets and files:  
-        - **df1** (Orders) contains critical order-related data or can be user activities data.  
-        - **df2** (Products) contains details about products within each order or can be user tasks data.  
-
-        Calculated data for all customers in a joint report: {full_report}
-
-        some additional data that you can use to make recommendations to the customer: {recommendations}
-        
-        **Important Rules to Follow:**  
-        - **Unique Values:** When answering questions about orders or products, always consider unique values.  
-        - **Neutral Wording:** Do not mention "df1" or "df2" in your response. Instead, phrase answers as "According to the user's data."  
-        - **No Column/File References:** Do not refer to specific file names or column names—focus on insights and conclusions.  
-        - **Well-Structured Markdown Formatting:** Ensure responses are clear and organized using appropriate Markdown formatting.  
-        - **No Code or Visualizations:** Do not include Python code or suggest data visualizations in your answers.  
-        - If you are sure that the question has nothing to do with the data, answer - "Your question is not related to the analysis of your data, please ask another question."
-
-        
-        **Example Response:**  
-        **Sales Trends**  
-        - **Peak sales month:** **2023-04** (**$1,474.24**)  
-        According to the user's data, overall sales reflect a steady momentum underpinned by a balanced mix of confirmed transactions and
-        those in earlier stages. Completed orders with confirmed payments form a solid base, suggesting that key customer
-        segments are both engaged and reliable. Pending transactions indicate opportunities for growth, while recurring
-        product lines highlight sustained customer interest. The pricing strategy, with consistent margins between wholesale
-        and retail values, supports profitability and long-term stability.  
-
-        -  **Use AdviceTool**: It may already contain the answer to the question. or if the question concerns more detailed data on customers or products. 
-        This tool searches the txt file for data that matches the question.
-
-        **Question:**  
-
-        {prompt}"""
-
-        logger2.info("\n===== Metadata =====")
-        MODEL_RATES = {
-            "gpt-4.1":      {"prompt": 2.00,   "completion": 8.00},
-            "gpt-4.1-mini": {"prompt": 0.40,   "completion": 1.60},
-            "gpt-4.1-nano": {"prompt": 0.10,   "completion": 0.40},
-            "gpt-4o":       {"prompt": 2.50,   "completion": 10.00},
-            "gpt-4o-mini":  {"prompt": 0.15,   "completion": 0.60},
-            "gpt-4.5":      {"prompt": 75.00,  "completion": 150.00},
-            "o3":           {"prompt": 2.00,   "completion": 8.00},
-            "o3-mini":      {"prompt": 1.10,   "completion": 4.40},
-            "o4-mini":      {"prompt": 1.10,   "completion": 4.40},
-            "gpt-5":        {"prompt": 1.25,   "completion": 10.00},
-        }
-        
-        def calculate_cost(model_name, prompt_tokens, completion_tokens):
-            rates = MODEL_RATES.get(model_name)
-            if not rates:
-                raise ValueError(f"Unknown model: {model_name}")
-            # assume rates are $ per 1 000 000 tokens:
-            cost_per_prompt_token     = rates["prompt"]     / 1_000_000
-            cost_per_completion_token = rates["completion"] / 1_000_000
-        
-            input_cost  = prompt_tokens    * cost_per_prompt_token
-            output_cost = completion_tokens * cost_per_completion_token
-            total_cost  = input_cost + output_cost
-            return total_cost, input_cost, output_cost
-        
-        with get_openai_callback() as cb:
-            agent.agent.stream_runnable = False
-            start_time = time.time()
-            result = agent.invoke({"input": formatted_prompt})
-            execution_time = time.time() - start_time
-        
-            in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
-            cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
-        
-            logger2.info("Agent for func:  Ask_ai_many_customers")
-            logger2.info(f"Input Cost:  ${in_cost:.6f}")
-            logger2.info(f"Output Cost: ${out_cost:.6f}")
-            logger2.info(f"Total Cost:  ${cost:.6f}")
-        
-            result['metadata'] = {
-                'total_tokens': in_toks+out_toks,
-                'prompt_tokens': in_toks,
-                'completion_tokens': out_toks,
-                'execution_time': f"{execution_time:.2f} seconds",
-                'model': llm.model_name,
-            }
-
-        
-        for k, v in result['metadata'].items():
-            logger2.info(f"{k.replace('_', ' ').title()}: {v}")
-
-        return {"output": result.get('output'), "cost": cost}
-
-    except Exception as e:
-        logger2.error(f"Error in AI processing: {str(e)}")
-        return {"error": 'invalid_uuid', "cost": 0}
     
 #Test block of new Ai conversation
 import logging
@@ -196,7 +28,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from agents.extensions.memory import AdvancedSQLiteSession
-
+from pathlib import Path
 from typing import List, AsyncGenerator, Tuple, Any
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report, prompt_agent_create_sectioned, prompt_for_state_agent
 import pandas as pd
@@ -257,51 +89,49 @@ def Detailed_statistics_tool(user_id:str, query: str) -> str:
 
 
 @function_tool
-def get_top_n_orders(user_id:str, n : int, by_type:str) -> str:
+def get_top_n_orders(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
     """
-    Gets the top N orders from the DataFrame based on revenue or quantity.
-
-    Args:
-        user_id str: Use given user id.
-        n (int): The number of top orders to return.
-        by_type (str): The criteria to sort by. 
-                       Must be 'revenue' or 'totalQuantity'.
-
-    Returns:
-        str: A formatted string of the top N orders.
+    Gets the top (or bottom) N orders based on revenue or quantity.
     """
+    logger2.info(f"Tool 'get_top_n_orders' called for: {user_id} order: {sort_order}")
     
-    # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_orders' called called for: {user_id}")
-    dataf = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
+    # 1. Path Setup
+    csv_path = Path("data") / user_id / "oorders.csv"
+    if not csv_path.exists():
+        return f"Error: File not found at {csv_path}"
+
     try:
+        dataf = pd.read_csv(csv_path)
         relevant_cols = ['customId_customId', 'customer_name', 'totalAmount', 'totalQuantity']
         df_copy = dataf[relevant_cols].copy()
     except KeyError as e:
-        return f"Error: Missing expected column in DataFrame: {e}. Available columns: {dataf.columns.tolist()}"
+        return f"Error: Missing column: {e}. Available: {dataf.columns.tolist()}"
+    except Exception as e:
+        return f"Error reading CSV: {e}"
 
-    # Determine the sort column
+    # 2. Determine sort column
     if by_type == 'revenue':
         sort_column = 'totalAmount'
     elif by_type == 'totalQuantity':
         sort_column = 'totalQuantity'
     else:
-        return "Invalid 'by_type' parameter. Please choose 'revenue' or 'totalQuantity'."
+        return "Invalid 'by_type'. Choose 'revenue' or 'totalQuantity'."
 
-    # Sort the DataFrame and get the top N
-    top_n_df = df_copy.sort_values(by=sort_column, ascending=False).head(n)
+    # 3. Sort Logic
+    is_ascending = True if sort_order == 'asc' else False
+    top_n_df = df_copy.sort_values(by=sort_column, ascending=is_ascending).head(n)
 
-    # Fill potential NaN values in text fields for clean printing
+    # 4. Formatting
     top_n_df_filled = top_n_df.fillna({'customId_customId': 'N/A', 'customer_name': 'N/A'})
+    
+    direction_label = "Bottom" if sort_order == 'asc' else "Top"
+    output_strings = [
+        f"--- {direction_label} {n} Orders by {by_type.capitalize()} ---",
+        "\nCustom ID - Customer Name - Revenue - Total Quantity",
+        "-" * 60
+    ]
 
-    # Format the output string
-    output_strings = []
-    output_strings.append(f"--- Top {n} Orders by {by_type.capitalize()} ---")
-    output_strings.append("\nCustom ID - Customer Name - Revenue - Total Quantity")
-    output_strings.append("-" * 60) # Separator line
-
-    for index, row in top_n_df_filled.iterrows():
-        # Format totalAmount as currency and totalQuantity as an integer
+    for _, row in top_n_df_filled.iterrows():
         formatted_row = (
             f"{row['customId_customId']} - "
             f"{row['customer_name']} - "
@@ -313,44 +143,37 @@ def get_top_n_orders(user_id:str, n : int, by_type:str) -> str:
     return '\n'.join(output_strings)
 
 @function_tool
-def get_top_n_customers(user_id:str, n : int, by_type:str)-> str:
+def get_top_n_customers(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
     """
-    Gets the top N customers from the DataFrame based on aggregated 
-    revenue or quantity.
-
-    Args:
-        user_id str: Use given user id.
-        n (int): The number of top customers to return.
-        by_type (str): The criteria to sort by. 
-                       Must be 'revenue', 'totalQuantity', or 'orderCount'.
-
-    Returns:
-        str: A formatted string of the top N customers.
+    Gets the top (or bottom) N customers based on aggregated revenue or quantity.
     """
+    logger2.info(f"Tool 'get_top_n_customers' called for: {user_id} order: {sort_order}")
     
-    # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_customers' called called for: {user_id} and type = {by_type} for {n}")
-    dataf = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
+    # 1. Path Setup
+    csv_path = Path("data") / user_id / "oorders.csv"
+    if not csv_path.exists():
+        return f"Error: File not found at {csv_path}"
+
     try:
+        dataf = pd.read_csv(csv_path)
         relevant_cols = ['customer_name', 'totalAmount', 'totalQuantity', 'id']
         df_copy = dataf[relevant_cols].copy()
     except KeyError as e:
-        return f"Error: Missing expected column in DataFrame: {e}. Available columns: {dataf.columns.tolist()}"
+        return f"Error: Missing column: {e}. Available: {dataf.columns.tolist()}"
 
-    # Aggregate data by customer
+    # 2. Aggregation
     customer_agg = df_copy.groupby('customer_name').agg(
         totalRevenue=('totalAmount', 'sum'),
         totalQuantity=('totalQuantity', 'sum'),
         orderCount=('id', 'count')
     ).reset_index()
 
-    # Calculate average order value
     customer_agg['averageOrderValue'] = customer_agg.apply(
         lambda row: row['totalRevenue'] / row['orderCount'] if row['orderCount'] > 0 else 0,
         axis=1
     )
 
-    # Determine the sort column
+    # 3. Determine sort column
     if by_type == 'revenue':
         sort_column = 'totalRevenue'
     elif by_type == 'totalQuantity':
@@ -358,22 +181,23 @@ def get_top_n_customers(user_id:str, n : int, by_type:str)-> str:
     elif by_type == 'orderCount':
         sort_column = 'orderCount'
     else:
-        return ("Invalid 'by_type' parameter. Please choose 'revenue', "
-                "'totalQuantity', or 'orderCount'.")
+        return "Invalid 'by_type'. Choose 'revenue', 'totalQuantity', or 'orderCount'."
 
-    # Sort the DataFrame and get the top N
-    top_n_df = customer_agg.sort_values(by=sort_column, ascending=False).head(n)
-
-    # Fill potential NaN values in text fields for clean printing
+    # 4. Sort Logic
+    is_ascending = True if sort_order == 'asc' else False
+    top_n_df = customer_agg.sort_values(by=sort_column, ascending=is_ascending).head(n)
+    
+    # 5. Formatting
     top_n_df_filled = top_n_df.fillna({'customer_name': 'N/A'})
+    
+    direction_label = "Bottom" if sort_order == 'asc' else "Top"
+    output_strings = [
+        f"--- {direction_label} {n} Customers by {by_type.capitalize()} ---",
+        "\nCustomer Name - Total Revenue - Total Quantity - Order Count - Avg. Order Value",
+        "-" * 80
+    ]
 
-    # Format the output string
-    output_strings = []
-    output_strings.append(f"--- Top {n} Customers by {by_type.capitalize()} ---")
-    output_strings.append("\nCustomer Name - Total Revenue - Total Quantity - Order Count - Avg. Order Value")
-    output_strings.append("-" * 80) # Separator line
-
-    for index, row in top_n_df_filled.iterrows():
+    for _, row in top_n_df_filled.iterrows():
         formatted_row = (
             f"{row['customer_name']} - "
             f"${row['totalRevenue']:,.2f} - "
@@ -386,53 +210,42 @@ def get_top_n_customers(user_id:str, n : int, by_type:str)-> str:
     return '\n'.join(output_strings)
 
 @function_tool
-def get_top_n_products(user_id:str, n : int, by_type:str)-> str:
+def get_top_n_products(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
     """
-    Gets the top N products from the DataFrame based on aggregated 
-    revenue or quantity.
-
-    Args:
-        user_id str: Use given user id.
-        n (int): The number of top customers to return.
-        by_type (str): The criteria to sort by. 
-                       Must be 'revenue', 'totalQuantity', or 'orderCount'.
-
-    Returns:
-        str: A formatted string of the top N customers.
+    Gets the top (or bottom) N products based on aggregated revenue or quantity.
     """
+    logger2.info(f"Tool 'get_top_n_products' called for: {user_id} order: {sort_order}")
     
-    # Select and copy the relevant columns
-    logger2.info(f"Tool 'get_top_n_products' called called for: {user_id} and type = {by_type} for {n}")
-    dataf = pd.read_csv(os.path.join("data", user_id, "pproducts.csv"))
-    # Select and copy the relevant columns
+    # 1. Path Setup
+    csv_path = Path("data") / user_id / "pproducts.csv"
+    if not csv_path.exists():
+        return f"Error: File not found at {csv_path}"
+
     try:
+        dataf = pd.read_csv(csv_path)
         relevant_cols = ['product_variant', 'totalAmount', 'quantity', 'orderId', 'customer_name']
         df_copy = dataf[relevant_cols].copy()
     except KeyError as e:
-        return f"Error: Missing expected column in DataFrame: {e}. Available columns: {dataf.columns.tolist()}"
+        return f"Error: Missing column: {e}. Available: {dataf.columns.tolist()}"
 
-    # Aggregate data by product_variant
+    # 2. Aggregation
     product_agg = df_copy.groupby('product_variant').agg(
         totalRevenue=('totalAmount', 'sum'),
         totalQuantity=('quantity', 'sum'),
-        orderCount=('orderId', 'nunique'), # Count distinct orders
-        customerCount=('customer_name', 'nunique') # Count distinct customers
+        orderCount=('orderId', 'nunique'),
+        customerCount=('customer_name', 'nunique')
     ).reset_index()
 
-    # Calculate average revenue per order
     product_agg['avgRevenuePerOrder'] = product_agg.apply(
         lambda row: row['totalRevenue'] / row['orderCount'] if row['orderCount'] > 0 else 0,
         axis=1
     )
-    
-    # Calculate average quantity per order
     product_agg['avgQuantityPerOrder'] = product_agg.apply(
         lambda row: row['totalQuantity'] / row['orderCount'] if row['orderCount'] > 0 else 0,
         axis=1
     )
 
-
-    # Determine the sort column
+    # 3. Determine sort column
     if by_type == 'revenue':
         sort_column = 'totalRevenue'
     elif by_type == 'totalQuantity':
@@ -440,22 +253,23 @@ def get_top_n_products(user_id:str, n : int, by_type:str)-> str:
     elif by_type == 'orderCount':
         sort_column = 'orderCount'
     else:
-        return ("Invalid 'by_type' parameter. Please choose 'revenue', "
-                "'totalQuantity', or 'orderCount'.")
+        return "Invalid 'by_type'. Choose 'revenue', 'totalQuantity', or 'orderCount'."
 
-    # Sort the DataFrame and get the top N
-    top_n_df = product_agg.sort_values(by=sort_column, ascending=False).head(n)
+    # 4. Sort Logic
+    is_ascending = True if sort_order == 'asc' else False
+    top_n_df = product_agg.sort_values(by=sort_column, ascending=is_ascending).head(n)
 
-    # Fill potential NaN values in text fields for clean printing
+    # 5. Formatting
     top_n_df_filled = top_n_df.fillna({'product_variant': 'N/A'})
 
-    # Format the output string
-    output_strings = []
-    output_strings.append(f"--- Top {n} Products by {by_type.capitalize()} ---")
-    output_strings.append("\nProduct - Total Revenue - Total Quantity - Order Count - Unique Customers - Avg. Qty/Order")
-    output_strings.append("-" * 100) # Separator line
+    direction_label = "Bottom" if sort_order == 'asc' else "Top"
+    output_strings = [
+        f"--- {direction_label} {n} Products by {by_type.capitalize()} ---",
+        "\nProduct - Total Revenue - Total Quantity - Order Count - Unique Customers - Avg. Qty/Order",
+        "-" * 100
+    ]
 
-    for index, row in top_n_df_filled.iterrows():
+    for _, row in top_n_df_filled.iterrows():
         formatted_row = (
             f"{row['product_variant']} - "
             f"${row['totalRevenue']:,.2f} - "

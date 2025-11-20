@@ -323,7 +323,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             merged_df['sku'] = merged_df['sku'].fillna('unknown').astype(str)
             merged_df['size'] = merged_df['size'].fillna('unknown size').astype(str)
             merged_df['product'] = merged_df['name'].astype(str) + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
-            merged_df.to_csv('deleteee.csv')
+            #merged_df.to_csv('deleteee.csv')
             # Total sales by payment and delivery status
             total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
 
