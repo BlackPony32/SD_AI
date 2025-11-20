@@ -287,8 +287,6 @@ async def analyze_activities(file_path_notes: str, file_path_tasks: str, file_pa
          
     # Write the report to file, handling potential write errors
     try:
-        async with aiofiles.open('business_activities_report.md', 'w') as f:
-            await f.write(report)
         return report
     except Exception as e:
         logging.error(f"Error writing report: {e}")

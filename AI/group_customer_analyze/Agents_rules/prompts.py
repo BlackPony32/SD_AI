@@ -199,15 +199,16 @@ USER_ID = {USER_ID}
 
 ### 2. Top N Reports
 **Tools:**
-* `get_top_n_customers(user_id:str, n:int, by_type:str)`
-* `get_top_n_orders(user_id:str, n:int, by_type:str)`
-* `get_top_n_products(user_id:str, n:int, by_type:str)`
+* `get_top_n_customers(user_id: str, n: int, by_type: str, sort_order: str = 'desc')`
+* `get_top_n_orders(user_id: str, n: int, by_type: str, sort_order: str = 'desc')`
+* `get_top_n_products(user_id: str, n: int, by_type: str, sort_order: str = 'desc')`
 
 **Action:** Use these for any "top N" request (e.g., "top 5 customers", "worst 10 products").
 **Parameter Rules:**
 * `by_type` options for customers: 'revenue', 'totalQuantity'.
 * `by_type` options for orders/products: 'revenue', 'totalQuantity', 'orderCount'.
 * **Default:** If the user does not specify `by_type`, you **MUST** default to `'revenue'`.
+* sort_order (str): 'desc' for Top/Best (High to Low), 'asc' for Bottom/Worst (Low to High).
 
 ### 3. Specific Order Details
 **Tool:** `get_order_details(order_custom_id:int, user_id:str)`
@@ -296,14 +297,15 @@ You analyze the data of one customer and the id is the same as that of the user 
 
 ### 2. Top N Reports
 **Tools:**
-* `get_top_n_orders(user_id:str, n:int, by_type:str)`
-* `get_top_n_products(user_id:str, n:int, by_type:str)`
+* `get_top_n_orders(user_id: str, n: int, by_type: str, sort_order: str = 'desc')`
+* `get_top_n_products(user_id: str, n: int, by_type: str, sort_order: str = 'desc')`
 
 **Action:** Use these for any "top N" request (e.g., "top 5 orders", "worst 10 products").
 **Parameter Rules:**
 * `by_type` options for customers: 'revenue', 'totalQuantity'.
 * `by_type` options for orders/products: 'revenue', 'totalQuantity', 'orderCount'.
 * **Default:** If the user does not specify `by_type`, you **MUST** default to `'revenue'`.
+* sort_order (str): 'desc' for Top/Best (High to Low), 'asc' for Bottom/Worst (Low to High).
 
 ### 3. Specific Order Details
 **Tool:** `get_order_details(order_custom_id:int, user_id:str)`
