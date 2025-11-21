@@ -529,6 +529,24 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
     user_uuid = request.uuid
     prompt = request.prompt
 
+    user_data_folder = os.path.join('data', user_uuid)
+    
+    if not os.path.exists(user_data_folder):
+        logger2.warning(f"Attempt to access non-existent data folder: {user_uuid}")
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "detail": [
+                    {
+                        "loc": ["body", "uuid"],
+                        "msg": "Invalid UUID provided. Data files not found.",
+                        "type": "value_error"
+                    }
+                ]
+            }
+        )
+    # ----------------------
+
     pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt}'
     try:
         # Use AI function to get response
@@ -546,23 +564,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         from pprint import pprint
         print(answer)
 
-        
-        # Check if response indicates an invalid UUID
-        #if answer.get('error') == 'invalid_uuid':
-        #    return JSONResponse(
-        #        status_code=status.HTTP_404_NOT_FOUND,
-        #        content={
-        #            "detail": [
-        #                {
-        #                    "loc": ["body", "uuid"],
-        #                    "msg": "Invalid UUID provided",
-        #                    "type": "value_error"
-        #                }
-        #            ]
-        #        }
-        #    )
-        
-        
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -793,17 +795,41 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         file_path_customers = os.path.join(user_folder,  filename_customers) 
 
         print(f"Step 0 - Starting data fetch for id {uuid}: {time.perf_counter() - start_time:.2f}s")
+        try:
+            # Fetch data concurrently
+            entities_orders = ["orders"]
+            entities_products = ["order_products"] 
+            entities_customers = ["customer"]
 
-        # Fetch data concurrently
-        entities_orders = ["orders"]
-        entities_products = ["order_products"] 
-        entities_customers = ["customer"]
+            result_1, result_2, result_3 = await asyncio.gather(
+                get_exported_data_one_file(customer_ids, entities_orders),
+                get_exported_data_one_file(customer_ids, entities_products),
+                get_exported_data_one_file(customer_ids, entities_customers)
+            )
+        except Exception as e:
+            error_message = str(e)
+            logger2.error(f"Data processing/fetching error: {error_message}")
+            if "URL component 'query' too long" in error_message:
+             return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={
+                    "Status": "Failed",
+                    "Reason": "Too many customer IDs provided. The request URL exceeded the length limit."
+                }
+            )
 
-        result_1, result_2, result_3 = await asyncio.gather(
-            get_exported_data_one_file(customer_ids, entities_orders),
-            get_exported_data_one_file(customer_ids, entities_products),
-            get_exported_data_one_file(customer_ids, entities_customers)
-        )
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "detail": [
+                        {
+                            "loc": ["server", "data_fetching"],
+                            "msg": f"Critical error during data retrieval: {error_message}",
+                            "type": "data_fetch_error"
+                        }
+                    ]
+                }
+            )
 
         print(f"Step 1 - Data fetch completed: {time.perf_counter() - start_time:.2f}s")
 
