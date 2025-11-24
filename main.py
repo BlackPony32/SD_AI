@@ -30,7 +30,7 @@ from AI.group_customer_analyze.many_customer import save_customer_data, get_expo
 from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
 from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
 
-from AI.group_customer_analyze.many_customer import get_exported_data_one_file
+from AI.group_customer_analyze.many_customer import get_exported_data_one_file, post_get_exported_data_one_file
 from AI.utils import (
     _process_and_save_file_data, read_dataframe_async, save_dataframe_async
 )
@@ -616,6 +616,7 @@ class ReportRequest(BaseModel):
         title="Report Type",
         description="Specify which report section to generate. Defaults to the full report."
     )
+    uuid: Optional[str] = None
     entity: AllowedEntity    # Single entity, restricted to AllowedEntity values
 
 def _sync_comparison_logic(df_1: pd.DataFrame, 
@@ -777,7 +778,8 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         start_time = time.perf_counter()
         customer_ids = request.customer_ids
         report_type = request.report_type
-        uuid = str(uuid4())
+
+        uuid = request.uuid or str(uuid4())
 
         # Create directory structure
         user_folder = os.path.join('data', uuid, 'work_data_folder')
@@ -802,9 +804,9 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
             entities_customers = ["customer"]
 
             result_1, result_2, result_3 = await asyncio.gather(
-                get_exported_data_one_file(customer_ids, entities_orders),
-                get_exported_data_one_file(customer_ids, entities_products),
-                get_exported_data_one_file(customer_ids, entities_customers)
+                post_get_exported_data_one_file(customer_ids, entities_orders),
+                post_get_exported_data_one_file(customer_ids, entities_products),
+                post_get_exported_data_one_file(customer_ids, entities_customers)
             )
         except Exception as e:
             error_message = str(e)

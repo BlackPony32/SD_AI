@@ -1572,7 +1572,7 @@ async def statistics_runner(uuid:str):
 
     runner = await Runner.run(
         agent, 
-        input="BFollow the instructions carefully—build the report according to my data.."
+        input="Follow the instructions carefully—build the report according to my data.."
     )
     answer = runner.final_output 
     #print(answer)
