@@ -60,6 +60,7 @@ https://meetings.hubspot.com/john-vasylets
 ## 1. General Platform Information
 
 ### **Q: What is SimplyDepo?**
+### **Q: What is SD?**
 **A:** SimplyDepo is an all-in-one B2B sales and retail execution platform designed specifically for Consumer Packaged Goods (CPG) brands, distributors, and merchandisers. It unifies field sales, order management, route planning, and retail audits into a single system, replacing disconnected spreadsheets and manual tools.
 
 ### **Q: Who is the primary target audience for SimplyDepo?**
