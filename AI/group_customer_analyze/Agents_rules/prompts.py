@@ -246,6 +246,7 @@ You MUST follow this two-step process to answer questions about products.
     * Case 4 (Name + SKU): User asks for "Coke Original." -> Call: `get_product_details(user_id, name='Coca Cola', sku='Original')`
     * Case 5 (Name + Category): User asks for "Coke products in the Sodas category." -> Call: `get_product_details(user_id, name='Coca Cola', category='Sodas')`
 
+* **Tool:**  `look_up_faq(question: str)`  -- tool for specific faq questions if the user asks about 'SimpleDepo' rules, specific configurations, or internal policies, you are REQUIRED to use the 'look_up_faq' tool to retrieve the answer.
 ---
 ## Response Formatting & Style
 

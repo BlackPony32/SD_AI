@@ -192,6 +192,51 @@ async def save_customer_data(
     await asyncio.gather(*tasks)
     return results
 
+async def post_get_exported_data_one_file(customer_ids: List[str], entities: List[str]) -> dict:
+    """
+    Fetch data for multiple customers and entities in a single request as one file
+    """
+    SD_API_URL = os.getenv('SD_API_URL')
+    if not SD_API_URL:
+        raise Exception("SD_API_URL environment variable is not set")
+    
+    body = {
+        "customer_ids": customer_ids,
+        "entities": entities,
+        "one_file": True
+    }
+
+    headers = {
+        "x-api-key": os.getenv('X_API_KEY'),
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        for attempt in range(3):
+            try:
+                response = await client.post(SD_API_URL, json=body, headers=headers)
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    file_url = data.get("fileUrl") or data.get("fileUrls", [None])[0]
+                    if not file_url:
+                        raise Exception("No fileUrl in response")
+                    
+                    file_content = await download_file(client, file_url, "combined")
+
+                    return {"files": {"combined": file_content}}
+
+                elif response.status_code == 429:
+                    await asyncio.sleep(1 * (2 ** attempt))
+
+                else:
+                    raise Exception(f"HTTP Error {response.status_code}: {response.text}")
+
+            except Exception as e:
+                if attempt == 2:
+                    raise Exception(f"Failed after retries: {e}")
+                await asyncio.sleep(5 * (2 ** attempt))
     
 
 async def get_exported_data_one_file(customer_ids: List[str], entities: List[str]) -> dict:
@@ -212,7 +257,7 @@ async def get_exported_data_one_file(customer_ids: List[str], entities: List[str
     async with httpx.AsyncClient() as client:
         for attempt in range(3):
             try:
-                response = await client.get(SD_API_URL, params=params, headers=headers)
+                response = await client.post(SD_API_URL, params=params, headers=headers)
                 if response.status_code == 200:
                     data = response.json()
                     file_url = data.get("fileUrl")
