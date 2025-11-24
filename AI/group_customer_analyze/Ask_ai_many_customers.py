@@ -716,8 +716,8 @@ faq_engine = SimpleVectorStore(FAQ_FILE_PATH)
 @function_tool
 def look_up_faq(question: str) -> str:
     """
-    Searches the company FAQ (Frequently Asked Questions) text file 
-    to find answers to user questions about policies, hours, or features.
+    Searches the FAQ (Frequently Asked Questions) text file 
+    to find answers to user questions about policies or features.
 
     Args:
         question: The specific question or topic the user is asking about.
