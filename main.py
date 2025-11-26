@@ -45,7 +45,6 @@ from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
 
 
-from langchain_openai import ChatOpenAI
 import pandas as pd
 from dotenv import load_dotenv
 import logging
@@ -547,7 +546,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         )
     # ----------------------
 
-    pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt}'
+    pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt} ?'
     try:
         # Use AI function to get response
         #response = await Ask_ai_many_customers(prompt, user_uuid)
