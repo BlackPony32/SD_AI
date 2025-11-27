@@ -23,7 +23,7 @@ logger2 = get_logger("logger2", "project_log_many.log", False)
 
 
 def process_data(uuid):
-    """Process customer, order, and product data, saving the result to 'final_data.csv' with left joins to retain all product rows."""
+    """Process customer, order, and product data, saving the result to 'customers_state_final.csv' with left joins to retain all product rows."""
     
     # Load datasets with selected columns "data/{uuid}/raw_data/concatenated_customers.csv"
     customers = pd.read_csv(f"data/{uuid}/work_data_folder/one_file_customers.csv", usecols=[
@@ -111,7 +111,7 @@ def process_data(uuid):
     final_df.drop(columns=['orderId'], inplace=True, errors='ignore')  # Drop redundant column if exists
 
     # Save to CSV
-    final_df.to_csv(f'data/{uuid}/final_data.csv', index=False)
+    final_df.to_csv(f'data/{uuid}/customers_state_final.csv', index=False)
 
     # Optional: Print total revenue and order count for validation
     total_revenue = final_df['line_item_total'].sum()
@@ -126,7 +126,7 @@ def generate_report(uuid):
         return f"${amount:,.2f}"
 
     # Read and preprocess data
-    df = pd.read_csv(f'data/{uuid}/final_data.csv')
+    df = pd.read_csv(f'data/{uuid}/customers_state_final.csv')
     
     # Clean data - focus on the columns we need
     df['Full_cost_withDisc'] = pd.to_numeric(df['Full_cost_withDisc'], errors='coerce').fillna(0)
@@ -334,7 +334,7 @@ async def make_product_per_state_analysis(uuid):
     """Execute data processing followed by report generation."""
     await async_process_data(uuid)
     await async_generate_report(uuid)
-    ans = await analyze_final_data(f'data/{uuid}/final_data.csv',uuid)
+    ans = await analyze_final_data(f'data/{uuid}/customers_state_final.csv',uuid)
     raw = str(ans.get('output') or "")
     return raw
 
