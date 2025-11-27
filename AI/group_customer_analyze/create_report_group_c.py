@@ -1507,7 +1507,7 @@ async def new_generate_analytics_report(orders_df, products_df, customer_df, uui
 
 from typing import List, AsyncGenerator, Tuple, Any
 from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
-llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
 
 
 @function_tool
