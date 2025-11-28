@@ -95,6 +95,7 @@ def get_top_n_orders(
     by_type: str, 
     sort_order: str = 'desc', 
     start_date: str = None, 
+    end_date: str = None,
     status_filter: str = None
 ) -> str:
     """
@@ -107,10 +108,11 @@ def get_top_n_orders(
     - by_type: 'revenue' or 'totalQuantity'.
     - sort_order: 'desc' (Highest first) or 'asc' (Lowest first).
     - start_date: Filter orders created ON or AFTER this date. Format: 'YYYY-MM-DD'.
+    - end_date: Filter data from start day to this date (YYYY-MM-DD).
     - status_filter: Filter by specific order status. 
       VALID VALUES: orderStatus - ['COMPLETED', 'PENDING' or None].
     """
-    logger2.info(f"Tool 'get_top_n_orders' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  status_filter: {status_filter}")
+    logger2.info(f"Tool 'get_top_n_orders' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  status_filter: {status_filter}, end_date: {end_date}")
     # 1. Path Setup
     csv_path = Path("data") / user_id / "oorders.csv"
     if not csv_path.exists():
@@ -143,6 +145,16 @@ def get_top_n_orders(
             df_filtered = df_filtered[df_filtered['createdAt'] >= start_dt]
         except Exception:
             return "Error: Invalid start_date format. Use 'YYYY-MM-DD'."
+
+    if end_date:
+        try:
+            # Convert input 'YYYY-MM-DD' to datetime compatible with the dataframe
+            end_dt = pd.to_datetime(end_date).tz_localize('UTC') # Assuming input is UTC or making it aware
+            # Filter: Date in row must be >= start_date
+            df_filtered = df_filtered[df_filtered['createdAt'] <= end_dt]
+    
+        except Exception:
+            return "Error: Invalid end_date format. Use 'YYYY-MM-DD'."
 
     # B) Status Filter (Strict Matching)
     if status_filter:
@@ -181,7 +193,8 @@ def get_top_n_customers(
     n: int, 
     by_type: str, 
     sort_order: str = 'desc', 
-    start_date: str = None
+    start_date: str = None,
+    end_date: str = None,
 ) -> str:
     """
     Gets the top (or bottom) N customers based on aggregated revenue, quantity, or order count,
@@ -193,9 +206,10 @@ def get_top_n_customers(
     - by_type: 'revenue', 'totalQuantity', or 'orderCount'.
     - sort_order: 'desc' (Best) or 'asc' (Worst).
     - start_date: Include only orders created ON or AFTER this date (YYYY-MM-DD).
+    - end_date: Filter data from start day to this date (YYYY-MM-DD).
 
     """
-    logger2.info(f"Tool 'get_top_n_customers' called for: {user_id} order: {sort_order},   by_type: {by_type}, start_date: {start_date}")
+    logger2.info(f"Tool 'get_top_n_customers' called for: {user_id} order: {sort_order},   by_type: {by_type}, start_date: {start_date}, end_date: {end_date}")
     # 1. Path Setup
     csv_path = Path("data") / user_id / "oorders.csv"
     if not csv_path.exists():
@@ -223,6 +237,15 @@ def get_top_n_customers(
         except Exception:
             return "Error: Invalid start_date format. Use 'YYYY-MM-DD'."
 
+    if end_date:
+        try:
+            # Convert input 'YYYY-MM-DD' to datetime compatible with the dataframe
+            end_dt = pd.to_datetime(end_date).tz_localize('UTC') # Assuming input is UTC or making it aware
+            # Filter: Date in row must be >= start_date
+            df_filtered = df_filtered[df_filtered['createdAt'] <= end_dt]
+    
+        except Exception:
+            return "Error: Invalid end_date format. Use 'YYYY-MM-DD'."
 
     if df_filtered.empty:
         return "No customer activity found for the specified period/status."
@@ -284,6 +307,7 @@ def get_top_n_products(
     by_type: str, 
     sort_order: str = 'desc', 
     start_date: str = None,
+    end_date: str = None,
     group_by: str = 'variant'
 ) -> str:
     """
@@ -295,12 +319,13 @@ def get_top_n_products(
     - by_type: 'revenue', 'totalQuantity', 'orderCount'.
     - sort_order: 'desc' (Best) or 'asc' (Worst).
     - start_date: Filter data from this date (YYYY-MM-DD).
+    - end_date: Filter data from start day to this date (YYYY-MM-DD).
     - group_by: Aggregation level. Options: 
         'variant' (Specific Product), 
         'category' (Product Category), 
         'manufacturer' (Brand/Manufacturer).
     """
-    logger2.info(f"Tool 'get_top_n_products' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  group_by: {group_by}")
+    logger2.info(f"Tool 'get_top_n_products' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  group_by: {group_by}, end_date: {end_date}")
     
     # 1. Path Setup
     csv_path = Path("data") / user_id / "pproducts.csv"
@@ -330,9 +355,20 @@ def get_top_n_products(
             df_copy = df_copy[df_copy['createdAt'] >= start_dt]
         except Exception:
             return "Error: Invalid start_date format. Use 'YYYY-MM-DD'."
-            
+
+    if end_date:
+        try:
+            # Convert input 'YYYY-MM-DD' to datetime compatible with the dataframe
+            end_dt = pd.to_datetime(end_date).tz_localize('UTC') # Assuming input is UTC or making it aware
+            # Filter: Date in row must be >= start_date
+            df_copy = df_copy[df_copy['createdAt'] <= end_dt]
+    
+        except Exception:
+            return "Error: Invalid end_date format. Use 'YYYY-MM-DD'."
+
     if df_copy.empty:
         return "No product data found for this period."
+
 
     # 3. Determine Grouping Column
     if group_by == 'variant':

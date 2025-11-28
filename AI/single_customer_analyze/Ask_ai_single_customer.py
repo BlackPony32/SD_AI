@@ -28,18 +28,40 @@ logger1 = get_logger("logger1", "project_log.log", False)
 
 llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
 
+import os
+import pandas as pd
+
 def get_all_data(customer_id):
     DATA_DIR = os.path.join('data', customer_id)
-
-    activities_df = pd.read_csv(os.path.join(DATA_DIR, 'activities',"activities.csv"))
-    notes_df = pd.read_csv(os.path.join(DATA_DIR, 'activities',"notes.csv"))
-    order_products_df = pd.read_csv(os.path.join(DATA_DIR, 'orders',"order_products.csv"))
-    order_products_df = order_products_df.where(pd.notnull(order_products_df), None)
-
-    orders_df = pd.read_csv(os.path.join(DATA_DIR, 'orders',"orders.csv"))
-    orders_df = orders_df.where(pd.notnull(orders_df), None)
-    tasks_df = pd.read_csv(os.path.join(DATA_DIR, 'activities',"tasks.csv"))
-    tasks_df = tasks_df.where(pd.notnull(tasks_df), None)
+    
+    # Helper function to safely load CSV
+    def safe_read_csv(file_path):
+        if os.path.exists(file_path):
+            return pd.read_csv(file_path)
+        else:
+            return None
+    
+    activities_path = os.path.join(DATA_DIR, 'activities', 'activities.csv')
+    activities_df = safe_read_csv(activities_path)
+    
+    notes_path = os.path.join(DATA_DIR, 'activities', 'notes.csv')
+    notes_df = safe_read_csv(notes_path)
+    
+    order_products_path = os.path.join(DATA_DIR, 'orders', 'order_products.csv')
+    order_products_df = safe_read_csv(order_products_path)
+    if order_products_df is not None:
+        order_products_df = order_products_df.where(pd.notnull(order_products_df), None)
+    
+    orders_path = os.path.join(DATA_DIR, 'orders', 'orders.csv')
+    orders_df = safe_read_csv(orders_path)
+    if orders_df is not None:
+        orders_df = orders_df.where(pd.notnull(orders_df), None)
+    
+    tasks_path = os.path.join(DATA_DIR, 'activities', 'tasks.csv')
+    tasks_df = safe_read_csv(tasks_path)
+    if tasks_df is not None:
+        tasks_df = tasks_df.where(pd.notnull(tasks_df), None)
+    
 
     return activities_df, notes_df, order_products_df, orders_df, tasks_df
 
@@ -783,132 +805,210 @@ def General_activities_statistics_tool(user_id: str) -> str:
     return "Error: Unable to decode file."
 
 @function_tool
-def get_top_n_orders(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
+def get_top_n_orders(
+    user_id: str, 
+    n: int, 
+    by_type: str, 
+    sort_order: str = 'desc', 
+    start_date: str = None, 
+    end_date: str = None,
+    status_filter: str = None
+) -> str:
     """
-    Gets the top (or bottom) N orders from the DataFrame based on revenue or quantity.
+    Gets the top (or bottom) N orders based on revenue or quantity, 
+    optionally filtered by a start date and order status.
 
-    Args:
-        user_id (str): Use given user id.
-        n (int): The number of orders to return.
-        by_type (str): The criteria to sort by. Must be 'revenue' or 'totalQuantity'.
-        sort_order (str): 'desc' for Top/Best (High to Low), 'asc' for Bottom/Worst (Low to High).
-
-    Returns:
-        str: A formatted string of the N orders.
+    Parameters:
+    - user_id: The user's ID.
+    - n: Number of records to return.
+    - by_type: 'revenue' or 'totalQuantity'.
+    - sort_order: 'desc' (Highest first) or 'asc' (Lowest first).
+    - start_date: Filter orders created ON or AFTER this date. Format: 'YYYY-MM-DD'.
+    - end_date: Filter data from start day to this date (YYYY-MM-DD).
+    - status_filter: Filter by specific order status. 
+      VALID VALUES: orderStatus - ['COMPLETED', 'PENDING' or None].
     """
-    
-    logger1.info(f"Tool 'get_top_n_orders' called for: {user_id} with order: {sort_order}")
-    
-    # 1. Setup Path using pathlib
-    csv_path = Path("data") / user_id / "work_ord.csv"
-    
+    logger1.info(f"Tool 'get_top_n_orders' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  status_filter: {status_filter}, end_date: {end_date}")
+    # 1. Path Setup
+    csv_path = Path("data") / user_id / "oorders.csv"
     if not csv_path.exists():
-         return f"Error: Data file not found at {csv_path}"
+        return f"Error: File not found."
 
     try:
-        dataf = pd.read_csv(csv_path)
-        relevant_cols = ['customId_customId', 'totalAmount', 'totalQuantity']
-        df_copy = dataf[relevant_cols].copy()
-    except KeyError as e:
-        return f"Error: Missing expected column: {e}. Available: {dataf.columns.tolist()}"
+        # Load specific columns including Date and Statuses
+        # Adjusted to match your CSV structure
+        relevant_cols = [
+            'customId_customId', 'customer_name', 'totalAmount', 
+            'totalQuantity', 'createdAt', 'orderStatus' 
+        ]
+        dataf = pd.read_csv(csv_path, usecols=relevant_cols)
+        
+        # Convert Date Column (Handling timezone like in your file: 2025-04-14 15:21:27+00:00)
+        dataf['createdAt'] = pd.to_datetime(dataf['createdAt'], errors='coerce')
+
     except Exception as e:
-        return f"Error reading CSV: {e}"
+        return f"Error processing CSV: {e}"
 
-    # 2. Determine the sort column
-    if by_type == 'revenue':
-        sort_column = 'totalAmount'
-    elif by_type == 'totalQuantity':
-        sort_column = 'totalQuantity'
-    else:
-        return "Invalid 'by_type' parameter. Please choose 'revenue' or 'totalQuantity'."
+    # 2. Filtering Logic
+    df_filtered = dataf.copy()
 
-    # 3. Determine Sort Direction (The Logic Change)
-    # 'asc' means ascending=True (Smallest numbers first -> "Worst")
-    # 'desc' means ascending=False (Biggest numbers first -> "Best")
-    is_ascending = True if sort_order == 'asc' else False
+    # A) Time Filter (Start Date -> Now)
+    if start_date:
+        try:
+            # Convert input 'YYYY-MM-DD' to datetime compatible with the dataframe
+            start_dt = pd.to_datetime(start_date).tz_localize('UTC') # Assuming input is UTC or making it aware
+            # Filter: Date in row must be >= start_date
+            df_filtered = df_filtered[df_filtered['createdAt'] >= start_dt]
+        except Exception:
+            return "Error: Invalid start_date format. Use 'YYYY-MM-DD'."
 
-    # 4. Sort and take N
-    target_df = df_copy.sort_values(by=sort_column, ascending=is_ascending).head(n)
-
-    # 5. Format output
-    target_df_filled = target_df.fillna({'customId_customId': 'N/A'})
-
-    # Dynamic Title based on sort order
-    direction_label = "Bottom" if sort_order == 'asc' else "Top"
+    if end_date:
+        try:
+            # Convert input 'YYYY-MM-DD' to datetime compatible with the dataframe
+            end_dt = pd.to_datetime(end_date).tz_localize('UTC') # Assuming input is UTC or making it aware
+            # Filter: Date in row must be >= start_date
+            df_filtered = df_filtered[df_filtered['createdAt'] <= end_dt]
     
-    output_strings = []
-    output_strings.append(f"--- {direction_label} {n} Orders by {by_type.capitalize()} ---")
-    output_strings.append("\nCustom ID - Revenue - Total Quantity")
-    output_strings.append("-" * 60)
+        except Exception:
+            return "Error: Invalid end_date format. Use 'YYYY-MM-DD'."
 
-    for index, row in target_df_filled.iterrows():
-        formatted_row = (
-            f"{row['customId_customId']} - "
-            f"${row['totalAmount']:.2f} - "
-            f"{int(row['totalQuantity'])}"
+    # B) Status Filter (Strict Matching)
+    if status_filter:
+        # Normalize to upper case to match CSV content
+        s_filter = status_filter.upper()
+        # Check if such status exists in the filtered data to avoid returning empty list silently
+        if not df_filtered['orderStatus'].str.contains(s_filter, case=False, na=False).any():
+             return f"Warning: No orders found with status '{status_filter}'."
+        
+        df_filtered = df_filtered[df_filtered['orderStatus'].str.upper() == s_filter]
+
+    if df_filtered.empty:
+        return "No orders found matching these criteria."
+
+    # 3. Sort Logic (Standard)
+    sort_col = 'totalAmount' if by_type == 'revenue' else 'totalQuantity'
+    is_ascending = (sort_order == 'asc')
+    
+    top_n_df = df_filtered.sort_values(by=sort_col, ascending=is_ascending).head(n)
+
+    # 4. Output Formatting
+    output = [f"Found {len(top_n_df)} orders (Sorted by {by_type}, {sort_order}):"]
+    for _, row in top_n_df.iterrows():
+        # Clean date for display (removing time part for readability)
+        d_str = row['createdAt'].strftime('%Y-%m-%d') if pd.notnull(row['createdAt']) else "N/A"
+        output.append(
+            f"ID: {row['customId_customId']} | Date: {d_str} | "
+            f"Customer: {row['customer_name']} | ${row['totalAmount']:.2f}"
         )
-        output_strings.append(formatted_row)
 
-    return '\n'.join(output_strings)
+    return '\n'.join(output)
 
 
 @function_tool
-def get_top_n_products(user_id: str, n: int, by_type: str, sort_order: str = 'desc') -> str:
+def get_top_n_products(
+    user_id: str, 
+    n: int, 
+    by_type: str, 
+    sort_order: str = 'desc', 
+    start_date: str = None,
+    end_date: str = None,
+    group_by: str = 'variant'
+) -> str:
     """
-    Gets the top (or bottom) N products from the DataFrame based on aggregated 
-    revenue, quantity, or order count.
-
-    Args:
-        user_id (str): Use given user id.
-        n (int): The number of products to return.
-        by_type (str): The criteria to sort by. 
-                       Must be 'revenue', 'totalQuantity', or 'orderCount'.
-        sort_order (str): 'desc' for Top/Best (High to Low), 'asc' for Bottom/Worst (Low to High).
-
-    Returns:
-        str: A formatted string of the products.
+    Gets top N products, categories, or manufacturers based on revenue/quantity.
+    
+    Parameters:
+    - user_id: User ID.
+    - n: Number of items to return.
+    - by_type: 'revenue', 'totalQuantity', 'orderCount'.
+    - sort_order: 'desc' (Best) or 'asc' (Worst).
+    - start_date: Filter data from this date (YYYY-MM-DD).
+    - end_date: Filter data from start day to this date (YYYY-MM-DD).
+    - group_by: Aggregation level. Options: 
+        'variant' (Specific Product), 
+        'category' (Product Category), 
+        'manufacturer' (Brand/Manufacturer).
     """
+    logger1.info(f"Tool 'get_top_n_products' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  group_by: {group_by}, end_date: {end_date}")
     
-    logger1.info(f"Tool 'get_top_n_products' called for: {user_id} with order: {sort_order}")
-    
-    # 1. Setup Path using pathlib
-    csv_path = Path("data") / user_id / "work_prod.csv"
-    
+    # 1. Path Setup
+    csv_path = Path("data") / user_id / "pproducts.csv"
     if not csv_path.exists():
-        return f"Error: Data file not found at {csv_path}"
+        return f"Error: File not found."
 
     try:
         dataf = pd.read_csv(csv_path)
+        # Ensure date column is datetime
+        dataf['createdAt'] = pd.to_datetime(dataf['createdAt'], errors='coerce')
         
-        # Create variant name
-        dataf['product_variant'] = dataf['name'].astype(str) + ' - ' + dataf['sku'].astype(str)
+        relevant_cols = [
+            'product_variant', 'productCategoryName', 'manufacturerName',
+            'totalAmount', 'quantity', 'orderId', 'customer_name', 'createdAt'
+        ]
+        # Check if columns exist (dynamic check because CSVs vary)
+        existing_cols = [c for c in relevant_cols if c in dataf.columns]
+        df_copy = dataf[existing_cols].copy()
         
-        relevant_cols = ['product_variant', 'totalAmount', 'quantity', 'orderId']
-        df_copy = dataf[relevant_cols].copy()
-    except KeyError as e:
-        return f"Error: Missing expected column in DataFrame: {e}. Available columns: {dataf.columns.tolist()}"
     except Exception as e:
         return f"Error reading CSV: {e}"
 
-    # 2. Aggregate data by product_variant
-    product_agg = df_copy.groupby('product_variant').agg(
+    # 2. Time Filter
+    if start_date:
+        try:
+            start_dt = pd.to_datetime(start_date).tz_localize('UTC')
+            df_copy = df_copy[df_copy['createdAt'] >= start_dt]
+        except Exception:
+            return "Error: Invalid start_date format. Use 'YYYY-MM-DD'."
+
+    if end_date:
+        try:
+            # Convert input 'YYYY-MM-DD' to datetime compatible with the dataframe
+            end_dt = pd.to_datetime(end_date).tz_localize('UTC') # Assuming input is UTC or making it aware
+            # Filter: Date in row must be >= start_date
+            df_copy = df_copy[df_copy['createdAt'] <= end_dt]
+    
+        except Exception:
+            return "Error: Invalid end_date format. Use 'YYYY-MM-DD'."
+
+    if df_copy.empty:
+        return "No product data found for this period."
+
+
+    # 3. Determine Grouping Column
+    if group_by == 'variant':
+        group_col = 'product_variant'
+        label = "Product Variant"
+    elif group_by == 'category':
+        group_col = 'productCategoryName'
+        label = "Category"
+    elif group_by == 'manufacturer':
+        group_col = 'manufacturerName'
+        label = "Manufacturer"
+    else:
+        return "Invalid 'group_by'. Use 'variant', 'category', or 'manufacturer'."
+
+    # Safety check if column exists
+    if group_col not in df_copy.columns:
+        return f"Error: Column for {group_by} not found in data."
+
+    # 4. Aggregation
+    # Fill N/A in group column to avoid losing data
+    df_copy[group_col] = df_copy[group_col].fillna('Unknown')
+
+    product_agg = df_copy.groupby(group_col).agg(
         totalRevenue=('totalAmount', 'sum'),
         totalQuantity=('quantity', 'sum'),
-        orderCount=('orderId', 'nunique'), # Count distinct orders
+        orderCount=('orderId', 'nunique'),
+        customerCount=('customer_name', 'nunique')
     ).reset_index()
 
-    # 3. Calculate averages
+    # Calculate Metrics
     product_agg['avgRevenuePerOrder'] = product_agg.apply(
         lambda row: row['totalRevenue'] / row['orderCount'] if row['orderCount'] > 0 else 0,
         axis=1
     )
-    
-    product_agg['avgQuantityPerOrder'] = product_agg.apply(
-        lambda row: row['totalQuantity'] / row['orderCount'] if row['orderCount'] > 0 else 0,
-        axis=1
-    )
 
-    # 4. Determine the sort column
+    # 5. Sort Logic
     if by_type == 'revenue':
         sort_column = 'totalRevenue'
     elif by_type == 'totalQuantity':
@@ -916,35 +1016,29 @@ def get_top_n_products(user_id: str, n: int, by_type: str, sort_order: str = 'de
     elif by_type == 'orderCount':
         sort_column = 'orderCount'
     else:
-        return ("Invalid 'by_type' parameter. Please choose 'revenue', "
-                "'totalQuantity', or 'orderCount'.")
+        return "Invalid 'by_type'."
 
-    # 5. Determine Sort Direction
-    # 'asc' means ascending=True (Smallest numbers first -> "Worst")
-    # 'desc' means ascending=False (Biggest numbers first -> "Best")
-    is_ascending = True if sort_order == 'asc' else False
-
-    # Sort the DataFrame and get the top N
+    is_ascending = (sort_order == 'asc')
     top_n_df = product_agg.sort_values(by=sort_column, ascending=is_ascending).head(n)
 
-    # Fill potential NaN values
-    top_n_df_filled = top_n_df.fillna({'product_variant': 'N/A'})
-
-    # 6. Format the output string
+    # 6. Formatting
+    period_info = f" (Since {start_date})" if start_date else " (All Time)"
     direction_label = "Bottom" if sort_order == 'asc' else "Top"
     
-    output_strings = []
-    output_strings.append(f"--- {direction_label} {n} Products by {by_type.capitalize()} ---")
-    output_strings.append("\nProduct - Total Revenue - Total Quantity - Order Count - Avg. Qty/Order")
-    output_strings.append("-" * 100) 
+    output_strings = [
+        f"--- {direction_label} {n} {label}s by {by_type.capitalize()}{period_info} ---",
+        f"{label} | Revenue | Qty | Orders | Customers | Avg Rev/Order",
+        "-" * 100
+    ]
 
-    for index, row in top_n_df_filled.iterrows():
+    for _, row in top_n_df.iterrows():
         formatted_row = (
-            f"{row['product_variant']} - "
-            f"${row['totalRevenue']:,.2f} - "
-            f"{int(row['totalQuantity'])} - "
-            f"{row['orderCount']} - "
-            f"{row['avgQuantityPerOrder']:.1f}"
+            f"{row[group_col]} | "
+            f"${row['totalRevenue']:,.2f} | "
+            f"{int(row['totalQuantity'])} | "
+            f"{row['orderCount']} | "
+            f"{row['customerCount']} | "
+            f"${row['avgRevenuePerOrder']:.2f}"
         )
         output_strings.append(formatted_row)
 
@@ -1270,6 +1364,108 @@ def get_orders_by_customer_id(user_id:str, customer_id:str)-> str:
     return customer_orders_summary_md
 
 
+import os
+import numpy as np
+import faiss
+from openai import OpenAI
+from agents import function_tool  # The specific decorator from the SDK
+
+# Initialize standard OpenAI client for embeddings
+client = OpenAI()
+class SimpleVectorStore:
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.chunks = []
+        self.embeddings = None
+        self.is_initialized = False
+
+    def _cosine_similarity(self, vec_a, matrix_b):
+        """Calculates cosine similarity between vector A and all vectors in Matrix B."""
+        # Normalize vector A
+        norm_a = np.linalg.norm(vec_a)
+        if norm_a == 0: return np.zeros(len(matrix_b))
+        vec_a_norm = vec_a / norm_a
+
+        # Normalize Matrix B (all chunks)
+        norm_b = np.linalg.norm(matrix_b, axis=1, keepdims=True)
+        matrix_b_norm = np.divide(matrix_b, norm_b, where=norm_b!=0)
+
+        # Dot product
+        return np.dot(matrix_b_norm, vec_a_norm)
+
+    def load_and_index(self):
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"File not found: {self.file_path}")
+            
+        print("Loading FAQ file...")
+        with open(self.file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+            
+        # Split by double newline (paragraphs)
+        self.chunks = [c.strip() for c in text.split('\n\n') if c.strip()]
+        
+        if not self.chunks:
+            print("Warning: No chunks found in file.")
+            return
+
+        print(f"Embedding {len(self.chunks)} entries...")
+        
+        # Get embeddings in one batch for speed
+        response = client.embeddings.create(
+            input=self.chunks,
+            model="text-embedding-3-small"
+        )
+        
+        # Store as numpy array
+        self.embeddings = np.array([d.embedding for d in response.data]).astype('float32')
+        self.is_initialized = True
+        print("Indexing complete.")
+
+    def search(self, query: str, top_k: int = 2):
+        if not self.is_initialized:
+            self.load_and_index()
+            
+        # Embed query
+        query_embedding = client.embeddings.create(
+            input=[query], 
+            model="text-embedding-3-small"
+        ).data[0].embedding
+        
+        query_vec = np.array(query_embedding).astype('float32')
+        
+        # Calculate similarities
+        scores = self._cosine_similarity(query_vec, self.embeddings)
+        
+        # Get top_k indices (sorted high to low)
+        top_indices = np.argsort(scores)[::-1][:top_k]
+        
+        results = []
+        for idx in top_indices:
+            # Optional: Filter low relevance (e.g., score < 0.3)
+            if scores[idx] > 0.3:
+                results.append(self.chunks[idx])
+                
+        return "\n---\n".join(results) if results else "No relevant info found."
+
+FAQ_FILE_PATH = Path("AI/group_customer_analyze/Agents_rules/QA_SD2.txt")
+faq_engine = SimpleVectorStore(FAQ_FILE_PATH)
+
+@function_tool
+def look_up_faq(question: str) -> str:
+    """
+    Searches the FAQ (Frequently Asked Questions) text file 
+    to find answers to user questions about policies or features.
+
+    Args:
+        question: The specific question or topic the user is asking about.
+    """
+    logger1.info(f"Tool 'look_up_faq' called for: {question}")
+    try:
+        return faq_engine.search(question)
+            
+    except Exception as e:
+        return f"Error retrieving FAQ: {str(e)}"
+
 async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLiteSession]:
     """Initializes a new Inventory agent and session."""
 
@@ -1301,7 +1497,8 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
             get_order_details,
             get_product_catalog,
             get_product_details,
-            get_orders_by_customer_id]
+            get_orders_by_customer_id,
+            look_up_faq]
 
         )
         session = session_db
