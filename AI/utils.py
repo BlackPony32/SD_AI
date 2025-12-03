@@ -36,6 +36,21 @@ def get_logger(name: str, log_file: str, console: bool = True) -> logging.Logger
     return logger
 
 
+async def combine_sections(title, var1, var2):
+    """
+    Combines two markdown sections dynamically:
+    - Returns a dict with {title: combined_text}
+    
+    This works for any title in the list like "Key Metrics", "Discount Distribution", etc.
+    """
+    lines1 = var1.splitlines(keepends=False)
+
+    processed_var2 = var2.split("\n",2)[2]
+    
+
+    combined = '\n'.join(lines1) + '\n---\n' + processed_var2
+    
+    return {title: combined}
 
 #some functions for create_group_reports endpoint
 from fastapi import Body, HTTPException, status
