@@ -9,12 +9,14 @@ from pprint import pprint
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 #from langchain_openai import AsyncOpenAIEmbeddings, ChatOpenAI
 
+from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_suggestions, prompt_for_state_agent
+from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
 from AI.group_customer_analyze.preprocess_data_group_c import load_data, concat_customer_csv
 from AI.group_customer_analyze.statistics_group_c import format_status, usd, top_new_contact, top_reorder_contact, peak_visit_time, \
   customer_insights, format_percentage
   
 from AI.group_customer_analyze.orders_state import make_product_per_state_analysis  
-from AI.utils import get_logger
+from AI.utils import get_logger, combine_sections
 logger2 = get_logger("logger2", "project_log_many.log", False)
 
 from dotenv import load_dotenv
@@ -1094,305 +1096,7 @@ async def combine_dicts_async(A, B):
     result_string = " ".join(parts)
     return new_dict, result_string
 
-#TODO old and can be deleted?
-async def generate_analytics_report(directory, uuid):
-    import time
-    start = time.perf_counter()
 
-    try:
-        orders, products = await load_data(directory)
-    except Exception as e:
-        logger2.error("Can not create concatenated orders and products due:", e)
-    print("Step 3.1 - load data:", time.perf_counter() - start)
-    
-    try:
-        concat_customer_path = await concat_customer_csv(f"data/{uuid}/raw_data")
-        customer_df = pd.read_csv(concat_customer_path)
-    except Exception as e:
-        logger2.error("Can not create customer data df:", e)
-        
-    if orders.empty or products.empty:
-        logger2.info("create_report_group_c data is empty so report is none")
-        return '', {}
-    
-    answer = generate_report(orders, products, customer_df, uuid)
-    print("Step 3.2 - concat data and generate report:", time.perf_counter() - start)
-    full_report = answer['full_report']
-    overall_report = answer['customers_Overall_report']
-    sections = answer['sections_main']
-    
-    try:
-        report_activities_dir = os.path.join("data", uuid)
-        
-        # save statistics report to md file for ai analyze
-        path_for_overall_report = os.path.join(report_activities_dir, "overall_report.txt")
-        path_for_full_report = os.path.join(report_activities_dir, "full_report.md")
-        
-        async with aiofiles.open(path_for_overall_report, mode="w", encoding="utf-8") as f:
-            await f.write(overall_report)
-    
-        async with aiofiles.open(path_for_full_report, mode="w", encoding="utf-8") as f:
-            await f.write(full_report)
-    except Exception as e:
-        logger2.error(f"Error saving group customer report result to file: {e}")
-    
-    # Run independent async tasks concurrently
-    try:
-        ai_task = asyncio.create_task(
-            analyze_orders_and_products(f'data/{uuid}/pproducts.csv', f'data/{uuid}/oorders.csv', uuid)
-        )
-        state_analysis_task = asyncio.create_task(
-            make_product_per_state_analysis(uuid)
-        )
-
-        # Wait for both tasks to complete
-        ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
-        print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
-    except Exception as e:
-        logger2.error("Error in creating report state or statistic report: ", e)
-        return '', {}
-    
-    raw = str(ans.get('output') or "")              # answer of model for full report
-    sections_answer = parse_analysis_response(raw)  # func that parse answer to section
-    
-    items = list(sections_answer.items())                                       # tuple of sectioned report
-    items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
-    new_dict = dict(items)                              # dict in format {section : ai_text}
-
-    items2 = list(sections.items())
-    items2.insert(8, ('product_per_state_analysis', ''))
-
-    new_dict2 = dict(items2)                            # dict in format {section : calculated statistics}
-    sectioned_report, full_report = await combine_dicts_async(new_dict, new_dict2)
-    print("Step 3.5 - combine_dicts_async:", time.perf_counter() - start)
-    return full_report, sectioned_report
-    
-
-async def _create_advice_tool():
-    # Load predefined recommendations asynchronously
-    try:
-        promo_path = os.path.join('AI','group_customer_analyze', 'Agents_rules', 'FAQ_SD.txt')
-        async with aiofiles.open(promo_path, "r", encoding="utf-8") as f:
-            advice_text = await f.read()
-    except FileNotFoundError:
-        logger2.error("Advice file not found")
-        return None
-    
-    # Split text into chunks
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_text(advice_text)
-    
-    # Create vector store (synchronous, consider precomputing)
-    emb = OpenAIEmbeddings()  # Use async embeddings if available
-    index = FAISS.from_texts(chunks, emb)  # FAISS is sync; precompute if slow
-    
-    # Define advice retrieval tool
-    @tool("AdviceTool")
-    async def get_advice(topic: str) -> str:
-        '''Retrieves 2-3 predefined recommendations for a business topic.'''
-        docs = index.similarity_search(topic, k=3)  # FAISS is sync
-        return "\n".join(d.page_content for d in docs)
-        
-    return get_advice
- 
-async def analyze_orders_and_products(file_path_product, file_path_orders, customer_id):
-    try:
-        # System prompt
-        prompt = 'Make small analysis from my data and give some suggestions - only main info that I needed'
-        result = await _process_ai_request(
-            prompt=prompt,
-            customer_id=customer_id,
-            file_path_product=file_path_product,
-            file_path_orders=file_path_orders
-        )
-        return result
-    
-    except Exception as e:
-        logger2.error(f"Analysis AI report for customers group failed: {e}")
-        raise
-    
-    except Exception as e:
-        logger2.error(f"Analysis AI report for customers group failed: {e}")
-        raise
-
-async def _process_ai_request(prompt, file_path_product, file_path_orders, customer_id):
-    try:
-        # Async file reading for CSVs
-        encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
-        for encoding in encodings:
-            try:
-                df1 = pd.read_csv(file_path_product, encoding=encoding, low_memory=False)
-                df2 = pd.read_csv(file_path_orders, encoding=encoding, low_memory=False)
-                break
-            except UnicodeDecodeError:
-                logger2.warning(f"Failed decoding attempt with encoding: {encoding}")
-        
-        llm = ChatOpenAI(model='gpt-4.1')  # Ensure async support #model='o3-mini'  gpt-4.1-mini
-        
-        # Create advice tool
-        import time
-        start = time.perf_counter()
-        print("Step 3.1.1 - before _create_advice_tool:", time.perf_counter() - start)
-        advice_tool =await _create_advice_tool()
-        print("Step 3.1.2 - after _create_advice_tool:", time.perf_counter() - start)
-        # Create agent with extra tool
-        agent = create_pandas_dataframe_agent(
-            llm,
-            [df1, df2],
-            agent_type="openai-tools",
-            verbose=False,
-            allow_dangerous_code=True,
-            number_of_head_rows=5,
-            max_iterations=5,
-            extra_tools=[advice_tool] if advice_tool else []  # Add tool if available
-        )
-         
-        
-        try:
-            async with aiofiles.open(os.path.join('data', customer_id, 'full_report.md'), mode='r') as file:
-                full_report = await file.read()
-        except Exception as e:
-            full_report = 'No data given'
-            logger2.warning(f"Can not read full_report.md due to {e}")
-        
-        try:
-            async with aiofiles.open('AI/group_customer_analyze/promo_rules.txt', mode='r') as file:
-                recommendations = await file.read()
-        except Exception as e:
-            recommendations = 'No data given'
-            logger2.warning(f"Can not read promo_rules.txt due to {e}")
-        
-        
-        formatted_prompt = f"""
-        You are an AI assistant providing business insights based on two related datasets:  
-        - **df1** (Orders) contains critical order-related data or can be user activities data.  
-        - **df2** (Products) contains details about products within each order or can be user tasks data.  
-
-        Calculated statistics that the user sees: {full_report}
-
-        And some additional data that you can use to make recommendations to the customer: {recommendations}
-        
-        **Important Rules to Follow:**  
-        - **Unique Values:** When answering questions about orders or products, always consider unique values.  
-        - **Neutral Wording:** Do not mention "df1" or "df2" in your response. Instead, phrase answers as "According to the user's data."  
-        - **No Column/File References:** Do not refer to specific file names or column names—focus on insights and conclusions.  
-        - **Well-Structured Markdown Formatting:** Ensure responses are clear and organized using appropriate Markdown formatting.  
-        - **No Code or Visualizations:** Do not include Python code or suggest data visualizations in your answers.  
-        - Make an analysis for each statistical block in the report - it should be a couple of sentences according to the result.
-        - At the end, make recommendations to the business according to the data analysis - each block should be separated by '---'.
-        - If you are sure that the question has nothing to do with the data, answer - "Your question is not related to the analysis of your data, please ask another question."
-
-        Section headings should be in accordance with the data in the report and named accordingly: 
-        ['key_metrics', 'discount_distribution',
-        'overall_total_sales_by_payment_and_delivery_status',
-        'payment_status_analysis',
-        'delivery_fees_analysis',
-        'fulfillment_analysis',
-        'sales_performance_overview',
-        'top_worst_selling_product'] + "suggestions_div" for your final recommendations
-        Note do not skip any title - if no info - write 'Not enough info to analyze' to content
-        **Critical Instructions for Insights:**
-        - For **Insights** in each section, ALWAYS use the `AdviceTool` with the section title as input
-        - Use EXACTLY 2-3 recommendations from the tool output
-        - Make **Insights** based on the notes you receive in accordance with the data.
-
-        Example:
-        ## sales_performance_overview
-        [Your analysis...]
-
-        **Insights**
-        {{{{ADVICE FROM TOOL FOR "Sales Performance Overview"}}}}
-        Response format is:
-        ---
-        ## Section Title
-        Content...
-        
-        **Insights**
-        ---
-        ## Next Section...
-        
-        
-        **Example Suggestions:**  
-        
-        **Top-Level Recommendations**  
-        1. **Leverage Tiered Incentives:**  
-           – Introduce small invoice-level or item-level discounts for high-margin lines to boost adoption, especially during slower months.          
-           – Pilot “buy-more-save-more” bundles featuring best-sellers plus slow movers.  
-
-        2. **Convert Pending Orders:**  
-           – Implement gentle reminders or time-limited incentives (e.g., free shipping) to nudge pending transactions to completion.  
-
-        3. **Optimize Delivery Fees:**  
-           – Offer free delivery thresholds (e.g., orders >$300) to increase average cart size while preserving margin on smaller orders.  
-
-        4. **Seasonal Promotion Planning:**  
-           – Capitalize on the strong early-year momentum by aligning marketing pushes in Jan–Mar; bolster mid-year demand with targeted campaigns.   
-
-        5. **Refine Assortment:**  
-           – Reevaluate underperforming SKUs for promotional clearance or phased-out stocking.  
-           – Expand cross-sell recommendations around “Diet Coke” to zero- and vanilla-flavored extensions—leveraging proven customer interest.
-
-        **Task is:**  
-        {prompt}"""
-
-        logger2.info("\n===== Metadata =====")
-        MODEL_RATES = {
-            "gpt-4.1":      {"prompt": 2.00,   "completion": 8.00},
-            "gpt-4.1-mini": {"prompt": 0.40,   "completion": 1.60},
-            "gpt-4.1-nano": {"prompt": 0.10,   "completion": 0.40},
-            "gpt-4o":       {"prompt": 2.50,   "completion": 10.00},
-            "gpt-4o-mini":  {"prompt": 0.15,   "completion": 0.60},
-            "gpt-4.5":      {"prompt": 75.00,  "completion": 150.00},
-            "o3":           {"prompt": 2.00,   "completion": 8.00},
-            "o3-mini":      {"prompt": 1.10,   "completion": 4.40},
-            "o4-mini":      {"prompt": 1.10,   "completion": 4.40},
-        }
-        
-        def calculate_cost(model_name, prompt_tokens, completion_tokens):
-            rates = MODEL_RATES.get(model_name)
-            if not rates:
-                raise ValueError(f"Unknown model: {model_name}")
-            # assume rates are $ per 1 000 000 tokens:
-            cost_per_prompt_token     = rates["prompt"]     / 1_000_000
-            cost_per_completion_token = rates["completion"] / 1_000_000
-        
-            input_cost  = prompt_tokens    * cost_per_prompt_token
-            output_cost = completion_tokens * cost_per_completion_token
-            total_cost  = input_cost + output_cost
-            return total_cost, input_cost, output_cost
-        
-        with get_openai_callback() as cb:
-            agent.agent.stream_runnable = False
-            start_time = time.time()
-            #logger2.info("here 1 ")
-            result = await agent.ainvoke({"input": formatted_prompt})
-            #logger2.info("here 2 ")
-            execution_time = time.time() - start_time
-        
-            in_toks, out_toks = cb.prompt_tokens, cb.completion_tokens
-            cost, in_cost, out_cost = calculate_cost(llm.model_name, in_toks, out_toks)
-        
-            logger2.info("Agent for func: create_report_group")
-            logger2.info(f"Input Cost create_report_group: ${in_cost:.6f}")
-            logger2.info(f"Output Cost create_report_group: ${out_cost:.6f}")
-            logger2.info(f"Total Cost create_report_group: ${cost:.6f}")
-        
-            result['metadata'] = {
-                'total_tokens create_report_group': in_toks + out_toks,
-                'prompt_tokens create_report_group': in_toks,
-                'completion_tokens create_report_group': out_toks,
-                'execution_time create_report_group': f"{execution_time:.2f} seconds",
-                'model': llm.model_name,
-            }
-
-        
-        for k, v in result['metadata'].items():
-            logger2.info(f"{k.replace('_', ' ').title()}: {v}")
-
-        return {"output": result.get('output')}
-
-    except Exception as e:
-        logger2.error(f"Error in AI processing: {str(e)}")
 
 import re
 
@@ -1439,69 +1143,6 @@ def parse_analysis_response(response: str) -> dict:
         parsed[title] = content
 
     return parsed
-
-
-async def new_generate_analytics_report(orders_df, products_df, customer_df, uuid):
-    import time
-    start = time.perf_counter()
-
-        
-    if orders_df.empty or products_df.empty:
-        logger2.info("create_report_group_c data is empty so report is none")
-        return '', {}
-    
-    answer = generate_report(orders_df, products_df, customer_df, uuid)
-    print("Step 3.2 - concat data and generate report:", time.perf_counter() - start)
-    full_report = answer['full_report']
-    overall_report = answer['customers_Overall_report']
-    sections = answer['sections_main']
-    
-    try:
-        report_activities_dir = os.path.join("data", uuid)
-        
-        # save statistics report to md file for ai analyze
-        path_for_overall_report = os.path.join(report_activities_dir, "overall_report.txt")
-        path_for_full_report = os.path.join(report_activities_dir, "full_report.md")
-        
-        async with aiofiles.open(path_for_overall_report, mode="w", encoding="utf-8") as f:
-            await f.write(overall_report)
-    
-        async with aiofiles.open(path_for_full_report, mode="w", encoding="utf-8") as f:
-            await f.write(full_report)
-    except Exception as e:
-        logger2.error(f"Error saving group customer report result to file: {e}")
-    
-    # Run independent async tasks concurrently
-    try:
-        ai_task = asyncio.create_task(
-            analyze_orders_and_products(f'data/{uuid}/pproducts.csv', f'data/{uuid}/oorders.csv', uuid)
-        )
-        state_analysis_task = asyncio.create_task(
-            make_product_per_state_analysis(uuid)
-        )
-
-        # Wait for both tasks to complete
-        ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
-    
-        print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
-    except Exception as e:
-        logger2.error("Error in creating report state or statistic report: ", e)
-        return '', {}
-    
-    raw = str(ans.get('output') or "")              # answer of model for full report
-    sections_answer = parse_analysis_response(raw)  # func that parse answer to section
-    #pprint(sections_answer)
-    items = list(sections_answer.items())                                       # tuple of sectioned report
-    items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
-    new_dict = dict(items)                              # dict in format {section : ai_text}
-
-    items2 = list(sections.items())
-    items2.insert(8, ('product_per_state_analysis', ''))
-
-    new_dict2 = dict(items2)                            # dict in format {section : calculated statistics}
-    sectioned_report, full_report = await combine_dicts_async(new_dict, new_dict2)
-    print("Step 3.5 - combine_dicts_async:", time.perf_counter() - start)
-    return full_report, sectioned_report
 
 
 
@@ -1556,8 +1197,7 @@ async def statistics_many_c_agent(USER_ID:str) -> Agent:
             name="Technical Specialist in Data Analysis Agent",
             instructions=instructions,
             model=llm_model,
-            tools=[get_prepared_statistics] #get_recommendation,
-
+            tools=[get_prepared_statistics]
         )
 
         print(" New statistics_many_c_agent  ready.")
@@ -1579,9 +1219,44 @@ async def statistics_runner(uuid:str):
     return answer
 
 
-from agents import Agent, Runner
+
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_for_state_agent
 
+from agents import Agent, Runner
+from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_sectioned, prompt_for_state_agent
+
+
+async def create_agent_products_state_analysis(USER_ID) -> Agent:
+    """Initializes a new Orders agent and session."""
+
+    try:
+        #logger.info("✅ Agent run .")
+        instructions = await prompt_for_state_agent(USER_ID)
+
+        agent = Agent(
+            name="Customer_product_state_Assistant",
+            instructions=instructions
+        )
+        print(" New create_agent_products_state_analysis are ready.")
+    except Exception as e:
+        print(e)
+    return agent
+
+async def create_agent_sectioned(USER_ID, topic, statistics) -> Agent:
+    """Initializes a new Orders agent and session."""
+
+    try:
+        instructions = await prompt_agent_create_sectioned(USER_ID, topic, statistics)
+
+        agent = Agent(
+            name="Customer_Orders_Assistant",
+            instructions=instructions,
+            model=llm_model
+        )
+        print(" New create_agent_sectioned are ready.")
+    except Exception as e:
+        print("create_agent_sectioned error: ", e)
+    return agent
 
 async def create_agent_products_state_analysis(USER_ID) -> Agent:
     """Initializes a new Orders agent and session."""
@@ -1695,13 +1370,194 @@ async def new_generate_analytics_report_(orders_df, products_df, customer_df, uu
     print("Step 3.5 - combine_dicts_async:", time.perf_counter() - start)
     return full_report, sectioned_report
 
+
+
+#___ Block of full report by async agents call (test)
+
+
+
+async def create_agent_suggestions(USER_ID) -> Agent:
+    """Initializes a new Orders agent and session."""
+
+    try:
+        instructions = await prompt_agent_suggestions(USER_ID)
+
+        agent = Agent(
+            name="Customer_Orders_Assistant",
+            instructions=instructions,
+            model=llm_model,
+            tools=[get_prepared_statistics]
+        )
+        print(" New create_agent_suggestions are ready.")
+    except Exception as e:
+        print("create_agent_suggestions error: ", e)
+    return agent
+
+
+async def process_standard_topic(topic, merged_orders, products_df, customer_df, uuid):
+    """Logic for standard analysis topics."""
+    try:
+        import time
+        start = time.perf_counter()
+        # 1. Generate Statistics
+        statistics_of_topic = await generate_analytics_report_sectioned(
+            merged_orders, products_df, customer_df, uuid, report_type=topic
+        )
+
+        # 2. Create Agent
+        agent = await create_agent_sectioned(uuid, topic, statistics_of_topic)
+
+        # 3. Run Agent
+        runner = await Runner.run(
+            agent, 
+            input="Based on the data return response"
+        )
+
+        answer = runner.final_output
+        
+        # 4. Combine Sections
+        # Assuming combine_sections is available in your scope
+        sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
+        print(f"Topic {topic}", time.perf_counter() - start)
+        if isinstance(sectioned_answer, dict):
+            # Try to get the value using the topic as key, otherwise take the first value
+            return sectioned_answer.get(topic, list(sectioned_answer.values())[0])
+        return sectioned_answer
+
+    except Exception as e:
+        print(f"Error in standard topic '{topic}': {e}")
+        return None
+
+async def process_suggestions_topic(topic, merged_orders, products_df, customer_df, uuid):
+    """Logic for suggestions analysis topics."""
+    try:
+        # 2. Create Agent
+        import time
+        start = time.perf_counter()
+        statistics = generate_report(merged_orders, products_df, customer_df, uuid)
+        async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
+                        await f.write(statistics.get('full_report') )
+
+        agent = await create_agent_suggestions(uuid)
+
+        # 3. Run Agent
+        runner = await Runner.run(
+            agent, 
+            input="Based on the data return response"
+        )
+
+        answer = runner.final_output
+        print(answer)
+        print(f"Topic {topic}", time.perf_counter() - start)
+        # 4. Combine Sections
+        # Assuming combine_sections is available in your scope
+        sectioned_answer = await combine_sections(topic, '', answer)
+        if isinstance(sectioned_answer, dict):
+            # Try to get the value using the topic as key, otherwise take the first value
+            return sectioned_answer.get(topic, list(sectioned_answer.values())[0])
+        return sectioned_answer
+
+    except Exception as e:
+        print(f"Error in standard topic '{topic}': {e}")
+        return None
+
+async def process_state_analysis(topic, merged_orders, products_df, customer_df, uuid):
+    """Special logic for 'product_per_state_analysis'."""
+    try:
+        # 1. Prepare Data & Save CSVs (Threaded)
+        # Note: Modifying DF here. If multiple tasks read this DF, ensure this doesn't conflict.
+        # Since we are adding a column, it is generally safe but better done once globally if possible.
+        import time
+        start = time.perf_counter()
+        products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
+        
+        try:
+            await asyncio.gather(
+                asyncio.to_thread(merged_orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
+                asyncio.to_thread(products_df.to_csv, f'data/{uuid}/pproducts.csv', index=False)
+            )
+        except Exception as e:
+            print(f"Warning: Error saving debug CSVs for {uuid}: {e}")
+
+        print(f"Topic process_state_analysis 1 {topic}", time.perf_counter() - start)
+        # 2. Process Data & Generate Report
+        await async_process_data(uuid)
+        await async_generate_report(uuid)
+        print(f"Topic process_state_analysis 2 {topic}", time.perf_counter() - start)
+        # 3. Create Specific Agent
+        agent = await create_agent_products_state_analysis(uuid)
+
+        # 4. Run Agent
+        runner = await Runner.run(
+            agent, 
+            input="Based on the data return response"
+        )
+
+        answer = runner.final_output
+        print(f"Topic process_state_analysis 3 {topic}", time.perf_counter() - start)
+        return answer
+
+    except Exception as e:
+        print(f"Error in special topic '{topic}': {e}")
+        return None
+
+async def worker(semaphore, topic, merged_orders, products_df, customer_df, uuid):
+    """
+    Router function: Decides which logic to run based on the topic name,
+    constrained by the semaphore.
+    """
+    async with semaphore:
+        print(f"Processing: {topic}")
+        
+        if topic == "product_per_state_analysis":
+            return await process_state_analysis(topic, merged_orders, products_df, customer_df, uuid)
+        elif topic == "suggestions_div":
+            return await process_suggestions_topic(topic, merged_orders, products_df, customer_df, uuid)
+        else:
+            return await process_standard_topic(topic, merged_orders, products_df, customer_df, uuid)
+
+async def main_batch_process(merged_orders, products_df, customer_df, uuid):
+    topics = [
+        "key_metrics", 
+        "payment_status_analysis", 
+        "fulfillment_analysis",
+        "discount_distribution", 
+        "product_per_state_analysis", 
+        "sales_performance_overview", 
+        "delivery_fees_analysis", 
+        "overall_total_sales_by_payment_and_delivery_status", 
+        "top_worst_selling_product",
+        "suggestions_div"
+    ] 
+
+    # Limit concurrency to 10
+    sem = asyncio.Semaphore(10)
+    
+    tasks = []
+    for topic in topics:
+        task = asyncio.create_task(
+            worker(sem, topic, merged_orders, products_df, customer_df, uuid)
+        )
+        tasks.append(task)
+
+    print(f"Starting {len(topics)} topics...")
+    results = await asyncio.gather(*tasks)
+    sectioned_report = dict(zip(topics, results))
+    # 4. Compile the Big Report
+    report_parts = []
+    for key in topics:
+        # Use .get() to avoid crashing if 'suggestions_div' or others are missing/None
+        content = sectioned_report.get(key)
+        
+        if content:
+            report_parts.append(str(content))
+    
+    # Join all parts with double newlines for clear separation
+    full_report = "\n\n".join(report_parts)
+
+    return full_report, sectioned_report
+
+
+
 if __name__ == "__main__":
-    #asyncio.run(main())
-    from pprint import pprint
-    #full_report = asyncio.run(Ask_AI_group_orders('data/uuid/pproducts.csv','data/uuid/oorders.csv', 'uuid'))
-    sectioned_report, full_report = asyncio.run(generate_analytics_report('data/uuid'))
-    #print(report['full_report'])
-    with open("full_report_test.txt", "w", encoding="utf-8") as f:
-                f.write(sectioned_report)
-    #print(report['overall_report'])
-    print(sectioned_report) #.get('Delivery and Fulfillment Report') .get('output')
+    pass

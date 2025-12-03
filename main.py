@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 #from db.database_reports import generate_customer_reports 
+from agents import Agent, Runner, set_tracing_disabled
 from AI.single_customer_analyze.Activities_AI import process_ai_activities_request
 from AI.single_customer_analyze.Order_analytics import generate_sales_report
 from AI.single_customer_analyze.create_process_data import create_user_data
@@ -27,12 +28,12 @@ from AI.single_customer_analyze.Activities_analytics import analyze_activities
 from AI.single_customer_analyze.Tasks_analytics import tasks_report
 from AI.single_customer_analyze.Notes_analytics import notes_report
 from AI.group_customer_analyze.many_customer import save_customer_data, get_exported_data_many
-from AI.group_customer_analyze.create_report_group_c import generate_analytics_report
+from AI.group_customer_analyze.create_report_group_c import create_agent_sectioned, create_agent_products_state_analysis
 from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
 
 from AI.group_customer_analyze.many_customer import get_exported_data_one_file, post_get_exported_data_one_file
 from AI.utils import (
-    _process_and_save_file_data, read_dataframe_async, save_dataframe_async
+    _process_and_save_file_data, read_dataframe_async, save_dataframe_async, combine_sections
 )
 
 from AI.group_customer_analyze.preprocess_data_group_c import (
@@ -54,9 +55,9 @@ from typing import Literal
 import shutil
 from typing import List
 from concurrent.futures import ProcessPoolExecutor
-load_dotenv()
-    
 
+load_dotenv()
+set_tracing_disabled(True)
 
 app = FastAPI()
 AllowedEntity = Literal["orders", "activities"]
@@ -171,7 +172,7 @@ def get_exported_data(customer_id, entity):
 # Initialize at app startup
 @app.on_event("startup")
 async def startup_event():
-    app.state.process_executor = ProcessPoolExecutor(max_workers=6)  # Adjust based on CPU cores
+    app.state.process_executor = ProcessPoolExecutor(max_workers=10)  # Adjust based on CPU cores
 
 # Cleanup at shutdown
 @app.on_event("shutdown")
@@ -686,21 +687,6 @@ async def check_customer_ids(df_1: pd.DataFrame,
     
     return result_dict
 
-async def combine_sections(title, var1, var2):
-    """
-    Combines two markdown sections dynamically:
-    - Returns a dict with {title: combined_text}
-    
-    This works for any title in the list like "Key Metrics", "Discount Distribution", etc.
-    """
-    lines1 = var1.splitlines(keepends=False)
-
-    processed_var2 = var2.split("\n",2)[2]
-    
-
-    combined = '\n'.join(lines1) + '\n---\n' + processed_var2
-    
-    return {title: combined}
 
 def _sync_process_merge_logic(orders_df, customer_df, products_df):
     """
@@ -734,38 +720,9 @@ def _sync_process_merge_logic(orders_df, customer_df, products_df):
 
     return orders_final, products_final
 
-from agents import Agent, Runner
-from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_sectioned, prompt_for_state_agent
-async def create_agent_sectioned(USER_ID, topic, statistics) -> Agent:
-    """Initializes a new Orders agent and session."""
 
-    try:
-        instructions = await prompt_agent_create_sectioned(USER_ID, topic, statistics)
 
-        agent = Agent(
-            name="Customer_Orders_Assistant",
-            instructions=instructions
-        )
-        print(" New create_agent_sectioned are ready.")
-    except Exception as e:
-        print("create_agent_sectioned error: ", e)
-    return agent
 
-async def create_agent_products_state_analysis(USER_ID) -> Agent:
-    """Initializes a new Orders agent and session."""
-
-    try:
-        #logger.info("✅ Agent run .")
-        instructions = await prompt_for_state_agent(USER_ID)
-
-        agent = Agent(
-            name="Customer_product_state_Assistant",
-            instructions=instructions
-        )
-        print(" New create_agent_products_state_analysis are ready.")
-    except Exception as e:
-        print(e)
-    return agent
 
 @app.post("/generate-reports-group")
 async def create_group_reports_new(request: ReportRequest = Body(...)):
@@ -957,12 +914,15 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         print(f"Step 4 - Before generate report (Type: {report_type.value}): {time.perf_counter() - start_time:.2f}s")
         if report_type.value =="full_report":
             try:
-                from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report_
+                from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report_ , main_batch_process
+                #full_report, sectioned_report = await main_batch_process(merged_orders, products_df, customer_df, uuid)
                 full_report, sectioned_report = await new_generate_analytics_report_(merged_orders, products_df, customer_df, uuid)
 
                 # Save full report
                 async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
                     await f.write(full_report)
+
+
                 print("Step 5 - after generate report:", time.perf_counter() - start_time)
 
                 incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
