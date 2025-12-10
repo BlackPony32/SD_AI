@@ -1400,14 +1400,12 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
         )
 
         answer = runner.final_output
-        #print(answer)
+        answer = f"<div id=\"suggestions-block\">\n{answer}\n</div>"
+        print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model="gpt-4.1-mini")
-        #for i in range(len(runner.raw_responses)):
-        #    print("Token usage : ", runner.raw_responses[i].usage, '')
-        # 4. Combine Sections
-        # Assuming combine_sections is available in your scope
-        sectioned_answer = await combine_sections(topic, '', answer)
+
+        sectioned_answer = {'suggestions_div' : answer}
         if isinstance(sectioned_answer, dict):
             # Try to get the value using the topic as key, otherwise take the first value
             return sectioned_answer.get(topic, list(sectioned_answer.values())[0])
@@ -1504,7 +1502,7 @@ async def main_batch_process(merged_orders, products_df, customer_df, uuid):
     for key in topics:
         # Use .get() to avoid crashing if 'suggestions_div' or others are missing/None
         content = sectioned_report.get(key)
-        
+
         if content:
             report_parts.append(str(content))
     
