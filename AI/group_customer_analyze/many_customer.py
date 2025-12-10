@@ -1,10 +1,8 @@
 from fastapi import FastAPI, Body
 from typing import Literal, Dict
 from pydantic import BaseModel
-import os
-import logging
+
 import requests
-import asyncio
 import httpx
 from uuid import uuid4
 import aiofiles
@@ -24,55 +22,6 @@ app = FastAPI()
 
 logger2 = get_logger("logger2", "project_log_many.log", False)
 
-
-async def old_get_exported_data_many(customer_id: str, entity: str) -> dict:
-    """
-    Asynchronously connects to the API endpoint to export customer profile data and returns the file content.
-    Includes retry logic for HTTP 429 errors.
-    """
-    allowed_entities = ["orders", "order_products", 'customer', "notes", "tasks", "activities"]
-    if entity not in allowed_entities:
-        raise ValueError(f"Invalid entity: {entity}. Must be one of {allowed_entities}")
-
-    SD_API_URL = os.getenv('SD_API_URL')
-    if not SD_API_URL:
-        raise Exception("SD_API_URL environment variable is not set")
-    url = SD_API_URL
-
-    params = {"customer_id": customer_id, "entity": entity}
-    headers = {"x-api-key": os.getenv('X_API_KEY')}
-
-    async with httpx.AsyncClient() as client:
-        for attempt in range(3):  # Try up to 3 times
-            try:
-                response = await client.get(url, params=params, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    exported_url = data.get("fileUrl")
-                    customer_name = data.get("customerName", "Unknown")
-                    if not exported_url:
-                        raise Exception("No 'fileUrl' found in response")
-                    file_response = await client.get(exported_url)
-                    if file_response.status_code == 200:
-                        return {"file": file_response.content, "customer_name": customer_name}
-                    else:
-                        raise Exception(f"Failed to download file: HTTP {file_response.status_code}")
-                elif response.status_code == 429:
-                    if attempt < 4:
-                        backoff = 5 * (2 ** attempt)  # 5s, 10s, 20s, 40s
-                        jitter = random.uniform(0, 5)  # Random 0-5s
-                        sleep_time = backoff + jitter
-                        logger2.warning(f"429 for customer {customer_id}, entity {entity}. Retrying in {sleep_time:.1f}s...")
-                        await asyncio.sleep(sleep_time)
-                    else:
-                        raise Exception("Too many retries")
-                else:
-                    raise Exception(f"Error: HTTP {response.status_code}")
-            except Exception as e:
-                if attempt == 4:
-                    raise Exception(f"Failed after retries: {e}")
-                # Sleep on other exceptions too, with backoff
-                await asyncio.sleep(5 * (2 ** attempt) + random.uniform(0, 5))
 
 AllowedEntity = Literal["orders", "order_products", "notes", "tasks", "activities"]
 

@@ -150,6 +150,7 @@ def customer_insights(ord_df, products_df):
         return pd.DataFrame(results)
     except Exception as e:
         logger2.error("Error in customer_insights:", e)
+
 # Helper formatting functions block
 def usd(value: float) -> str:
     if float(value).is_integer():

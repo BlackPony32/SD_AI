@@ -6,44 +6,26 @@ import asyncio
 import aiofiles
 from pathlib import Path
 from pprint import pprint
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-#from langchain_openai import AsyncOpenAIEmbeddings, ChatOpenAI
 
-from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_suggestions, prompt_for_state_agent
+from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_suggestions, prompt_for_state_agent, prompt_agent_create_sectioned
 from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
 from AI.group_customer_analyze.preprocess_data_group_c import load_data, concat_customer_csv
 from AI.group_customer_analyze.statistics_group_c import format_status, usd, top_new_contact, top_reorder_contact, peak_visit_time, \
   customer_insights, format_percentage
   
-from AI.group_customer_analyze.orders_state import make_product_per_state_analysis  
-from AI.utils import get_logger, combine_sections
+from AI.utils import get_logger, combine_sections, calculate_cost
 logger2 = get_logger("logger2", "project_log_many.log", False)
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from functools import partial
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_openai import ChatOpenAI
-from langchain_community.callbacks import get_openai_callback
 import time 
-from fastapi import FastAPI
-app = FastAPI()
-from langchain.agents import tool
-from langchain_community.vectorstores import FAISS
-#rom langchain_community.embeddings import OpenAIEmbeddings
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
+import re
 
-import pandas as pd
-import asyncio
-import aiofiles # For async file operations
-import os # Make sure os is imported
-
-# --- 
-# Refactored Synchronous Helper Functions
-# (These contain your Pandas logic)
-# ---
+from typing import List, AsyncGenerator, Tuple, Any
+from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
+llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
 
 def _calculate_key_metrics(orders: pd.DataFrame) -> list:
     """Calculates overall Key Metrics."""
@@ -1096,10 +1078,6 @@ async def combine_dicts_async(A, B):
     result_string = " ".join(parts)
     return new_dict, result_string
 
-
-
-import re
-
 def parse_analysis_response(response: str) -> dict:
     """
     Parses agent response in the format:
@@ -1143,12 +1121,6 @@ def parse_analysis_response(response: str) -> dict:
         parsed[title] = content
 
     return parsed
-
-
-
-from typing import List, AsyncGenerator, Tuple, Any
-from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
-llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
 
 
 @function_tool
@@ -1215,32 +1187,12 @@ async def statistics_runner(uuid:str):
         input="Follow the instructions carefully—build the report according to my data.."
     )
     answer = runner.final_output 
+    calculate_cost(runner, model="gpt-4.1-mini")
+    #for i in range(len(runner.raw_responses)):
+    #    print("Token usage : ", runner.raw_responses[i].usage, '')
     #print(answer)
     return answer
 
-
-
-from AI.group_customer_analyze.Agents_rules.prompts import prompt_for_state_agent
-
-from agents import Agent, Runner
-from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_sectioned, prompt_for_state_agent
-
-
-async def create_agent_products_state_analysis(USER_ID) -> Agent:
-    """Initializes a new Orders agent and session."""
-
-    try:
-        #logger.info("✅ Agent run .")
-        instructions = await prompt_for_state_agent(USER_ID)
-
-        agent = Agent(
-            name="Customer_product_state_Assistant",
-            instructions=instructions
-        )
-        print(" New create_agent_products_state_analysis are ready.")
-    except Exception as e:
-        print(e)
-    return agent
 
 async def create_agent_sectioned(USER_ID, topic, statistics) -> Agent:
     """Initializes a new Orders agent and session."""
@@ -1299,8 +1251,9 @@ async def state_runner(orders, products_df, uuid):
         answer = runner.final_output 
         from pprint import pprint
         #print(answer)
-        for i in range(len(runner.raw_responses)):
-            print("Token usage : ", runner.raw_responses[i].usage, '')
+        calculate_cost(runner, model="gpt-4.1-mini")
+        #for i in range(len(runner.raw_responses)):
+        #    print("Token usage : ", runner.raw_responses[i].usage, '')
     except Exception as e:
         print(f"Error in product_per_state_analysis runner: {e}")
 
@@ -1374,8 +1327,6 @@ async def new_generate_analytics_report_(orders_df, products_df, customer_df, uu
 
 #___ Block of full report by async agents call (test)
 
-
-
 async def create_agent_suggestions(USER_ID) -> Agent:
     """Initializes a new Orders agent and session."""
 
@@ -1392,7 +1343,6 @@ async def create_agent_suggestions(USER_ID) -> Agent:
     except Exception as e:
         print("create_agent_suggestions error: ", e)
     return agent
-
 
 async def process_standard_topic(topic, merged_orders, products_df, customer_df, uuid):
     """Logic for standard analysis topics."""
@@ -1419,6 +1369,9 @@ async def process_standard_topic(topic, merged_orders, products_df, customer_df,
         # Assuming combine_sections is available in your scope
         sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
         print(f"Topic {topic}", time.perf_counter() - start)
+        calculate_cost(runner, model="gpt-4.1-mini")
+        #for i in range(len(runner.raw_responses)):
+        #    print("Token usage : ", runner.raw_responses[i].usage, '')
         if isinstance(sectioned_answer, dict):
             # Try to get the value using the topic as key, otherwise take the first value
             return sectioned_answer.get(topic, list(sectioned_answer.values())[0])
@@ -1447,8 +1400,11 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
         )
 
         answer = runner.final_output
-        print(answer)
+        #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
+        calculate_cost(runner, model="gpt-4.1-mini")
+        #for i in range(len(runner.raw_responses)):
+        #    print("Token usage : ", runner.raw_responses[i].usage, '')
         # 4. Combine Sections
         # Assuming combine_sections is available in your scope
         sectioned_answer = await combine_sections(topic, '', answer)
@@ -1522,7 +1478,7 @@ async def main_batch_process(merged_orders, products_df, customer_df, uuid):
         "payment_status_analysis", 
         "fulfillment_analysis",
         "discount_distribution", 
-        "product_per_state_analysis", 
+        #"product_per_state_analysis", 
         "sales_performance_overview", 
         "delivery_fees_analysis", 
         "overall_total_sales_by_payment_and_delivery_status", 

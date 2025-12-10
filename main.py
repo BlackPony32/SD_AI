@@ -23,13 +23,14 @@ from urllib.parse import urlparse
 from agents import Agent, Runner, set_tracing_disabled
 from AI.single_customer_analyze.Activities_AI import process_ai_activities_request
 from AI.single_customer_analyze.Order_analytics import generate_sales_report
-from AI.single_customer_analyze.create_process_data import create_user_data
 from AI.single_customer_analyze.Activities_analytics import analyze_activities
 from AI.single_customer_analyze.Tasks_analytics import tasks_report
 from AI.single_customer_analyze.Notes_analytics import notes_report
-from AI.group_customer_analyze.many_customer import save_customer_data, get_exported_data_many
 from AI.group_customer_analyze.create_report_group_c import create_agent_sectioned, create_agent_products_state_analysis
-from AI.group_customer_analyze.preprocess_data_group_c import create_group_user_data
+
+from pydantic import BaseModel, Field
+from typing import List
+from enum import Enum
 
 from AI.group_customer_analyze.many_customer import get_exported_data_one_file, post_get_exported_data_one_file
 from AI.utils import (
@@ -40,12 +41,14 @@ from AI.group_customer_analyze.preprocess_data_group_c import (
     save_df, prepared_big_data
 )
 from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
-    analyze_customer_orders_async
+    analyze_customer_orders_async, calculate_cost
 
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
 
-
+import requests
+from functools import partial
+from typing import Optional
 import pandas as pd
 from dotenv import load_dotenv
 import logging
@@ -78,7 +81,6 @@ logger2 = get_logger("logger2", "project_log_many.log", False)
 
 executor = ThreadPoolExecutor()
 
-import requests
 
 def get_exported_data(customer_id, entity):
     """
@@ -330,14 +332,9 @@ async def create_reports(customer_id: str, request: ReportRequest):
         raise HTTPException(status_code=406, detail=f"Error generating report due to incorrect customer id")
     
 
-from functools import partial
-
-
 class ChatRequest(BaseModel):
     prompt: str
 
-
-from typing import Optional
 
 @app.post("/Ask_ai")
 async def ask_ai_endpoint(
@@ -439,7 +436,6 @@ async def get_last_n_log_lines(
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
 
-
 async def clean_directories(customer_id: str):
     """
     Remove the data directory for the given customer_id if it exists.
@@ -519,11 +515,6 @@ async def analyze_routes(user_id: str):
     return result
 
 
-class AI_Request(BaseModel):
-    uuid: str
-    prompt: str
-    
-
 @app.post("/Ask_ai_many_customers")
 async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
     user_uuid = request.uuid
@@ -564,7 +555,6 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         from pprint import pprint
         print(answer)
 
-
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -590,10 +580,6 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         )
 
 
-#____updated version
-from pydantic import BaseModel, Field
-from typing import List
-from enum import Enum
 
 # Define an Enum for all allowed report types
 class ReportType(str, Enum):
@@ -915,8 +901,8 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         if report_type.value =="full_report":
             try:
                 from AI.group_customer_analyze.create_report_group_c import new_generate_analytics_report_ , main_batch_process
-                #full_report, sectioned_report = await main_batch_process(merged_orders, products_df, customer_df, uuid)
-                full_report, sectioned_report = await new_generate_analytics_report_(merged_orders, products_df, customer_df, uuid)
+                full_report, sectioned_report = await main_batch_process(merged_orders, products_df, customer_df, uuid)
+                #full_report, sectioned_report = await new_generate_analytics_report_(merged_orders, products_df, customer_df, uuid)
 
                 # Save full report
                 async with aiofiles.open(f"data/{uuid}/full_report.txt", "w", encoding="utf-8") as f:
@@ -1047,8 +1033,9 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
                     #print(answer)
                     sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
 
-                    for i in range(len(runner.raw_responses)):
-                        print("Token usage : ", runner.raw_responses[i].usage, '')
+                    calculate_cost(runner, model="gpt-4.1-mini")
+                    #for i in range(len(runner.raw_responses)):
+                    #    print("Token usage : ", runner.raw_responses[i].usage, '')
 
                     incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
 

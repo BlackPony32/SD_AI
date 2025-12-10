@@ -180,7 +180,6 @@ def preprocess_products(file_path):
     
     return df, file_path
 
-
 def data_clean_orders(orders_df: pd.DataFrame):
     """Clean and transform orders data, returning processed DataFrame and an optional error message."""
     # Check for required columns
@@ -557,8 +556,6 @@ def one_file_preprocess_products(file_path):
     df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
     
     return df, file_path
-
-
 
 async def prepared_big_data(orders_path: str, products_path: str) -> tuple:
     """Make full data preprocessing asynchronously"""
