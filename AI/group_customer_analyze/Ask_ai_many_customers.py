@@ -1,43 +1,108 @@
-import asyncio
-import aiofiles
-import os
-import pandas as pd
-import time
-
-from AI.utils import get_logger
-
-#from langchain.agents import tool
-#from langchain_community.vectorstores import FAISS
-#from langchain_openai import OpenAIEmbeddings
-#from langchain.text_splitter import RecursiveCharacterTextSplitter
-#from langchain_experimental.agents import create_pandas_dataframe_agent
-#from langchain_openai import ChatOpenAI
-#from langchain_community.callbacks import get_openai_callback
-
-logger2 = get_logger("logger2", "project_log_many.log", False)
-
-
-    
-#Test block of new Ai conversation
-import logging
 from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
 from agents.extensions.memory import AdvancedSQLiteSession
 import asyncio
 import aiofiles
 import os
-from dotenv import load_dotenv
-load_dotenv()
-from agents.extensions.memory import AdvancedSQLiteSession
+
 from pathlib import Path
 from typing import List, AsyncGenerator, Tuple, Any
+
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report, prompt_agent_create_sectioned, prompt_for_state_agent
 import pandas as pd
+import time
 
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from AI.utils import get_logger
+from dotenv import load_dotenv
+load_dotenv()
 
+logger2 = get_logger("logger2", "project_log_many.log", False)
 llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
+
+import numpy as np
+import faiss
+from openai import OpenAI
+
+
+# Initialize standard OpenAI client for embeddings
+client = OpenAI()
+
+class SimpleVectorStore:
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.chunks = []
+        self.embeddings = None
+        self.is_initialized = False
+
+    def _cosine_similarity(self, vec_a, matrix_b):
+        """Calculates cosine similarity between vector A and all vectors in Matrix B."""
+        # Normalize vector A
+        norm_a = np.linalg.norm(vec_a)
+        if norm_a == 0: return np.zeros(len(matrix_b))
+        vec_a_norm = vec_a / norm_a
+
+        # Normalize Matrix B (all chunks)
+        norm_b = np.linalg.norm(matrix_b, axis=1, keepdims=True)
+        matrix_b_norm = np.divide(matrix_b, norm_b, where=norm_b!=0)
+
+        # Dot product
+        return np.dot(matrix_b_norm, vec_a_norm)
+
+    def load_and_index(self):
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"File not found: {self.file_path}")
+            
+        print("Loading FAQ file...")
+        with open(self.file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+            
+        # Split by double newline (paragraphs)
+        self.chunks = [c.strip() for c in text.split('\n\n') if c.strip()]
+        
+        if not self.chunks:
+            print("Warning: No chunks found in file.")
+            return
+
+        print(f"Embedding {len(self.chunks)} entries...")
+        
+        # Get embeddings in one batch for speed
+        response = client.embeddings.create(
+            input=self.chunks,
+            model="text-embedding-3-small"
+        )
+        
+        # Store as numpy array
+        self.embeddings = np.array([d.embedding for d in response.data]).astype('float32')
+        self.is_initialized = True
+        print("Indexing complete.")
+
+    def search(self, query: str, top_k: int = 2):
+        if not self.is_initialized:
+            self.load_and_index()
+            
+        # Embed query
+        query_embedding = client.embeddings.create(
+            input=[query], 
+            model="text-embedding-3-small"
+        ).data[0].embedding
+        
+        query_vec = np.array(query_embedding).astype('float32')
+        
+        # Calculate similarities
+        scores = self._cosine_similarity(query_vec, self.embeddings)
+        
+        # Get top_k indices (sorted high to low)
+        top_indices = np.argsort(scores)[::-1][:top_k]
+        
+        results = []
+        for idx in top_indices:
+            # Optional: Filter low relevance (e.g., score < 0.3)
+            if scores[idx] > 0.3:
+                results.append(self.chunks[idx])
+                
+        return "\n---\n".join(results) if results else "No relevant info found."
+
+FAQ_FILE_PATH = Path("AI/group_customer_analyze/Agents_rules/QA_SD2.txt")
+faq_engine = SimpleVectorStore(FAQ_FILE_PATH)
 
 
 @function_tool
@@ -61,33 +126,26 @@ def General_statistics_tool(user_id:str) -> str:
 
 @function_tool
 def Detailed_statistics_tool(user_id:str, query: str) -> str:
-    '''Use this tool to fetch detailed customer statistics and insights from the overall report. Input should be a specific topic or question.'''
+    """
+    Searches the FAQ (Frequently Asked Questions) text file 
+    to find answers to user questions about policies or features.
+
+    Args:
+        user_id: Use user id.
+        query: The specific question or topic the user is asking about.
+    """
+
     logger2.info(f"Tool 'Detailed_statistics_tool' called called for: {query}")
-    data_path = f"data/{user_id}/overall_report.txt"
-    try:
-        with open(data_path, "r", encoding="utf-8") as f:
-            statistics =  f.read()
-        logger2.info(f"Successfully read statistics from {data_path}")
-        
-        # Split text into chunks
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-        chunks = splitter.split_text(statistics)
-
-        # Create vector store
-        emb = OpenAIEmbeddings()
-        index = FAISS.from_texts(chunks, emb)
-
-        docs = index.similarity_search(query, k=10)
-        return "\n".join(d.page_content for d in docs)
     
-    except FileNotFoundError:
-        logger2.error(f"Statistics file not found at: {data_path}")
-        return "Error: Statistics file not found."
+    try:
+        data_path = Path(f"data/{user_id}/overall_report.txt")
+        faq_engine = SimpleVectorStore(data_path)
+        return faq_engine.search(query)
+            
     except Exception as e:
-        logger2.error(f"Error reading {data_path}: {e}")
-        return f"Error: {e}"
+        return f"Error retrieving FAQ: {str(e)}"
 
-     
+    
 @function_tool
 def get_top_n_orders(
     user_id: str, 
@@ -576,7 +634,6 @@ def get_order_details(user_id: str, order_identifier: str) -> str:
 
     return '\n'.join(output)
 
-
 @function_tool
 def get_product_catalog(user_id: str):
     """
@@ -606,7 +663,6 @@ def get_product_catalog(user_id: str):
 
     except Exception as e:
         return f"Error loading catalog: {e}"
-
 
 def _generate_product_report(df_to_report, report_title):
     """
@@ -870,93 +926,6 @@ def get_orders_by_customer(
 
     except Exception as e:
         return f"Error processing orders: {e}"
-
-import os
-import numpy as np
-import faiss
-from openai import OpenAI
-from agents import function_tool  # The specific decorator from the SDK
-
-# Initialize standard OpenAI client for embeddings
-client = OpenAI()
-
-class SimpleVectorStore:
-    def __init__(self, file_path: str):
-        self.file_path = file_path
-        self.chunks = []
-        self.embeddings = None
-        self.is_initialized = False
-
-    def _cosine_similarity(self, vec_a, matrix_b):
-        """Calculates cosine similarity between vector A and all vectors in Matrix B."""
-        # Normalize vector A
-        norm_a = np.linalg.norm(vec_a)
-        if norm_a == 0: return np.zeros(len(matrix_b))
-        vec_a_norm = vec_a / norm_a
-
-        # Normalize Matrix B (all chunks)
-        norm_b = np.linalg.norm(matrix_b, axis=1, keepdims=True)
-        matrix_b_norm = np.divide(matrix_b, norm_b, where=norm_b!=0)
-
-        # Dot product
-        return np.dot(matrix_b_norm, vec_a_norm)
-
-    def load_and_index(self):
-        if not os.path.exists(self.file_path):
-            raise FileNotFoundError(f"File not found: {self.file_path}")
-            
-        print("Loading FAQ file...")
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-            
-        # Split by double newline (paragraphs)
-        self.chunks = [c.strip() for c in text.split('\n\n') if c.strip()]
-        
-        if not self.chunks:
-            print("Warning: No chunks found in file.")
-            return
-
-        print(f"Embedding {len(self.chunks)} entries...")
-        
-        # Get embeddings in one batch for speed
-        response = client.embeddings.create(
-            input=self.chunks,
-            model="text-embedding-3-small"
-        )
-        
-        # Store as numpy array
-        self.embeddings = np.array([d.embedding for d in response.data]).astype('float32')
-        self.is_initialized = True
-        print("Indexing complete.")
-
-    def search(self, query: str, top_k: int = 2):
-        if not self.is_initialized:
-            self.load_and_index()
-            
-        # Embed query
-        query_embedding = client.embeddings.create(
-            input=[query], 
-            model="text-embedding-3-small"
-        ).data[0].embedding
-        
-        query_vec = np.array(query_embedding).astype('float32')
-        
-        # Calculate similarities
-        scores = self._cosine_similarity(query_vec, self.embeddings)
-        
-        # Get top_k indices (sorted high to low)
-        top_indices = np.argsort(scores)[::-1][:top_k]
-        
-        results = []
-        for idx in top_indices:
-            # Optional: Filter low relevance (e.g., score < 0.3)
-            if scores[idx] > 0.3:
-                results.append(self.chunks[idx])
-                
-        return "\n---\n".join(results) if results else "No relevant info found."
-
-FAQ_FILE_PATH = Path("AI/group_customer_analyze/Agents_rules/QA_SD2.txt")
-faq_engine = SimpleVectorStore(FAQ_FILE_PATH)
 
 @function_tool
 def look_up_faq(question: str) -> str:

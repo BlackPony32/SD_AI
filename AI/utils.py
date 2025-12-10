@@ -13,6 +13,84 @@ def extract_customer_id(file_path: str) -> str:
             return part
     return None  # or raise ValueError("Customer ID not found in path.")
 
+def calculate_cost(runner, model="gpt-4.1-mini"):
+    """
+    Calculates the estimated cost of an OpenAI Agents SDK session.
+    
+    Args:
+        runner: The agent runner instance containing .raw_responses
+        model (str): The model identifier (e.g., "gpt-4.1-mini", "gpt-4o-mini")
+        
+    Returns:
+        float: Total estimated cost in USD.
+    """
+    # Pricing per 1 Million tokens (USD)
+    # Based on Dec 2025 standard pricing
+    PRICING = {
+        "gpt-4.1-mini": {
+            "input": 0.40,
+            "cached_input": 0.10,
+            "output": 1.60
+        },
+        "gpt-4o-mini": {
+            "input": 0.15,
+            "cached_input": 0.075,
+            "output": 0.60
+        },
+        "gpt-4o": {
+            "input": 2.50,
+            "cached_input": 1.25,
+            "output": 10.00
+        }
+    }
+
+    if model not in PRICING:
+        print(f"Warning: Model '{model}' not found in pricing table. Using gpt-4.1-mini rates.")
+        rates = PRICING["gpt-4.1-mini"]
+    else:
+        rates = PRICING[model]
+
+    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    
+    for i, response in enumerate(runner.raw_responses):
+        if not hasattr(response, 'usage') or not response.usage:
+            continue
+            
+        usage = response.usage
+        
+        # Extract token counts
+        # Handle cases where attributes might be missing (safety check)
+        input_tokens = getattr(usage, 'input_tokens', 0)
+        output_tokens = getattr(usage, 'output_tokens', 0)
+        
+        # Check for cached tokens
+        cached_tokens = 0
+        if hasattr(usage, 'input_tokens_details') and usage.input_tokens_details:
+            cached_tokens = getattr(usage.input_tokens_details, 'cached_tokens', 0)
+        
+        # Calculate regular input (Total Input - Cached)
+        regular_input_tokens = max(0, input_tokens - cached_tokens)
+        
+        # Calculate cost for this step
+        step_cost = (
+            (regular_input_tokens / 1_000_000 * rates["input"]) +
+            (cached_tokens / 1_000_000 * rates["cached_input"]) +
+            (output_tokens / 1_000_000 * rates["output"])
+        )
+        
+        total_cost += step_cost
+        total_input += input_tokens
+        total_output += output_tokens
+        
+        # Optional: Print step detail
+        # print(f"Step {i+1}: ${step_cost:.6f} (In: {input_tokens}, Out: {output_tokens})")
+
+    print(f"Total Tokens: {total_input + total_output} (Input: {total_input}, Output: {total_output})")
+    print(f"Total Cost:   ${total_cost:.6f}")
+    
+    return total_cost
 
 def get_logger(name: str, log_file: str, console: bool = True) -> logging.Logger:
     """Create and configure a logger with file and optional console output"""
