@@ -477,7 +477,7 @@ Do not analyze every data block individually. Instead, process all provided stat
 5. **No Code or Visualizations:** Do not include Python code or suggest data visualizations in your answers.
 
 **Output Format:**
-- Start directly with the header: `## Top-Level Recommendations`
+- Start directly with the header: `## Suggestions`
 - Provide exactly **5 numbered recommendations**.
 - Do **not** use horizontal rules (`---`) to separate items.
 - Follow this structure for each item:
