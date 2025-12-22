@@ -460,15 +460,18 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 full_md.append("")
 
             def clean_number(n):
-                return int(n) if float(n).is_integer() else round(n, 2)
+                try:
+                    return int(n) if float(n).is_integer() else round(n, 2)
+                except (ValueError, TypeError):
+                    return n  # Fallback to original if non-numeric
 
             def format_month(month: str) -> str:
                 """Convert MM/YYYY to MM/YY"""
                 parts = month.split('/')
-                if len(parts) == 2:
+                if len(parts) == 2 and parts[1].isdigit():
                     return f"{parts[0]}/{parts[1][-2:]}"
-                return month
-    
+                return month  # Fallback if invalid
+
             # 1) Total Sales by Status
             lines = [
                 "# Sales Performance Report",
@@ -480,8 +483,9 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for _, row in total_sales_by_status.iterrows():
                 lines.append(f"| {format_status(row['paymentStatus'])} | {format_status(row['deliveryStatus'])} | {usd(row['totalAmount'])} |")
             add_section("total_sales_by_status", lines)
-
+        
             # 2) Key Metrics
+            percent_with_delivery = (num_orders_with_delivery / total_orders * 100) if total_orders > 0 else 0  # Fix: Avoid div by zero
             lines = [
                 "## Key Metrics",
                 f"- **Total Sales:** {usd(total_sales)}",
@@ -490,26 +494,28 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 f"- **Total Discounts Given:** {usd(total_discount_amount)}",
                 f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
                 f"- **Orders with Delivery Fees:** {num_orders_with_delivery} "
-                f"({format_percentage(num_orders_with_delivery/total_orders*100)})",
+                f"({format_percentage(percent_with_delivery)})",
                 f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
             ]
             add_section("key_metrics", lines)
-
+        
             # 3) Payment Status Analysis
             lines = ["## Payment Status Analysis"]
             for status in existing_payment_statuses:
-                lines.append(f"- **{format_status(status)}:** {payment_status_counts[status]} "
-                             f"orders ({format_percentage(payment_status_percent[status])})")
-            
+                count = payment_status_counts.get(status, 0)  # Fix: Avoid KeyError
+                percent = payment_status_percent.get(status, 0)
+                lines.append(f"- **{format_status(status)}:** {count} "
+                             f"orders ({format_percentage(percent)})")
             add_section("payment_status_analysis", lines)
-
+        
             # 4) Discount Distribution
             dd = discount_distribution.copy()
             dd['discount_category'] = dd['discount_category'].replace('NONE', 'No Discount')
+            percent_with_discounts = percentage_orders_with_discounts if total_orders > 0 else 0  # Assume/guard
             lines = [
                 "## Discount Distribution",
                 f"- **Orders with Discounts:** {num_orders_with_discounts} "
-                f"({format_percentage(percentage_orders_with_discounts)})",
+                f"({format_percentage(percent_with_discounts)})",
                 "",
                 "| Discount Type | Number of Orders | Total Discount |",
                 "|---------------|------------------|----------------|",
@@ -517,14 +523,16 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for _, row in dd.iterrows():
                 lines.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
             add_section("discount_distribution", lines)
-
+        
             # 5) Fulfillment Analysis
             lines = ["## Fulfillment Analysis"]
             for status in existing_delivery_statuses:
-                lines.append(f"- **{format_status(status)}:** {fulfillment_counts[status]} "
-                             f"orders ({format_percentage(fulfillment_percent[status])})")
+                count = fulfillment_counts.get(status, 0)  # Fix: Avoid KeyError
+                percent = fulfillment_percent.get(status, 0)
+                lines.append(f"- **{format_status(status)}:** {count} "
+                             f"orders ({format_percentage(percent)})")
             add_section("fulfillment_analysis", lines)
-
+        
             # 6) Top Performing Products
             lines = [
                 "## Top 10 Performing Products",
@@ -535,7 +543,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"| {sku} | {clean_number(row['total_quantity'])} | "
                              f"{usd(row['avg_selling_price'])} | {usd(row['total_revenue'])} |")
             add_section("top_products", lines)
-
+        
             # 7) Sales Team Performance
             lines = [
                 "## Sales Team Performance",
@@ -546,7 +554,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"| {name} | {usd(row['total_sales'])} | "
                              f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
             add_section("sales_team_performance", lines)
-
+        
             # 8) Customer Purchase Analysis
             lines = [
                 "## Customer Purchase Analysis",
@@ -557,7 +565,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"| {name} | {usd(row['total_purchases'])} | "
                              f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
             add_section("customer_purchase_analysis", lines)
-
+        
             # 9) Monthly Sales Trends
             lines = [
                 "## Monthly Sales Trends",
@@ -566,26 +574,29 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ]
             for _, row in monthly_sales.iterrows():
                 avg = row['total_sales'] / row['order_count'] if row['order_count'] else 0
-                top_product = top_products[top_products['month'] == row['month']]['product'].values[0]
+                # Fix: Handle missing top product
+                matching = top_products[top_products['month'] == row['month']]
+                top_product = matching['product'].values[0] if not matching.empty else 'N/A'
                 lines.append(f"| {format_month(row['month'])} | {usd(row['total_sales'])} | "
                              f"{row['order_count']} | {usd(avg)} | {top_product} |")
             add_section("monthly_sales_trends", lines)
-
+            
             # 10) Suggestions
             lines = ["## Suggestions"]
             if top_products_list:
-                lines.append(f"- **Focus marketing efforts** on top products: {', '.join(top_products_list)}.")
+                lines.append(f"- **Focus marketing efforts** on top products: {', '.join(map(str, top_products_list))}.")
             if top_salesperson:
                 lines.append(f"- **Leverage success** of {top_salesperson}.")
             if bottom_salespeople:
-                lines.append(f"- **Support underperformers**: training for {', '.join(bottom_salespeople)}.")
+                lines.append(f"- **Support underperformers**: training for {', '.join(map(str, bottom_salespeople))}.")
             if top_customers:
-                lines.append(f"- **Reward loyalty**: deals for {', '.join(top_customers)}.")
+                lines.append(f"- **Reward loyalty**: deals for {', '.join(map(str, top_customers))}.")
             trend_map = {
                 "increasing": "- **Sales trending up**: increase inventory or staff.",
                 "decreasing": "- **Sales trending down**: investigate causes; consider promotions.",
                 "fluctuating": "- **Fluctuating sales**: analyze external factors.",
             }
+            print('here')
             lines.append(trend_map.get(trend, "- **Trend analysis**: insufficient data; keep monitoring."))
             if fulfillment_rec:
                 lines.append(f"- {fulfillment_rec}")
