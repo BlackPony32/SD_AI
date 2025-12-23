@@ -1,5 +1,6 @@
 # Customer Analytics API
 
+
 This is a FastAPI-based backend service designed to provide customer report generation and AI-powered analytics on sales data. It processes CSV files containing orders and products information to deliver detailed reports and answer user queries using an AI model powered by OpenAI.
 
 ## Features
