@@ -24,6 +24,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 
+
 ## Configuration
 
 The application requires an OpenAI API key to enable AI functionalities. Configure it as follows:
