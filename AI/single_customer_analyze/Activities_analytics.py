@@ -96,7 +96,7 @@ async def load_data(filepath):
             'NOTE_ADDED': 'Notes Added'
         }
         df['activity_type'] = df['type'].map(activity_names).fillna('Unknown')
-        df.to_csv('test.csv',index=False)
+        #df.to_csv('test.csv',index=False)
         return df
     
     except Exception as e:

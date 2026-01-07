@@ -777,14 +777,39 @@ def General_activities_statistics_tool(user_id: str) -> str:
     """Each time, first call this tool to retrieve the user data that needs to be analyzed."""
 
     logger1.info(f"Tool 'General_activities_statistics_tool' called")
-    
+    from main import get_exported_data
+    from AI.single_customer_analyze.Activities_analytics import _calculate_metrics_sync, convert_to_datetime
     # 1. Setup Path
     file_path = Path("data") / user_id / "report_activities.md"
     
     # 2. Check existence
     if not file_path.exists():
-        logger1.error(f"Statistics file not found at: {file_path}")
-        return "Error: Statistics file not found."
+        try:
+            try:
+                activities = get_exported_data(user_id, "activities")
+            except Exception as e:
+                logger1.error(f"Error in get_exported_data activities: {e}")
+
+
+            # Build the directory path and file name for non-orders entities
+            dir_path = os.path.join("data", user_id, 'activities')
+            os.makedirs(dir_path, exist_ok=True)
+
+
+            file_path_activities = os.path.join(dir_path, "activities.csv")
+
+            logger1.info(f"Saving report for customer '{user_id}', entity 'activities' at {file_path_activities}")
+            with open(file_path_activities, "wb") as f:
+                f.write(activities)
+            df = pd.read_csv(file_path_activities)
+            df = convert_to_datetime(df, ["createdAt"])
+            df = convert_to_datetime(df, ["updatedAt"])
+            statistics = _calculate_metrics_sync(df)
+        except Exception as e:
+            logger1.error(f'General_activities_statistics_tool activities question problem: {e}')
+            statistics = 'Can not calculate it, try again later'
+        return statistics
+
 
     # 3. Encoding Loop
     encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']

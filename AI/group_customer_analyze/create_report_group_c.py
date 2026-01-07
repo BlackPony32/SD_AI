@@ -317,12 +317,9 @@ async def generate_analytics_report_sectioned(
     """
     
     # --- 1. Synchronous Pre-processing ---
-    # This is fast and can run first.
     products['product_variant'] = products['name'].astype(str) + ' - ' + products['sku'].astype(str)
     
     # --- 2. Asynchronous I/O (Saving CSVs) ---
-    # We can do this in the background while running calcs if we want,
-    # or just get it done first. Let's do it first.
     try:
         # Run CSV saving in parallel threads
         await asyncio.gather(
@@ -333,8 +330,6 @@ async def generate_analytics_report_sectioned(
         logger2.warning(f"Error saving debug CSVs for {uuid}: {e}")
 
     # --- 3. Handle Single Section Requests ---
-    # These calls run the specific sync function in a thread and return.
-    
     if report_type == "key_metrics":
         lines = await asyncio.to_thread(_calculate_key_metrics, orders)
         return "\n".join(lines)
@@ -368,10 +363,8 @@ async def generate_analytics_report_sectioned(
         return "\n".join(lines)
 
     # --- 4. Handle Full Report Request ---
-    # This runs ALL synchronous helper functions in parallel threads.
-    
     if report_type == "Full Report":
-        # We wrap each sync function in asyncio.to_thread
+        # wrap each sync function in asyncio.to_thread
         tasks = [
             asyncio.to_thread(_calculate_key_metrics, orders),
             asyncio.to_thread(_calculate_discount_distribution, orders),
@@ -383,7 +376,6 @@ async def generate_analytics_report_sectioned(
             asyncio.to_thread(_calculate_top_worst_products, orders, products)
         ]
         
-        # Run all tasks concurrently
         results = await asyncio.gather(*tasks)
         
         # Unpack results (must be in the same order as tasks)
@@ -423,10 +415,30 @@ async def generate_analytics_report_sectioned(
         # Add the final AI-generated suggestions placeholder
         add_to_report("suggestions_div", ["## Suggestions"])
         
+        def clean_markdown(text: str) -> str:
+            if not text:
+                return ""
+            # Replace the separator with a standard blank line for readability
+            # We do two passes to catch '---' surrounded by newlines and '---' at end of strings
+            return text.replace('\n---\n', '\n\n').replace('\n---', '').replace('---', '')
+
+        # 1. Join the list first (Fastest way to build the blob)
+        raw_full_report = "\n".join(full_report_list).strip()
+
+        # 2. Run cleaning asynchronously (Non-blocking)
+        # This prevents the string operation from freezing your FastApi/Server loop
+        final_clean_report = await asyncio.to_thread(clean_markdown, raw_full_report)
+
+        # 3. Clean the individual sections dictionary as well
+        # We can do this in the same async thread or just list comp if data is small
+        clean_sections = await asyncio.to_thread(
+            lambda: {k: clean_markdown(v) for k, v in sections_main.items()}
+        )
+
         # Return the dict structure your endpoint expects
         return {
-            "full_report": "\n".join(full_report_list).strip(),
-            "sections": sections_main
+            "full_report": final_clean_report,
+            "sections": clean_sections
         }
 
     # Fallback for an unknown report type
@@ -1506,11 +1518,21 @@ async def main_batch_process(merged_orders, products_df, customer_df, uuid):
         if content:
             report_parts.append(str(content))
     
-    # Join all parts with double newlines for clear separation
-    full_report = "\n\n".join(report_parts)
+    def clean_markdown(text: str) -> str:
+        if not text:
+            return ""
 
-    return full_report, sectioned_report
+        return text.replace('\n---\n', '\n\n').replace('\n---', '')
 
+
+    raw_full_report = "\n".join(report_parts).strip()
+    final_clean_report = await asyncio.to_thread(clean_markdown, raw_full_report)
+    
+    clean_sections = await asyncio.to_thread(
+        lambda: {k: clean_markdown(v) for k, v in sectioned_report.items()}
+    )
+
+    return final_clean_report, clean_sections
 
 
 if __name__ == "__main__":

@@ -127,8 +127,8 @@ async def combine_sections(title, var1, var2):
     
 
     combined = '\n'.join(lines1) + '\n---\n' + processed_var2
-    
-    return {title: combined}
+    response = combined.replace('\n---\n', '\n\n').replace('\n---', '')
+    return {title: response}
 
 #some functions for create_group_reports endpoint
 from fastapi import Body, HTTPException, status
