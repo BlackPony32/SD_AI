@@ -12,6 +12,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+
 # Define a custom exception for critical data loading errors
 class DataLoadError(Exception):
     pass
@@ -95,7 +96,7 @@ async def load_data(filepath):
             'NOTE_ADDED': 'Notes Added'
         }
         df['activity_type'] = df['type'].map(activity_names).fillna('Unknown')
-        df.to_csv('test.csv',index=False)
+        #df.to_csv('test.csv',index=False)
         return df
     
     except Exception as e:
@@ -286,8 +287,6 @@ async def analyze_activities(file_path_notes: str, file_path_tasks: str, file_pa
          
     # Write the report to file, handling potential write errors
     try:
-        async with aiofiles.open('business_activities_report.md', 'w') as f:
-            await f.write(report)
         return report
     except Exception as e:
         logging.error(f"Error writing report: {e}")

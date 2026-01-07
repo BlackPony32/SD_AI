@@ -1,0 +1,210 @@
+--- 1. PROVEN RESULTS & SUCCESS STORIES (WHY US?) ---
+
+Q: Do you have proof that SimplyDepo increases sales?
+A: Yes. We track real-world performance metrics from our clients. Here are verified results from our Case Studies:
+
+1. Revenue Growth:
+   - "Brooklyn Best" (Iced Tea & Lemonade Brand) achieved 20% retail sales growth in under 3 months of using SimplyDepo.
+   - "HC Foods" reported a 15%+ revenue increase in just one quarter.
+
+2. Time Efficiency:
+   - "GNGR Labs" (Ginger Shot Brand) saved 15 hours per sales rep, per week. This time was redirected from admin work to visiting more stores.
+   - Across the board, teams save an average of 40+ hours weekly on manual data entry.
+
+3. Customer Retention:
+   - By using our CRM tools to track customer health, clients have seen up to a 30% increase in buyer retention rates.
+
+--- 2. GENERAL INFORMATION ---
+
+Q: What is SimplyDepo?
+A: SimplyDepo is an all-in-one platform designed for wholesale distributors, CPG brands, and field sales teams. It combines order management, CRM, retail execution, and route optimization into a single, easy-to-use ecosystem.
+
+Q: Why do businesses choose SimplyDepo over competitors?
+A: Based on our "Why Us" philosophy:
+1. "Consumer-Grade" UX: Unlike clunky legacy software, SimplyDepo looks and feels like a modern app. Your team can learn it in minutes.
+2. True Offline Capability: The mobile app works 100% offline. Reps can place orders and audit stores in basements or dead zones; data syncs automatically later.
+3. Cost-Effectiveness: We provide enterprise-level features without the expensive enterprise price tag.
+
+--- 3. FEATURES & TECHNICAL CAPABILITIES ---
+
+Q: What is the difference between "Pre-Sales" and "Van Sales"?
+A: SimplyDepo supports both models:
+- Pre-Sales: Reps visit, take digital orders, and the warehouse ships later.
+- Van Sales (DSD): The driver carries stock in the truck and sells directly to the store. The app tracks truck inventory in real-time.
+
+Q: Does it integrate with my accounting software?
+A: Yes. We offer seamless integrations with:
+- QuickBooks Online
+- Xero
+- Shopify (for inventory sync)
+- Zapier (for connecting to 5,000+ other apps)
+
+Q: Can I track my sales team?
+A: Yes. The "Smart Routes" feature uses GPS to help reps avoid traffic and verify store visits (Geofencing), ensuring accurate reporting without micromanagement.
+
+--- 4. SUPPORT & CONTACT ---
+
+Q: How can I see a demo of these features?
+A: We offer personalized walkthroughs to show how these specific metrics can apply to your business.
+
+Q: Who do I contact for support or setup?
+A: You can book a direct session with our Customer Success Specialist, John Vasylets.
+
+👉 Schedule a Meeting with John Vasylets:
+https://meetings.hubspot.com/john-vasylets/customers
+
+# SimplyDepo Comprehensive FAQ & Glossary
+
+---
+
+## 1. General Platform Information
+
+### **Q: What is SimplyDepo?**
+### **Q: What is SD?**
+**A:** SimplyDepo is an all-in-one B2B sales and retail execution platform designed specifically for Consumer Packaged Goods (CPG) brands, distributors, and merchandisers. It unifies field sales, order management, route planning, and retail audits into a single system, replacing disconnected spreadsheets and manual tools.
+
+### **Q: Who is the primary target audience for SimplyDepo?**
+**A:** The platform is optimized for:
+* **CPG Brands:** Companies selling products through internal field teams or third-party distributors.
+* **Wholesale Distributors:** Businesses managing high-volume B2B sales and deliveries across various regions.
+* **Merchandising Teams:** Professionals responsible for capturing in-store retail data, compliance reports, and shelf audits.
+
+### **Q: Does SimplyDepo work without an internet connection?**
+**A:** Yes. The mobile application supports **Offline Mode**, allowing field representatives to place orders, track inventory, and log store visits even in areas with poor or no internet connectivity. Data automatically syncs once the connection is restored.
+
+### **Q: What integrations does SimplyDepo support?**
+**A:** SimplyDepo integrates with major business tools including:
+* **Accounting/ERP:** QuickBooks Online.
+* **CRM:** HubSpot CRM, Salesforce.
+* **E-commerce:** Shopify, ShipStation.
+* **Automation:** Zapier (connecting to thousands of apps).
+* **Payments:** Stripe.
+
+---
+
+## 2. Glossary of Key Terms & Modules
+
+### **Retail Execution**
+**Definition:** The activities field teams perform in-store to ensure products are merchandised correctly.
+**In SimplyDepo:** This encompasses Shelf Data Capture, Planogram Compliance, Store Audits, and Photo Documentation to verify product availability and display standards.
+
+### **DSD (Direct Store Delivery)**
+**Definition:** A distribution model where products are delivered directly from the manufacturer or distributor to the retail store, bypassing the retailer's centralized distribution center.
+**In SimplyDepo:** The platform supports DSD by managing van sales, tracking "inventory on truck," and generating invoices at the point of sale.
+
+### **Route Optimization**
+**Definition:** An algorithm-based tool that plans the most efficient daily paths for drivers and sales reps.
+**In SimplyDepo:** It considers order volume, delivery windows, traffic patterns, and vehicle capacity to minimize drive time and fuel costs.
+
+### **Purchase Order (PO)**
+**Definition:** A formal, legally binding document issued by a buyer to a supplier to confirm a transaction.
+**In SimplyDepo:** The system automates the generation and tracking of POs, allowing reps to create them digitally in the field to speed up fulfillment and reduce paperwork errors.
+
+### **Omnichannel Support**
+**Definition:** A strategy that unifies sales data from multiple sources into one view.
+**In SimplyDepo:** Whether an order comes from a field rep, a B2B e-commerce portal, or a direct EDI feed, the platform centralizes order management so inventory and sales data remain consistent across all channels.
+
+### **Trade Promotion Management (TPM)**
+**Definition:** The process of planning and executing marketing campaigns (promotions) to increase demand in retail stores.
+**In SimplyDepo:** Users can track the effectiveness of promotions by recording sales uplift, compliance, and execution quality during store visits.
+
+---
+
+## 3. Feature-Specific FAQs
+
+### **Q: How does the "Shelf Photo Logging" feature assist management?**
+**A:** Field reps can take photos of store shelves directly within the app. These photos are **geotagged and timestamped**, giving managers "eyes in the store" to verify that displays are set up correctly without physically visiting the location.
+
+### **Q: Can I manage different price lists for different customers?**
+**A:** Yes. SimplyDepo supports **Custom Pricing & Price Lists**. You can assign specific pricing tiers, volume discounts, or contract prices to individual customers or customer groups (e.g., "Wholesale VIP" vs. "Standard Retail").
+
+### **Q: What is included in the "Customer Management" (CRM) module?**
+**A:** The CRM module is tailored for B2B wholesale relationships. It includes:
+* **Visit History:** A log of every interaction and order for a specific client.
+* **Notes & Tasks:** Reminders for reps to follow up on specific issues.
+* **Order History:** Functionality for easy re-ordering based on past purchases.
+* **Account Status:** Tracking of credit limits and outstanding invoices.
+
+### **Q: How does "Inventory Management" handle mobile stock?**
+**A:** The system tracks inventory not just in the main warehouse, but also **"on the truck" (mobile warehouses)**. This ensures that van sales reps know exactly what stock they have available to sell immediately and what needs to be replenished before their next route.
+
+### **Q: What analytics and reporting capabilities are available?**
+**A:** SimplyDepo provides real-time dashboards that track KPIs such as:
+* **Sales Performance:** Revenue breakdown by rep, territory, or product category.
+* **Field Activity:** Number of visits completed vs. scheduled.
+* **Fill Rates:** Percentage of customer orders successfully fulfilled.
+* **Route Efficiency:** Mileage and time spent on the road.
+
+### **Q: What is "Lot Tracking"?**
+**A:** For perishable CPG goods, Lot Tracking allows businesses to trace specific batches of products (lots) through the supply chain. This is crucial for managing expiration dates (FEFO - First Expired, First Out) and handling recalls efficiently.
+
+
+## 4. Logistics & Order Fulfillment
+
+### **Q: What is Proof of Delivery (POD)?**
+**A:** Proof of Delivery is a method used to establish that the recipient received the contents sent by the sender.
+**In SimplyDepo:** Drivers and field reps can capture electronic signatures, take photos of delivered goods, or scan barcodes at the drop-off point. This digital POD is instantly uploaded to the system to resolve disputes and speed up invoicing.
+
+### **Q: How are Backorders handled?**
+**A:** A Backorder occurs when a specific quantity of an item cannot be filled by the current available inventory.
+**In SimplyDepo:** The system automatically flags out-of-stock items during order entry. It allows reps to either create a separate "backorder" to be fulfilled later or substitute the item, ensuring the customer knows exactly what will be delivered immediately versus later.
+
+### **Q: What is Reverse Logistics (Returns Management)?**
+**A:** Reverse Logistics refers to the process of moving goods from their typical final destination for the purpose of capturing value, or proper disposal.
+**In SimplyDepo:** The platform streamlines **Returns Management (RMA)** by allowing reps to process returns on-site, issue credit notes instantly, and update inventory levels to reflect returned stock (whether it’s damaged or restockable).
+
+### **Q: What are Recurring Orders?**
+**A:** Recurring Orders are standing orders set to repeat at specific intervals (weekly, bi-weekly, monthly).
+**In SimplyDepo:** Sales managers can set up automated recurring orders for loyal customers with predictable demand. This ensures consistent revenue and reduces the manual administrative work for sales reps during routine visits.
+
+### **Q: What is Last Mile Delivery?**
+**A:** Last Mile Delivery is the final step of the delivery process—moving a package from a transportation hub to the final destination (the retail store or customer).
+**In SimplyDepo:** The **Route Optimization** and **Driver App** features are specifically designed to optimize this expensive stage of logistics by calculating the fastest routes and providing real-time tracking updates.
+
+---
+
+## 5. Retail Metrics & Merchandising Terms
+
+### **Q: What is a SKU (Stock Keeping Unit)?**
+**A:** A SKU is a unique code used to identify and track inventory levels for a specific product.
+**In SimplyDepo:** The platform uses SKUs to manage the entire product catalog, tracking variations such as flavor, size, and packaging type to ensure accurate ordering and reporting.
+
+### **Q: What does "Facings" mean in retail execution?**
+**A:** "Facings" refers to the number of identical products placed side-by-side on a retail shelf, visible to the customer.
+**In SimplyDepo:** Merchandisers record the number of facings during store audits. This data helps brands determine if they are getting the shelf space they paid for and how their visibility compares to competitors.
+
+### **Q: What is Share of Shelf (SOS)?**
+**A:** Share of Shelf is a metric that compares the amount of space a specific brand occupies on a store shelf relative to the total space available for that category.
+**In SimplyDepo:** By logging shelf data and photos, the system can help calculate SOS, giving brands insight into their market dominance in specific retail locations.
+
+### **Q: What is OOS (Out of Stock)?**
+**A:** OOS refers to a situation where a product is not available for sale when a customer wants to buy it.
+**In SimplyDepo:** Field reps track OOS instances during visits. This data is critical for **Demand Planning**, helping manufacturers understand lost revenue opportunities and adjust supply chain velocity.
+
+### **Q: What is a Planogram?**
+**A:** A Planogram is a visual diagram that provides details as to where every product in a retail store should be placed.
+**In SimplyDepo:** Reps use the app to verify **Planogram Compliance**, checking if the actual shelf arrangement matches the visual strategy provided by headquarters.
+
+---
+
+## 6. Technical & Strategic Features
+
+### **Q: What is Sales Forecasting?**
+**A:** Sales Forecasting is the process of estimating future sales.
+**In SimplyDepo:** The platform uses historical data (past orders, seasonal trends, and current growth rates) to generate forecasts. This helps distributors purchase the right amount of stock and helps brands plan production schedules effectively.
+
+### **Q: What is EDI (Electronic Data Interchange)?**
+**A:** EDI is the computer-to-computer exchange of business documents in a standard electronic format between business partners.
+**In SimplyDepo:** The platform supports EDI to automate the exchange of Purchase Orders (850), Invoices (810), and Advance Ship Notices (856) with large retail partners who require this standard.
+
+### **Q: How does Barcoding / RFID integration work?**
+**A:** Barcoding and RFID (Radio Frequency Identification) are technologies used for automatic data capture.
+**In SimplyDepo:** The mobile app allows users to use their device's camera or a connected scanner to scan product barcodes for instant order entry, inventory lookups, and warehouse picking, significantly reducing human error.
+
+### **Q: What is Territory Management?**
+**A:** Territory Management involves dividing a sales market into segments (based on geography, sales potential, or history) to assign to specific sales reps.
+**In SimplyDepo:** Managers can digitally draw territories on a map and assign customers to specific reps. This prevents sales overlap (two reps visiting the same client) and ensures balanced workloads across the team.
+
+### **Q: What is a Fill Rate?**
+**A:** Fill Rate measures the percentage of customer demand that is met through immediate stock availability, without backorders or lost sales.
+**In SimplyDepo:** This is a key KPI tracked in the dashboard to measure the efficiency of the supply chain and the reliability of the distributor.

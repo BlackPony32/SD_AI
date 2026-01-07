@@ -162,7 +162,7 @@ def preprocess_products(file_path):
     df = df.round({col: 2 for col in columns_to_round if col in df.columns})
     
     # Drop unnecessary columns, ignoring errors if columns are missing
-    columns_to_drop = ['description', 'barcode', 'color', 'size']
+    columns_to_drop = ['description', 'barcode']
     df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
     
     return df
@@ -170,7 +170,7 @@ def preprocess_products(file_path):
 async def create_user_data(orders_df_path, products_df_path, folder_to_save):
     """Processes order and product data asynchronously and saves the cleaned results."""
     logger.info("Starting create_user_data")
-    
+
     # Run preprocessing functions in separate threads asynchronously
     orders_df, products_df = await asyncio.gather(
         asyncio.to_thread(preprocess_orders, orders_df_path),

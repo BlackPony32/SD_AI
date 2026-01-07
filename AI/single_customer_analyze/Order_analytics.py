@@ -30,33 +30,33 @@ def get_top_products_for_contact(contact_name, orders_df, products_df, top_n=3):
     return product_counts.index.tolist()
 
 def top_new_contact(ord_df, products_df):
-    #ord_df = pd.read_csv(file_path)
-    #products_df = pd.read_csv(products_file_path)
-    
-    successful_orders = ord_df[(ord_df['orderStatus'] == 'COMPLETED') & 
-                              (ord_df['paymentStatus'] == 'PAID') & 
-                              (ord_df['deliveryStatus'] == 'FULFILLED')]
-    
+    successful_orders = ord_df[
+        (ord_df['orderStatus'] == 'COMPLETED') &
+        (ord_df['paymentStatus'] == 'PAID') &
+        (ord_df['deliveryStatus'] == 'FULFILLED')
+    ]
     if successful_orders.empty:
         return ("No data", [])
-    
-    best_contact = successful_orders['contactDuplicate_name'].value_counts().idxmax()
+
+    contact_counts = successful_orders['contactDuplicate_name'].dropna().value_counts()
+    if contact_counts.empty:
+        return ("No data", [])
+
+    best_contact = contact_counts.idxmax()
     top_products = get_top_products_for_contact(best_contact, ord_df, products_df)
-    
     return (best_contact, top_products)
 
 def top_reorder_contact(ord_df, products_df):
-    #ord_df = pd.read_csv(file_path)
-    #products_df = pd.read_csv(products_file_path)
-    
     repeat_contacts = ord_df.groupby('contactDuplicate_name').filter(lambda x: len(x) > 1)
-    
     if repeat_contacts.empty:
         return ("No data", [])
-    
-    best_contact = repeat_contacts['contactDuplicate_name'].value_counts().idxmax()
+
+    contact_counts = repeat_contacts['contactDuplicate_name'].dropna().value_counts()
+    if contact_counts.empty:
+        return ("No data", [])
+
+    best_contact = contact_counts.idxmax()
     top_products = get_top_products_for_contact(best_contact, ord_df, products_df)
-    
     return (best_contact, top_products)
 
 def format_am_pm(hour):
@@ -71,25 +71,22 @@ def format_am_pm(hour):
         return f"{hour - 12}:00 PM"
 
 def peak_visit_time(df):
-    #df = pd.read_csv(file_path)
-    df['createdAt'] = pd.to_datetime(df['createdAt'])
-    
-    # Calculate best day
+    df = df.copy()
+    df['createdAt'] = pd.to_datetime(df['createdAt'], errors='coerce')
+
     df['weekday'] = df['createdAt'].dt.day_name()
-    day_counts = df['weekday'].value_counts()
+    day_counts = df['weekday'].dropna().value_counts()
     best_day = day_counts.idxmax() if not day_counts.empty else "No data"
-    
-    # Calculate peak time window
+
     df['hour'] = df['createdAt'].dt.hour
-    hour_counts = df['hour'].value_counts()
-    
+    hour_counts = df['hour'].dropna().value_counts()
     if not hour_counts.empty:
         peak_hour = hour_counts.idxmax()
         end_hour = (peak_hour + 1) % 24
         time_window = f"{format_am_pm(peak_hour)} - {format_am_pm(end_hour)}"
     else:
         time_window = "No data"
-    
+
     return (best_day, time_window)
 
 def get_contact_peak_time(contact_name, orders_df):
@@ -212,7 +209,7 @@ def preprocess_orders(orders_df: pd.DataFrame):
 def preprocess_products(products_df: pd.DataFrame):
     """Clean and transform products data, returning processed DataFrame and an optional error message."""
     # Check for required columns
-    required_columns = ['sku', 'quantity', 'paidQuantity', 'price', 'itemDiscountAmount', 'orderId']
+    required_columns = ['sku', 'quantity', 'paidQuantity', 'price', 'itemDiscountAmount','size', 'orderId']
     missing_cols = [col for col in required_columns if col not in products_df.columns]
     if missing_cols:
         return pd.DataFrame(), f"The products file is missing these required columns: {', '.join(missing_cols)}. Please check the file."
@@ -311,7 +308,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             if float(value).is_integer():
                 return f"${value:,.0f}"
             return f"${value:,.2f}"
-        
+    
 
         def format_status(status: str) -> str:
             return status.replace('_', ' ')
@@ -323,6 +320,10 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
         
         # Step 4: Calculate metrics
         try:
+            merged_df['sku'] = merged_df['sku'].fillna('unknown').astype(str)
+            merged_df['size'] = merged_df['size'].fillna('unknown size').astype(str)
+            merged_df['product'] = merged_df['name'].astype(str) + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
+            #merged_df.to_csv('deleteee.csv')
             # Total sales by payment and delivery status
             total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
 
@@ -349,7 +350,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
             # Product Analysis
             merged_df['item_revenue'] = (merged_df['price'] - merged_df['itemDiscountAmount']) * merged_df['quantity']
-            product_stats = merged_df.groupby('sku').agg(
+            product_stats = merged_df.groupby('product').agg(
                 total_quantity=('quantity', 'sum'),
                 total_revenue=('item_revenue', 'sum')
             ).sort_values('total_revenue', ascending=False)
@@ -380,9 +381,15 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ).sort_values('total_purchases', ascending=False)
 
             # Monthly Trends
-            merged_df['product'] = merged_df.get('name', 'Product') + ' - ' + merged_df['sku']
+            #merged_df['product'] = merged_df.get('name', 'Product') + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
             product_sales = merged_df.groupby(['month', 'product'])['item_revenue'].sum().reset_index()
-            top_products = product_sales.loc[product_sales.groupby('month')['item_revenue'].idxmax()]
+            if not product_sales.empty:
+                top_products = product_sales.loc[
+                    product_sales.groupby('month')['item_revenue'].idxmax()
+                ]
+            else:
+                top_products = pd.DataFrame(columns=['month', 'product', 'item_revenue'])
+            #print(product_sales)
             monthly_sales = orders.groupby('month').agg(
                 total_sales=('totalAmount', 'sum'),
                 order_count=('id', 'nunique')
@@ -400,8 +407,10 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
         try:
             # Top Products
             top_skus = product_stats.head(3).index
-            product_names = merged_df.groupby('sku')['name'].first() if 'name' in merged_df.columns else pd.Series(index=top_skus, data='Unknown Product')
-            top_products_list = [f"{product_names.get(sku, 'Unknown Product')} - {sku}" for sku in top_skus]
+            product_names = merged_df.groupby('product')['name'].first() if 'product' in merged_df.columns else pd.Series(index=top_skus, data='Unknown Product')
+
+            
+            top_products_list = [f"{sku}" for sku in top_skus]
 
             # Sales Team
             if not salesperson_stats.empty:
@@ -451,15 +460,18 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 full_md.append("")
 
             def clean_number(n):
-                return int(n) if float(n).is_integer() else round(n, 2)
+                try:
+                    return int(n) if float(n).is_integer() else round(n, 2)
+                except (ValueError, TypeError):
+                    return n  # Fallback to original if non-numeric
 
             def format_month(month: str) -> str:
                 """Convert MM/YYYY to MM/YY"""
                 parts = month.split('/')
-                if len(parts) == 2:
+                if len(parts) == 2 and parts[1].isdigit():
                     return f"{parts[0]}/{parts[1][-2:]}"
-                return month
-    
+                return month  # Fallback if invalid
+
             # 1) Total Sales by Status
             lines = [
                 "# Sales Performance Report",
@@ -473,6 +485,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             add_section("total_sales_by_status", lines)
 
             # 2) Key Metrics
+            percent_with_delivery = (num_orders_with_delivery / total_orders * 100) if total_orders > 0 else 0  # Fix: Avoid div by zero
             lines = [
                 "## Key Metrics",
                 f"- **Total Sales:** {usd(total_sales)}",
@@ -481,7 +494,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 f"- **Total Discounts Given:** {usd(total_discount_amount)}",
                 f"- **Total Delivery Fees:** {usd(total_delivery_fees)}",
                 f"- **Orders with Delivery Fees:** {num_orders_with_delivery} "
-                f"({format_percentage(num_orders_with_delivery/total_orders*100)})",
+                f"({format_percentage(percent_with_delivery)})",
                 f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
             ]
             add_section("key_metrics", lines)
@@ -489,18 +502,20 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             # 3) Payment Status Analysis
             lines = ["## Payment Status Analysis"]
             for status in existing_payment_statuses:
-                lines.append(f"- **{format_status(status)}:** {payment_status_counts[status]} "
-                             f"orders ({format_percentage(payment_status_percent[status])})")
-            
+                count = payment_status_counts.get(status, 0)  # Fix: Avoid KeyError
+                percent = payment_status_percent.get(status, 0)
+                lines.append(f"- **{format_status(status)}:** {count} "
+                             f"orders ({format_percentage(percent)})")
             add_section("payment_status_analysis", lines)
 
             # 4) Discount Distribution
             dd = discount_distribution.copy()
             dd['discount_category'] = dd['discount_category'].replace('NONE', 'No Discount')
+            percent_with_discounts = percentage_orders_with_discounts if total_orders > 0 else 0  # Assume/guard
             lines = [
                 "## Discount Distribution",
                 f"- **Orders with Discounts:** {num_orders_with_discounts} "
-                f"({format_percentage(percentage_orders_with_discounts)})",
+                f"({format_percentage(percent_with_discounts)})",
                 "",
                 "| Discount Type | Number of Orders | Total Discount |",
                 "|---------------|------------------|----------------|",
@@ -512,8 +527,10 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             # 5) Fulfillment Analysis
             lines = ["## Fulfillment Analysis"]
             for status in existing_delivery_statuses:
-                lines.append(f"- **{format_status(status)}:** {fulfillment_counts[status]} "
-                             f"orders ({format_percentage(fulfillment_percent[status])})")
+                count = fulfillment_counts.get(status, 0)  # Fix: Avoid KeyError
+                percent = fulfillment_percent.get(status, 0)
+                lines.append(f"- **{format_status(status)}:** {count} "
+                             f"orders ({format_percentage(percent)})")
             add_section("fulfillment_analysis", lines)
 
             # 6) Top Performing Products
@@ -557,26 +574,29 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             ]
             for _, row in monthly_sales.iterrows():
                 avg = row['total_sales'] / row['order_count'] if row['order_count'] else 0
-                top_product = top_products[top_products['month'] == row['month']]['product'].values[0]
+                # Fix: Handle missing top product
+                matching = top_products[top_products['month'] == row['month']]
+                top_product = matching['product'].values[0] if not matching.empty else 'N/A'
                 lines.append(f"| {format_month(row['month'])} | {usd(row['total_sales'])} | "
                              f"{row['order_count']} | {usd(avg)} | {top_product} |")
             add_section("monthly_sales_trends", lines)
-
+            
             # 10) Suggestions
             lines = ["## Suggestions"]
             if top_products_list:
-                lines.append(f"- **Focus marketing efforts** on top products: {', '.join(top_products_list)}.")
+                lines.append(f"- **Focus marketing efforts** on top products: {', '.join(map(str, top_products_list))}.")
             if top_salesperson:
                 lines.append(f"- **Leverage success** of {top_salesperson}.")
             if bottom_salespeople:
-                lines.append(f"- **Support underperformers**: training for {', '.join(bottom_salespeople)}.")
+                lines.append(f"- **Support underperformers**: training for {', '.join(map(str, bottom_salespeople))}.")
             if top_customers:
-                lines.append(f"- **Reward loyalty**: deals for {', '.join(top_customers)}.")
+                lines.append(f"- **Reward loyalty**: deals for {', '.join(map(str, top_customers))}.")
             trend_map = {
                 "increasing": "- **Sales trending up**: increase inventory or staff.",
                 "decreasing": "- **Sales trending down**: investigate causes; consider promotions.",
                 "fluctuating": "- **Fluctuating sales**: analyze external factors.",
             }
+            
             lines.append(trend_map.get(trend, "- **Trend analysis**: insufficient data; keep monitoring."))
             if fulfillment_rec:
                 lines.append(f"- {fulfillment_rec}")
@@ -595,7 +615,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "\n</div>"
             )
             add_section("suggestions", [html_suggestions])
-            # Pass this to your response logic
+
             result = sections['suggestions_div'] = "".join(html_suggestions)
             #print(result)
 
