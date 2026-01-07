@@ -483,7 +483,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for _, row in total_sales_by_status.iterrows():
                 lines.append(f"| {format_status(row['paymentStatus'])} | {format_status(row['deliveryStatus'])} | {usd(row['totalAmount'])} |")
             add_section("total_sales_by_status", lines)
-        
+
             # 2) Key Metrics
             percent_with_delivery = (num_orders_with_delivery / total_orders * 100) if total_orders > 0 else 0  # Fix: Avoid div by zero
             lines = [
@@ -498,7 +498,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 f"- **Average Delivery Fee:** {usd(avg_delivery_fee)}",
             ]
             add_section("key_metrics", lines)
-        
+
             # 3) Payment Status Analysis
             lines = ["## Payment Status Analysis"]
             for status in existing_payment_statuses:
@@ -507,7 +507,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"- **{format_status(status)}:** {count} "
                              f"orders ({format_percentage(percent)})")
             add_section("payment_status_analysis", lines)
-        
+
             # 4) Discount Distribution
             dd = discount_distribution.copy()
             dd['discount_category'] = dd['discount_category'].replace('NONE', 'No Discount')
@@ -523,7 +523,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             for _, row in dd.iterrows():
                 lines.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
             add_section("discount_distribution", lines)
-        
+
             # 5) Fulfillment Analysis
             lines = ["## Fulfillment Analysis"]
             for status in existing_delivery_statuses:
@@ -532,7 +532,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"- **{format_status(status)}:** {count} "
                              f"orders ({format_percentage(percent)})")
             add_section("fulfillment_analysis", lines)
-        
+
             # 6) Top Performing Products
             lines = [
                 "## Top 10 Performing Products",
@@ -543,7 +543,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"| {sku} | {clean_number(row['total_quantity'])} | "
                              f"{usd(row['avg_selling_price'])} | {usd(row['total_revenue'])} |")
             add_section("top_products", lines)
-        
+
             # 7) Sales Team Performance
             lines = [
                 "## Sales Team Performance",
@@ -554,7 +554,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"| {name} | {usd(row['total_sales'])} | "
                              f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
             add_section("sales_team_performance", lines)
-        
+
             # 8) Customer Purchase Analysis
             lines = [
                 "## Customer Purchase Analysis",
@@ -565,7 +565,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 lines.append(f"| {name} | {usd(row['total_purchases'])} | "
                              f"{clean_number(row['order_count'])} | {usd(row['avg_order_value'])} |")
             add_section("customer_purchase_analysis", lines)
-        
+
             # 9) Monthly Sales Trends
             lines = [
                 "## Monthly Sales Trends",
@@ -596,7 +596,7 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
                 "decreasing": "- **Sales trending down**: investigate causes; consider promotions.",
                 "fluctuating": "- **Fluctuating sales**: analyze external factors.",
             }
-            print('here')
+            
             lines.append(trend_map.get(trend, "- **Trend analysis**: insufficient data; keep monitoring."))
             if fulfillment_rec:
                 lines.append(f"- {fulfillment_rec}")

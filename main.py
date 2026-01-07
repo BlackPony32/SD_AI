@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks
 from fastapi.responses import PlainTextResponse
 from fastapi import Body
 
+import json
 import pandas as pd
 import os
 import logging
@@ -44,7 +45,7 @@ from AI.utils import get_logger, extract_customer_id, process_fetch_results, val
     analyze_customer_orders_async, calculate_cost
 
 from fastapi import HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 import requests
 from functools import partial
@@ -339,15 +340,12 @@ class ChatRequest(BaseModel):
 @app.post("/Ask_ai")
 async def ask_ai_endpoint(
     request: ChatRequest,
-    # 1. Params are now Optional (default is None) so the API doesn't complain if they are missing
-    file_path_product: Optional[str] = Query(None),
-    file_path_orders: Optional[str] = Query(None),
     customer_id: str = Query(...)
 ):
     prompt = request.prompt
     user_uuid = customer_id
     pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt}'
-    print(pre_prompt)
+
     try:
         # Use AI function to get response
         #response = await Ask_ai_many_customers(prompt, user_uuid)
@@ -361,9 +359,6 @@ async def ask_ai_endpoint(
                 )
 
         answer = runner.final_output 
-        from pprint import pprint
-        print(answer)
-
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -388,6 +383,91 @@ async def ask_ai_endpoint(
                 ]
             }
         )
+
+
+@app.post("/st_Ask_ai")
+async def st_ask_ai_endpoint(
+    request: ChatRequest,
+    customer_id: str = Query(...)
+):
+    prompt = request.prompt
+    user_uuid = customer_id
+    pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt}'
+
+    async def sse_generator():
+        try:
+            from AI.single_customer_analyze.Ask_ai_single_customer import create_Ask_ai_single_c_agent
+            agent, session = await create_Ask_ai_single_c_agent(user_uuid)
+
+            runner = Runner.run_streamed(
+                agent, 
+                input=pre_prompt,
+                session=session
+            )
+
+            # --- BUFFER SETTINGS ---
+            buffer = ""
+            BUFFER_THRESHOLD = 50  # Send data only when have ~50 chars
+
+            async for event in runner.stream_events():
+                if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
+                    # Add new token to buffer
+                    buffer += event.data.delta
+
+                    # Only yield if buffer is big enough
+                    if len(buffer) >= BUFFER_THRESHOLD:
+                        chunk_data = json.dumps({
+                            "type": "token",
+                            "content": buffer
+                        })
+                        #print(buffer)
+                        yield f"data: {chunk_data}\n"
+                        buffer = ""  # Reset buffer
+
+            # 2. Flush remaining buffer
+            # If the loop ends and there is text left in the buffer, send it now.
+            if buffer:
+                chunk_data = json.dumps({
+                    "type": "token",
+                    "content": buffer
+                })
+                
+                yield f"data: {chunk_data}\n\n"
+
+            # 3. Calculate Cost
+            try:
+                cost_stats = calculate_cost(runner, model="gpt-4.1-mini")
+                
+                # If calculate_cost returns a dict or object, format it for JSON
+                final_cost = cost_stats 
+            except Exception as cost_err:
+                logger2.error(f"Cost calc error: {cost_err}")
+                final_cost = "error_calculating"
+
+            # 4. Send Final Metadata
+            final_metadata = json.dumps({
+                "type": "metadata",
+                "cost": final_cost, 
+                "prompt": prompt,
+                "status": "completed"
+            })
+            yield f"data: {final_metadata}\n\n"
+            
+            # Send Done signal
+            yield "event: done\ndata: [DONE]\n\n"
+
+        except Exception as e:
+            logger2.error(f"Error executing LLM: {str(e)}")
+            error_data = json.dumps({
+                "type": "error",
+                "content": str(e)
+            })
+            yield f"data: {error_data}\n\n"
+
+    return StreamingResponse(
+        sse_generator(), 
+        media_type="text/event-stream"
+    )
 
 from enum import Enum
 class LogFile(str, Enum):
@@ -580,6 +660,101 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         )
 
 
+from openai.types.responses import ResponseTextDeltaEvent\
+
+@app.post("/st_Ask_ai_many_customers")
+async def st_Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
+    user_uuid = request.uuid
+    prompt = request.prompt
+
+    user_data_folder = os.path.join('data', user_uuid)
+    
+    # 1. Validation
+    if not os.path.exists(user_data_folder):
+        logger2.warning(f"Attempt to access non-existent data folder: {user_uuid}")
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": [{"msg": "Invalid UUID provided.", "type": "value_error"}]}
+        )
+
+    pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt} ?'
+
+    # 2. Define the SSE Generator
+    async def sse_generator():
+        try:
+            from AI.group_customer_analyze.Ask_ai_many_customers import create_Ask_ai_many_c_agent
+
+            agent, session = await create_Ask_ai_many_c_agent(user_uuid)
+
+            runner = Runner.run_streamed(
+                agent, 
+                input=pre_prompt,
+                session=session
+            )
+
+            # --- BUFFER SETTINGS ---
+            buffer = ""
+            BUFFER_THRESHOLD = 50  # Send data only when have ~50 chars
+
+            async for event in runner.stream_events():
+                if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
+                    # Add new token to buffer
+                    buffer += event.data.delta
+
+                    # Only yield if buffer is big enough
+                    if len(buffer) >= BUFFER_THRESHOLD:
+                        chunk_data = json.dumps({
+                            "type": "token",
+                            "content": buffer
+                        })
+                        #print(buffer)
+                        yield f"data: {chunk_data}\n"
+                        buffer = ""  # Reset buffer
+
+            # 2. Flush remaining buffer
+            # If the loop ends and there is text left in the buffer, send it now.
+            if buffer:
+                chunk_data = json.dumps({
+                    "type": "token",
+                    "content": buffer
+                })
+                
+                yield f"data: {chunk_data}\n\n"
+
+            # 3. Calculate Cost
+            try:
+                cost_stats = calculate_cost(runner, model="gpt-4.1-mini")
+                
+                # If calculate_cost returns a dict or object, format it for JSON
+                final_cost = cost_stats 
+            except Exception as cost_err:
+                logger2.error(f"Cost calc error: {cost_err}")
+                final_cost = "error_calculating"
+
+            # 4. Send Final Metadata
+            final_metadata = json.dumps({
+                "type": "metadata",
+                "cost": final_cost, 
+                "prompt": prompt,
+                "status": "completed"
+            })
+            yield f"data: {final_metadata}\n\n"
+            
+            # Send Done signal
+            yield "event: done\ndata: [DONE]\n\n"
+
+        except Exception as e:
+            logger2.error(f"Error executing LLM: {str(e)}")
+            error_data = json.dumps({
+                "type": "error",
+                "content": str(e)
+            })
+            yield f"data: {error_data}\n\n"
+
+    return StreamingResponse(
+        sse_generator(), 
+        media_type="text/event-stream"
+    )
 
 # Define an Enum for all allowed report types
 class ReportType(str, Enum):
@@ -1011,6 +1186,7 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
                     })
                 except Exception as e:
                     logger2.warning(f"The problem of displaying an alternative version of statistics in the 'product_per_state_analysis' block: {e}")
+        
         else:
             try:
                     topic = report_type.value
@@ -1091,6 +1267,225 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
                 ]
             }
         )
+
+
+def sse_msg(event_type: str, content: any):
+    """Formats data as a Server-Sent Event."""
+    return f"data: {json.dumps({'type': event_type, 'content': content})}\n\n"
+
+# --- The Generator Logic ---
+async def analyze_state_stream_generator(request):
+    try:
+        start_time = time.perf_counter()
+        customer_ids = request.customer_ids
+        uuid = request.uuid or str(uuid4())
+
+        # 1. Setup Directories
+        user_folder = os.path.join('data', uuid, 'work_data_folder')
+        await asyncio.to_thread(os.makedirs, user_folder, exist_ok=True)
+
+        yield sse_msg("status", f"Starting analysis for ID {uuid}...")
+
+        # 2. Define Paths
+        filename_orders = 'one_file_orders.csv'
+        filename_products = 'one_file_products.csv'
+        filename_customers = 'one_file_customers.csv'
+
+        file_path_orders = os.path.join(user_folder, filename_orders)
+        file_path_products = os.path.join(user_folder, filename_products)
+        file_path_customers = os.path.join(user_folder, filename_customers)
+
+        # 3. Fetch Data
+        try:
+            yield sse_msg("status", "Fetching customer data...")
+            
+            entities_orders = ["orders"]
+            entities_products = ["order_products"]
+            entities_customers = ["customer"]
+
+            # Fetch concurrently
+            result_1, result_2, result_3 = await asyncio.gather(
+                post_get_exported_data_one_file(customer_ids, entities_orders),
+                post_get_exported_data_one_file(customer_ids, entities_products),
+                post_get_exported_data_one_file(customer_ids, entities_customers)
+            )
+        except Exception as e:
+            error_message = str(e)
+            logger2.error(f"Data fetching error: {error_message}")
+            
+            # Streaming Error Handling: We cannot return a 413/502 status code here 
+            # because the stream has started. We send an error event instead.
+            if "URL component 'query' too long" in error_message:
+                yield sse_msg("error", {
+                    "code": 413,
+                    "reason": "Too many customer IDs provided."
+                })
+            else:
+                yield sse_msg("error", {
+                    "code": 502,
+                    "msg": f"Critical error during data retrieval: {error_message}"
+                })
+            return  # Stop the generator
+
+        # 4. Save Raw Data
+        await asyncio.gather(
+            _process_and_save_file_data(result_1, file_path_orders),
+            _process_and_save_file_data(result_2, file_path_products),
+            _process_and_save_file_data(result_3, file_path_customers)
+        )
+
+        # 5. Validation: Check Customers
+        try:
+            check_customers = pd.read_csv(file_path_customers)
+            if check_customers.empty:
+                yield sse_msg("error", {
+                    "code": 404, 
+                    "reason": "Incorrect Customer IDs provided. No customer data found."
+                })
+                return
+        except Exception as e:
+            logger2.warning(f"Validation warning: {e}")
+
+        # 6. Preprocess Data
+        yield sse_msg("status", "Preprocessing data...")
+        
+        full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+            str(file_path_orders), 
+            str(file_path_products)
+        )
+
+        cleaned_orders_path = os.path.join(user_folder, 'cleaned_real_big_orders.csv')
+        cleaned_products_path = os.path.join(user_folder, 'cleaned_real_big_products.csv')
+
+        await asyncio.gather(
+            save_df(full_cleaned_orders, str(cleaned_orders_path)),
+            save_df(full_cleaned_products, str(cleaned_products_path))
+        )
+
+        # 7. Validation: Check Orders
+        try:
+            check_orders = pd.read_csv(cleaned_orders_path)
+            if check_orders.empty:
+                yield sse_msg("error", {
+                    "code": 404,
+                    "reason": "The report cannot be generated based on empty data."
+                })
+                return
+        except Exception:
+            pass
+
+        # 8. Read and Merge Dataframes
+        try:
+            orders_df, products_df, customer_df = await asyncio.gather(
+                read_dataframe_async(str(cleaned_orders_path)),
+                read_dataframe_async(str(cleaned_products_path)),
+                read_dataframe_async(str(file_path_customers))
+            )
+
+            merged_orders, products_df = await asyncio.to_thread(
+                _sync_process_merge_logic, 
+                orders_df, customer_df, products_df
+            )
+        except Exception as e:
+            logger2.error(f"Merge error: {e}")
+            yield sse_msg("error", "Failed to merge dataframes.")
+            return
+
+        # 9. Processing for AI
+        from AI.group_customer_analyze.create_report_group_c import generate_analytics_report_sectioned
+        from AI.group_customer_analyze.orders_state import async_generate_report, async_process_data
+
+        yield sse_msg("status", "Running analysis algorithms...")
+        
+        # Save debug CSVs
+        products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
+        await asyncio.gather(
+            asyncio.to_thread(merged_orders.to_csv, f'data/{uuid}/oorders.csv', index=False),
+            asyncio.to_thread(products_df.to_csv, f'data/{uuid}/pproducts.csv', index=False)
+        )
+
+        await async_process_data(uuid)
+        await async_generate_report(uuid)
+
+        # 10. AI Agent Streaming
+        yield sse_msg("status", "Streaming AI analysis...")
+        
+        agent = await create_agent_products_state_analysis(uuid)
+        answer_buffer = ""      # Stores full answer
+        stream_buffer = ""      # Stores pending chunk to send
+        BUFFER_THRESHOLD = 50
+
+        try:
+            # NOTE: run_streamed is synchronous wrapper or async depending on implementation
+            # Assuming openai-agents-python standard usage:
+            runner = Runner.run_streamed(
+                agent, 
+                input="Based on the data return response" 
+                # session=session (if needed)
+            )
+
+            async for event in runner.stream_events():
+             if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
+                token = event.data.delta
+                
+                # Update buffers
+                answer_buffer += token
+                stream_buffer += token
+
+                # FLUSH: Only yield if buffer exceeds threshold
+                if len(stream_buffer) >= BUFFER_THRESHOLD:
+                    yield sse_msg("token", stream_buffer)
+                    stream_buffer = ""  # Reset small buffer
+
+        except Exception as e:
+            logger2.error(f"AI Agent Error: {e}")
+            yield sse_msg("warning", f"AI analysis failed: {str(e)}")
+            final_ai_answer = "AI Analysis failed."
+
+        # 11. Finalize and Send Result
+        yield sse_msg("status", "Finalizing report...")
+        if stream_buffer:
+            yield sse_msg("token", stream_buffer)
+
+        # --- Cost Calculation ---
+        cost_info = calculate_cost(runner, model="gpt-4o-mini")
+        yield sse_msg("metadata", {"cost": cost_info})
+        incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
+        full_report = await generate_analytics_report_sectioned(merged_orders, products_df, customer_df, uuid)
+
+        # Save report to file
+        async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
+            await f.write(full_report.get('full_report', ''))
+
+        final_payload = {
+            "incorrect_ids": incorrect_ids,
+            "sections": {'product_per_state_analysis': answer_buffer},
+            "report": full_report.get('full_report'),
+            "uuid": uuid
+        }
+        
+        yield sse_msg("result", final_payload)
+
+    except Exception as e:
+        logger2.critical(f"Unhandled Stream Error: {e}")
+        yield sse_msg("error", f"Critical system error: {str(e)}")
+
+
+# --- The Endpoint ---
+@app.post("/state-analysis")
+async def product_per_state_analysis_func(request: ReportRequest = Body(...)):
+    """
+    Returns a StreamingResponse.
+    The client will receive HTTP 200 immediately, followed by SSE events:
+    - 'status': Progress updates
+    - 'token': AI text generation tokens
+    - 'error': If something goes wrong
+    - 'result': The final JSON payload
+    """
+    return StreamingResponse(
+        analyze_state_stream_generator(request),
+        media_type="text/event-stream"
+    )
 
 if __name__ == '__main__':
     import uvicorn
