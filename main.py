@@ -73,13 +73,19 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
+import sys
+import subprocess
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 1. Start the MCP server as a subprocess when FastAPI starts
     print("Starting MCP Server...")
+    
+    # sys.executable dynamically points to the exact python binary  FastAPI app on GCP
     mcp_process = subprocess.Popen(
-        ["uv", "run", "-m", "AI.MCP_tools.List_of_mcp_tools"],
-        # If using stdio, you might need to capture stdout/stdin here depending on your client setup
+        [sys.executable, "-m", "AI.MCP_tools.List_of_mcp_tools"]
     )
     
     yield # This yields control back to FastAPI to handle web requests
@@ -87,7 +93,12 @@ async def lifespan(app: FastAPI):
     # 2. Clean up and terminate the MCP server when FastAPI shuts down
     print("Shutting down MCP Server...")
     mcp_process.terminate()
-    mcp_process.wait()
+    try:
+        # Give it a few seconds to shut down cleanly before forcing it
+        mcp_process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print("MCP Server didn't terminate in time, killing...")
+        mcp_process.kill()
 
 # Attach the lifespan to your app
 app = FastAPI(lifespan=lifespan)
