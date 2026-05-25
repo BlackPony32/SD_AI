@@ -503,7 +503,6 @@ def get_order_details(user_id: str, order_identifier: str) -> str:
     """
     Gets complete information about an order.
     
-    CRITICAL: This tool performs a 'Smart Search'. You can pass:
     1. The internal 'customId' (e.g., 771657) - PREFERRED.
     2. The system UUID (e.g., 'ab16c21f-e705...')
     3. The Shopify Order ID.

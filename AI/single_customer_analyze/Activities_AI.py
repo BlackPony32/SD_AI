@@ -5,7 +5,6 @@ import asyncio
 import aiofiles
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.concurrency import run_in_threadpool
-from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from pathlib import Path
 import time

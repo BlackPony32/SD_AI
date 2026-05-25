@@ -2,6 +2,12 @@ import logging
 
 import os
 import re
+import asyncio
+import aiofiles
+import pandas as pd
+from pathlib import Path
+import io
+import time
 
 # some util functions
 def extract_customer_id(file_path: str) -> str:
@@ -41,6 +47,21 @@ def calculate_cost(runner, model="gpt-4.1-mini"):
             "input": 2.50,
             "cached_input": 1.25,
             "output": 10.00
+        },
+        "gpt-4.1": {
+            "input": 2.00,
+            "cached_input": 0.5,
+            "output": 8.00
+        },
+        "gpt-5.1": {
+            "input": 1.25,
+            "cached_input": 0.125,
+            "output": 10.00
+        },
+        "gpt-5.4-mini": {
+            "input": 0.75,
+            "cached_input": 0.075,
+            "output": 4.50
         }
     }
 
@@ -452,16 +473,6 @@ async def analyze_customer_orders_async(orders_csv_path, customers_csv_path):
 
 
 # functions list for processing one file many customer data
-import asyncio
-import os
-import aiofiles
-import pandas as pd
-from pathlib import Path
-import asyncio
-import os
-import io
-import time
-
 
 async def save_dataframe_async(df: pd.DataFrame, file_path: str) -> None:
     """Save dataframe asynchronously"""
@@ -500,3 +511,52 @@ async def _process_and_save_file_data(result: dict, file_path: Path) -> None:
         for part in result["files"]["combined"]
     )
     await write_bytes_to_file_async(str(file_path), combined_bytes)
+
+def _is_csv_empty(filepath: str) -> bool:
+    """Returns True if the CSV is 0 bytes or only contains a header row."""
+    # Check if the file is literally 0 bytes
+    if os.path.getsize(filepath) == 0:
+        return True
+        
+    # Open the file and read only the first two lines
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        _ = f.readline() # Read and ignore the header
+        first_data_row = f.readline() # Attempt to read the first actual row of data
+        
+        # If there's no second line, or it's just a blank line/newline, it's empty
+        if not first_data_row or not first_data_row.strip():
+            return True
+            
+    return False
+
+# MCP logic
+TOPIC_CONFIG = {
+        "customers": [
+            "churn_report",
+            "refined_opportunity_report",
+            "top_customers_report",
+            "visits_report",
+            "full_report"
+        ],
+        "catalog": [
+            #"key_metrics_report",
+            #"sales_performance_report",
+            #"fulfillment_report",
+            "functional_product_analysis",
+            "product_performance",
+            "sales_trends_report",
+            "bundle_performance_report",
+            "top_3_sales_breakdown",
+            "time_based_product_report",
+            "full_report"
+        ],
+        "orders": [
+            "key_metrics_report",
+            "sales_performance_report",
+            "discount_report",
+            "payment_status_report",
+            "fulfillment_report",
+            "sales_trends_report",
+            "full_report"
+        ] 
+    }
