@@ -419,29 +419,24 @@ async def generate_analytics_report_sectioned(
             if not text:
                 return ""
             # Replace the separator with a standard blank line for readability
-            # We do two passes to catch '---' surrounded by newlines and '---' at end of strings
             return text.replace('\n---\n', '\n\n').replace('\n---', '').replace('---', '')
 
         # 1. Join the list first (Fastest way to build the blob)
         raw_full_report = "\n".join(full_report_list).strip()
 
         # 2. Run cleaning asynchronously (Non-blocking)
-        # This prevents the string operation from freezing your FastApi/Server loop
         final_clean_report = await asyncio.to_thread(clean_markdown, raw_full_report)
 
         # 3. Clean the individual sections dictionary as well
-        # We can do this in the same async thread or just list comp if data is small
         clean_sections = await asyncio.to_thread(
             lambda: {k: clean_markdown(v) for k, v in sections_main.items()}
         )
 
-        # Return the dict structure your endpoint expects
         return {
             "full_report": final_clean_report,
             "sections": clean_sections
         }
 
-    # Fallback for an unknown report type
     logger2.warning(f"Unknown report type requested: {report_type}")
     return {"error": f"Unknown report type: {report_type}"}
 

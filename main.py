@@ -35,11 +35,11 @@ from enum import Enum
 
 from AI.group_customer_analyze.many_customer import get_exported_data_one_file, post_get_exported_data_one_file
 from AI.utils import (
-    _process_and_save_file_data, read_dataframe_async, save_dataframe_async, combine_sections
+    _process_and_save_file_data, read_dataframe_async, save_dataframe_async, combine_sections, TOPIC_CONFIG
 )
 
 from AI.group_customer_analyze.preprocess_data_group_c import (
-    save_df, prepared_big_data
+    save_df, prepared_big_data, get_cleaned_catalog, get_cleaned_customers
 )
 from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
     analyze_customer_orders_async, calculate_cost
@@ -54,16 +54,45 @@ import pandas as pd
 from dotenv import load_dotenv
 import logging
 from pathlib import Path
+from typing import Optional, Dict, Any
+from enum import Enum
 import time
 from typing import Literal
+from uuid import UUID
 import shutil
 from typing import List
 from concurrent.futures import ProcessPoolExecutor
 
+from test_agent_1 import handle_distributor_data, get_distributor_data, get_cleaned_csv
+
 load_dotenv()
 set_tracing_disabled(True)
 
-app = FastAPI()
+import subprocess
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Start the MCP server as a subprocess when FastAPI starts
+    print("Starting MCP Server...")
+    mcp_process = subprocess.Popen(
+        ["uv", "run", "-m", "AI.MCP_tools.List_of_mcp_tools"],
+        # If using stdio, you might need to capture stdout/stdin here depending on your client setup
+    )
+    
+    yield # This yields control back to FastAPI to handle web requests
+    
+    # 2. Clean up and terminate the MCP server when FastAPI shuts down
+    print("Shutting down MCP Server...")
+    mcp_process.terminate()
+    mcp_process.wait()
+
+# Attach the lifespan to your app
+app = FastAPI(lifespan=lifespan)
+
+
 AllowedEntity = Literal["orders", "activities"]
 
 
@@ -172,15 +201,6 @@ def get_exported_data(customer_id, entity):
         detail = _get_error_detail(response)
         raise Exception(f"Error: HTTP {response.status_code} — {detail}")
 
-# Initialize at app startup
-@app.on_event("startup")
-async def startup_event():
-    app.state.process_executor = ProcessPoolExecutor(max_workers=10)  # Adjust based on CPU cores
-
-# Cleanup at shutdown
-@app.on_event("shutdown")
-async def shutdown_event():
-    app.state.process_executor.shutdown(wait=True)
 
 from pydantic import BaseModel
 
@@ -633,7 +653,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
 
         answer = runner.final_output 
         from pprint import pprint
-        print(answer)
+        #print(answer)
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -880,8 +900,6 @@ def _sync_process_merge_logic(orders_df, customer_df, products_df):
     products_final = products_df.dropna(subset=['customer_name']).drop(columns=['id'], errors='ignore')
 
     return orders_final, products_final
-
-
 
 
 
@@ -1269,6 +1287,295 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         )
 
 
+# Start of MCP end point
+class MCPRequest(BaseModel):
+    distributor_id: UUID
+    report_type: str = Field(
+        default="full_report",
+        title="Report Type",
+        description="Specify which report section to generate. Defaults to the full report."
+    )
+    entity: Literal["orders", "activities", "catalog","customers"]    # Single entity, restricted to AllowedEntity values
+
+def is_data_ready(user_folder: str, entity: str) -> bool:
+    """
+    Checks if ALL required files exist and are less than 2 hours old.
+    Returns True if data is ready (skip download), False otherwise.
+    """
+    # can be made dynamic later
+    entity_file_map = {
+        "catalog": ["raw_file_catalog.csv", "raw_file_order_products.csv"],
+        "customers": ["raw_file_customers.csv", "raw_file_orders.csv", "raw_file_order_products.csv"],
+        "orders": ["raw_file_orders.csv", "raw_file_order_products.csv"],
+        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"]
+        # Add 'activities' dependencies
+    }
+    
+    required_files = entity_file_map.get(entity, [])
+    
+    max_age_seconds = 2 * 60 * 60 # 2 hours in seconds
+    current_time = time.time()
+    folder_check_path = os.path.join('data', user_folder, 'work_data_folder')
+
+    for filename in required_files:
+        file_path = os.path.join(folder_check_path, filename)
+        
+        # 1. Check if the file exists at all
+        if not os.path.exists(file_path):
+            print(f"Data Check: Missing required file -> {filename}")
+            return False
+            
+        # 2. Check how old the file is
+        # getmtime returns the time of last modification in seconds since the epoch
+        file_age_seconds = current_time - os.path.getmtime(file_path)
+        
+        if file_age_seconds > max_age_seconds:
+            print(f"Data Check: File too old -> {filename} is {file_age_seconds / 3600:.2f} hours old.")
+            return False
+
+    print("Data Check: All files are present and fresh!")
+    return True
+
+
+@app.post("/generate-mcp-reports")
+async def create_mcp_reports(request: MCPRequest = Body(...)):
+    try:
+        start_time = time.perf_counter()
+        entity = request.entity
+        report_type = request.report_type
+        distributor_id = str(request.distributor_id)
+
+        allowed_reports = TOPIC_CONFIG.get(entity, [])
+
+        # Check if the requested report type exists in the allowed list
+        if report_type not in allowed_reports:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "error": "invalid_configuration",
+                    "message": f"The report type '{report_type}' is not valid for the '{entity}' entity.",
+                    "allowed_reports": allowed_reports,
+                    "distributor_id": distributor_id # Passing back the ID as requested
+                }
+            )
+
+
+        should_download_files = is_data_ready(distributor_id, entity)
+        print(should_download_files)
+
+        if not should_download_files: #if not should_download_files:
+            try:
+                # Call the function to fetch and save data 
+                data1 = await get_distributor_data(distributor_id, 'catalog')  # NOTE Example with 'catalog' request.entity and to handle_distributor_data \ "f70070d6-6869-4544-99d7-539f40d7c70b"
+                data = await get_distributor_data(distributor_id, 'customers')
+                print(f"Step 1 - Data fetch completed: {time.perf_counter() - start_time:.2f}s")
+                await handle_distributor_data(data, requested_entity='customers', user_uuid=distributor_id)
+                await handle_distributor_data(data1, requested_entity='catalog', user_uuid=distributor_id)
+            except Exception as e:
+                error_msg = str(e)
+                if "HTTP Error" in error_msg:
+                    try:
+                        # Extract the JSON payload from the exception string
+                        json_part = error_msg.split("HTTP Error 404: ")[1]
+                        upstream_detail = json.loads(json_part)
+
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail={
+                                "error": "Upstream Resource Missing",
+                                "distributor_id": distributor_id,
+                                "upstream_message": upstream_detail.get("message", "").strip()
+                            }
+                        )
+                    except (IndexError, json.JSONDecodeError):
+                        pass # Fall through to generic handler if parsing fails
+
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Data sync failed: {error_msg}"
+                )
+
+        file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
+        file_path_products = os.path.join('data', distributor_id, 'work_data_folder','raw_file_order_products.csv')
+        file_path_customers = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_customers.csv')
+        file_path_catalog = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_catalog.csv')
+
+        # Preprocess data
+        try:
+            full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+                str(file_path_orders), 
+                str(file_path_products)
+            )
+
+            print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
+
+            catalog_df, catalog_path = await get_cleaned_catalog(file_path_catalog)
+            customers_df, customers_path = await get_cleaned_customers(file_path_customers)
+            print(f"Step 2.1 - Catalog preprocessing completed: {time.perf_counter() - start_time:.2f}s")
+
+            # Save cleaned data concurrently
+            cleaned_orders_path =  os.path.join('data', distributor_id,  'cleaned_orders.csv') 
+            cleaned_products_path =  os.path.join('data', distributor_id,  'cleaned_products.csv')
+            cleaned_catalog_path = os.path.join('data', distributor_id,  'cleaned_catalog.csv')
+            cleaned_customers_path = os.path.join('data', distributor_id,  'cleaned_customers.csv')
+
+            await asyncio.gather(
+                save_df(full_cleaned_orders, str(cleaned_orders_path)),
+                save_df(full_cleaned_products, str(cleaned_products_path)),
+                save_df(catalog_df, str(cleaned_catalog_path)),
+                save_df(customers_df, str(cleaned_customers_path))
+            )
+        except Exception as e:
+            logger2.error(f"Data processing error: {e}")
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "error": "data_preprocessing_failed",
+                    "message": "Failed to fetch or preprocess distributor data from the upstream source. Report generation aborted.",
+                    "distributor_id": str(request.distributor_id)
+                }
+            )
+
+        try:
+            from AI.utils import _is_csv_empty
+            try:
+                is_empty = await asyncio.to_thread(_is_csv_empty, cleaned_orders_path)
+            
+                if is_empty:
+                    logger2.info("Orders data is empty after processing (no data rows found).")
+
+            
+            except Exception as e:
+                logger2.warning(f"Can not check if customers orders are empty: {e}")
+            print(f"Step 3 - Data loading completed: {time.perf_counter() - start_time:.2f}s")
+        
+        except Exception as e:
+            logger2.error(f"Data cleaning error: {e}")
+
+        from AI.MCP_tools.topic_analysis_agents import main_batch_process
+        # create report block
+        try:
+            if request.report_type == 'full_report':
+                final_clean_report, clean_sections = await main_batch_process(
+                    cleaned_orders_path, 
+                    cleaned_products_path, 
+                    cleaned_customers_path, 
+                    cleaned_catalog_path, 
+                    distributor_id, 
+                    f"{request.entity}_agent"
+                )
+            else:
+                final_clean_report, clean_sections = await main_batch_process(
+                    cleaned_orders_path, 
+                    cleaned_products_path, 
+                    cleaned_customers_path, 
+                    cleaned_catalog_path, 
+                    distributor_id, 
+                    f"{request.entity}_agent", 
+                    specific_topic=request.report_type
+                )
+
+            # Check if main_batch_process returned our specific error dictionary
+            if "error" in clean_sections:
+                logger2.error(f"Report generation aborted with error: {clean_sections['error']}")
+
+                return JSONResponse(
+                    status_code=status.HTTP_417_EXPECTATION_FAILED,
+                    content={
+                        "error": "report_generation_error",
+                        "message": clean_sections["error"],
+                        "distributor_id": distributor_id # Passing back the ID as requested
+                    }
+                )
+
+            print(f"Step 4 - Report generation completed successfully: {time.perf_counter() - start_time:.2f}s")
+        except Exception as e:
+            logger2.error(f"Report generation failed: {str(e)}")
+
+
+        return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "sections": clean_sections,
+                    "report": final_clean_report,
+                    "uuid": distributor_id
+                })
+    except ValueError as ve:
+        # Catches specifically raised logical errors from the services
+        logger2.error(f"Validation/Logic Error in endpoint: {str(ve)}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        # Catches unexpected critical crashes
+        logger2.error(f"Critical System Error in endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error during processing.")
+
+class ChatRequestMCP(BaseModel):
+    message: str
+    distributor_id: UUID
+
+from fastapi import Request
+
+@app.post("/chat_mcp")
+async def chat_endpoint(request: ChatRequestMCP, req: Request):
+    from AI.MCP_tools.run_mcp import agent_stream_generator
+
+    distributor_id = str(request.distributor_id)
+    should_download_files = is_data_ready(distributor_id, 'ask_ai')
+    print(should_download_files)
+
+    if not should_download_files: #if not should_download_files:
+        # Call the function to fetch and save data 
+        data1 = await get_distributor_data(distributor_id, 'catalog')  # NOTE Example with 'catalog' request.entity and to handle_distributor_data
+        data = await get_distributor_data(distributor_id, 'customers')
+
+        await handle_distributor_data(data, requested_entity='customers', user_uuid=distributor_id)
+        await handle_distributor_data(data1, requested_entity='catalog', user_uuid=distributor_id)
+
+        file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
+        file_path_products = os.path.join('data', distributor_id, 'work_data_folder','raw_file_order_products.csv')
+        file_path_customers = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_customers.csv')
+        file_path_catalog = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_catalog.csv')
+
+        # Preprocess data
+        try:
+            full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+                str(file_path_orders), 
+                str(file_path_products)
+            )
+
+            catalog_df, catalog_path = await get_cleaned_catalog(file_path_catalog)
+            customers_df, customers_path = await get_cleaned_customers(file_path_customers)
+
+
+            # Save cleaned data concurrently
+            cleaned_orders_path =  os.path.join('data', distributor_id,  'cleaned_orders.csv') 
+            cleaned_products_path =  os.path.join('data', distributor_id,  'cleaned_products.csv')
+            cleaned_catalog_path = os.path.join('data', distributor_id,  'cleaned_catalog.csv')
+            cleaned_customers_path = os.path.join('data', distributor_id,  'cleaned_customers.csv')
+
+            await asyncio.gather(
+                save_df(full_cleaned_orders, str(cleaned_orders_path)),
+                save_df(full_cleaned_products, str(cleaned_products_path)),
+                save_df(catalog_df, str(cleaned_catalog_path)),
+                save_df(customers_df, str(cleaned_customers_path))
+            )
+        except Exception as e:
+            logger2.error(f"Data processing error: {e}")
+            return JSONResponse(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                content={
+                    "error": "data_preprocessing_failed",
+                    "message": "Failed to fetch or preprocess distributor data from the upstream source. Report generation aborted.",
+                    "distributor_id": str(request.distributor_id)
+                }
+            )
+
+
+    return StreamingResponse(
+        agent_stream_generator(request, req),
+        media_type="text/event-stream"
+    )
+
 def sse_msg(event_type: str, content: any):
     """Formats data as a Server-Sent Event."""
     return f"data: {json.dumps({'type': event_type, 'content': content})}\n\n"
@@ -1489,4 +1796,6 @@ async def product_per_state_analysis_func(request: ReportRequest = Body(...)):
 
 if __name__ == '__main__':
     import uvicorn
+    from AI.MCP_tools.List_of_mcp_tools import mcp
+    mcp.mount()
     uvicorn.run(app, port=8000, host='0.0.0.0')
