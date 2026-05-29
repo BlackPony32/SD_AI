@@ -22,7 +22,8 @@ logger2 = get_logger("logger2", "project_log_many.log", False)
 from dotenv import load_dotenv
 load_dotenv()
 
-llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
+model = 'gpt-5.4-mini' #'gpt-5.4-mini'
+llm_model = OpenAIResponsesModel(model=model, openai_client=AsyncOpenAI()) 
 
 @function_tool
 def get_prepared_statistics(user_id:str) -> str:
@@ -52,7 +53,7 @@ async def create_agent_sectioned(USER_ID, topic, statistics, agent) -> Agent:
             "customers_agent": prompt_mcp_topics_customer_agent,
             "orders_agent": prompt_mcp_topics_orders_agent,
             "catalog_agent": prompt_mcp_topics_catalog_agent,
-            #"billing": PROMPT_BILLING,    # maps to prompt3
+            #"billing": PROMPT_BILLING,     # maps to prompt3
         }
 
         # 3. Select the correct instruction
@@ -135,7 +136,7 @@ async def process_standard_topic(topic, orders_path, products_path, customers_pa
             input="Analyze my data and write useful tips for business"
         )
         answer = runner.final_output
-        calculate_cost(runner, model="gpt-4.1-mini")
+        calculate_cost(runner, model=model)
 
         # 5. Combine Sections
         sectioned_answer = await combine_sections(topic, statistics_topic, answer)
@@ -173,7 +174,7 @@ async def process_suggestions_topic(topic, orders_path, products_path, customers
         answer = f"<div id=\"suggestions-block\">\n\n{answer}\n</div>"
         #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
-        calculate_cost(runner, model="gpt-4.1-mini")
+        calculate_cost(runner, model=model)
 
         sectioned_answer = {'suggestions_div' : answer}
         if isinstance(sectioned_answer, dict):
@@ -192,7 +193,7 @@ async def worker(semaphore, topic, orders_path, products_path, customers_path, c
     constrained by the semaphore.
     """
     async with semaphore:
-        print(f"Processing: {topic}")
+        #print(f"Processing: {topic}")
         
         if topic == "suggestions_div":
             return await process_suggestions_topic(topic, orders_path, products_path, customers_path, catalog_path, uuid, agent)
@@ -286,6 +287,7 @@ async def main_batch_process(
                 clean_topic_name = topic.replace('_', ' ').title()
                 sectioned_report[topic] = f"\n> **Notice:** We encountered an issue while generating the {clean_topic_name}. Please try again later.\n"
             else:
+                #print(f"Worker succeeded for topic '{topic}' (Agent: {agent}): {str(result)}")
                 sectioned_report[topic] = result
         
         # Compile the Report

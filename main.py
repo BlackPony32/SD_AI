@@ -12,6 +12,9 @@ import json
 import pandas as pd
 import os
 import logging
+import httpx
+import aiohttp
+import aiofiles
 import asyncio
 import aiofiles
 from concurrent.futures import ThreadPoolExecutor
@@ -63,7 +66,7 @@ import shutil
 from typing import List
 from concurrent.futures import ProcessPoolExecutor
 
-from test_agent_1 import handle_distributor_data, get_distributor_data, get_cleaned_csv
+from AI.MCP_tools.get_SD_data import handle_distributor_data, get_distributor_data
 
 load_dotenv()
 set_tracing_disabled(True)
@@ -1377,11 +1380,31 @@ async def create_mcp_reports(request: MCPRequest = Body(...)):
         if not should_download_files: #if not should_download_files:
             try:
                 # Call the function to fetch and save data 
-                data1 = await get_distributor_data(distributor_id, 'catalog')  # NOTE Example with 'catalog' request.entity and to handle_distributor_data \ "f70070d6-6869-4544-99d7-539f40d7c70b"
-                data = await get_distributor_data(distributor_id, 'customers')
-                print(f"Step 1 - Data fetch completed: {time.perf_counter() - start_time:.2f}s")
-                await handle_distributor_data(data, requested_entity='customers', user_uuid=distributor_id)
-                await handle_distributor_data(data1, requested_entity='catalog', user_uuid=distributor_id)
+                # --- STEP 1: FETCH DATA ---
+                timeout_config = httpx.Timeout(5.0, read=120.0)
+                async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
+                    fetch_tasks = [
+                        get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client)
+                    ]
+
+                    data, data1, data2, data3 = await asyncio.gather(*fetch_tasks)
+                    print(f"Step 1 - Data fetch completed: {time.perf_counter() - start_time:.2f}s")
+
+                # --- STEP 2: DOWNLOAD FILES ---
+                # Open ONE aiohttp session for all downloads
+                async with aiohttp.ClientSession() as download_session:
+                    handle_tasks = [
+                        handle_distributor_data(data, "customers", distributor_id, download_session),
+                        handle_distributor_data(data1, "orders", distributor_id, download_session),
+                        handle_distributor_data(data2, "order_products", distributor_id, download_session),
+                        handle_distributor_data(data3, "catalog", distributor_id, download_session)
+                    ]
+
+                    await asyncio.gather(*handle_tasks)
+                    print(f"Step 2 - All Data processing completed: {time.perf_counter() - start_time:.2f}s")
             except Exception as e:
                 error_msg = str(e)
                 if "HTTP Error" in error_msg:
