@@ -59,7 +59,7 @@ def setup_custom_logger(name: str, log_file: str) -> logging.Logger:
 logger2 = setup_custom_logger("agent_server", "project_log_many.log")
 MCP_URL = os.getenv("MCP_URL", "http://localhost:8001/mcp")
 USER_ID_DEFAULT = "FULL_DIST_TEST"
-llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
 # --- TOOL DEFINITIONS ---
 ORDER_TOOLS_LIST = [
@@ -110,6 +110,7 @@ def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
     """
     return MCPServerStreamableHttp(
         name="sd-ai-mcp",
+        client_session_timeout_seconds=30.0,
         params={
             "transport": "streamable_http",
             "url": MCP_URL,
@@ -344,7 +345,7 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
             if buffer:
                 yield f"data: {json.dumps({'type': 'token', 'content': buffer})}\n\n"
 
-            calculate_cost(runner, model="gpt-4.1-mini")
+            calculate_cost(runner, model="gpt-5.4-mini")
 
             final_metadata = json.dumps({"type": "metadata", "cost": 0, "status": "completed"})
             yield f"data: {final_metadata}\n\n"

@@ -25,7 +25,7 @@ import re
 
 from typing import List, AsyncGenerator, Tuple, Any
 from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
-llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
 def _calculate_key_metrics(orders: pd.DataFrame) -> list:
     """Calculates overall Key Metrics."""
