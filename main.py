@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
     mcp_process.terminate()
     try:
         # Give it a few seconds to shut down cleanly before forcing it
-        mcp_process.wait(timeout=5)
+        mcp_process.wait(timeout=8)
     except subprocess.TimeoutExpired:
         print("MCP Server didn't terminate in time, killing...")
         mcp_process.kill()
@@ -1558,12 +1558,55 @@ async def chat_endpoint(request: ChatRequestMCP, req: Request):
     print(should_download_files)
 
     if not should_download_files: #if not should_download_files:
-        # Call the function to fetch and save data 
-        data1 = await get_distributor_data(distributor_id, 'catalog')  # NOTE Example with 'catalog' request.entity and to handle_distributor_data
-        data = await get_distributor_data(distributor_id, 'customers')
+        if not should_download_files: #if not should_download_files:
+            try:
+                # Call the function to fetch and save data 
+                # --- STEP 1: FETCH DATA ---
+                timeout_config = httpx.Timeout(5.0, read=120.0)
+                async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
+                    fetch_tasks = [
+                        get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client)
+                    ]
 
-        await handle_distributor_data(data, requested_entity='customers', user_uuid=distributor_id)
-        await handle_distributor_data(data1, requested_entity='catalog', user_uuid=distributor_id)
+                    data, data1, data2, data3 = await asyncio.gather(*fetch_tasks)
+
+                # --- STEP 2: DOWNLOAD FILES ---
+                # Open ONE aiohttp session for all downloads
+                async with aiohttp.ClientSession() as download_session:
+                    handle_tasks = [
+                        handle_distributor_data(data, "customers", distributor_id, download_session),
+                        handle_distributor_data(data1, "orders", distributor_id, download_session),
+                        handle_distributor_data(data2, "order_products", distributor_id, download_session),
+                        handle_distributor_data(data3, "catalog", distributor_id, download_session)
+                    ]
+
+                    await asyncio.gather(*handle_tasks)
+            except Exception as e:
+                error_msg = str(e)
+                if "HTTP Error" in error_msg:
+                    try:
+                        # Extract the JSON payload from the exception string
+                        json_part = error_msg.split("HTTP Error 404: ")[1]
+                        upstream_detail = json.loads(json_part)
+
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail={
+                                "error": "Upstream Resource Missing",
+                                "distributor_id": distributor_id,
+                                "upstream_message": upstream_detail.get("message", "").strip()
+                            }
+                        )
+                    except (IndexError, json.JSONDecodeError):
+                        pass # Fall through to generic handler if parsing fails
+
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Data sync failed: {error_msg}"
+                )
 
         file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
         file_path_products = os.path.join('data', distributor_id, 'work_data_folder','raw_file_order_products.csv')

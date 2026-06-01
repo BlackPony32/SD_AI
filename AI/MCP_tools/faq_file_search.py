@@ -7,6 +7,7 @@ from collections import defaultdict
 import tiktoken
 import chromadb
 from chromadb.config import Settings
+import chromadb.utils.embedding_functions as embedding_functions
 
 # --- Configuration ---
 DB_PATH = "./chroma_data"
@@ -216,7 +217,15 @@ def init_and_load_md(file_path: str, db_path: str = DB_PATH, collection_name: st
     """Parse, split, and load into ChromaDB (with block_id)."""
     def _check_and_load():
         client = chromadb.PersistentClient(path=db_path, settings=CHROMA_SETTINGS)
-        collection = client.get_or_create_collection(name=collection_name)
+
+        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+            model_name="text-embedding-3-small"
+        )
+
+        collection = client.get_or_create_collection(
+            name=collection_name, 
+            embedding_function=openai_ef
+        )
         
         if collection.count() > 0:
             print(f"Collection '{collection_name}' already has {collection.count()} chunks. Skipping parsing.")
