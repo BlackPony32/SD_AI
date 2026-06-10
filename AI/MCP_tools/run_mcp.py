@@ -1,4 +1,6 @@
 import asyncio
+import httpx
+import aiohttp
 import os
 import json
 import sys
@@ -165,8 +167,17 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
     sub_agent_catalog = await create_catalog_agent(catalog_server, session_id)
     sub_agent_faq = await create_faq_agent(faq_server, session_id)
 
-    # 4. Create Main Agent
-    main_instructions = await prompt_multi_agent_main(session_id)
+    # 4 Check if data empty - if true then user cn be new or low data quality
+    from AI.utils import _is_csv_empty
+    df_path = f"data/{session_id}/cleaned_orders.csv"
+    if _is_csv_empty(df_path):
+        logger2.warning(f"Data quality issue detected for session {session_id}: Empty orders or customers data. This may lead to limited insights.")
+        NEW_USER_BOOL = True
+    else:
+        NEW_USER_BOOL = False
+
+    # 5. Create Main Agent
+    main_instructions = await prompt_multi_agent_main(session_id,NEW_USER_BOOL)
     main_agent = Agent(
         name="Lead_Orchestrator",
         instructions=main_instructions,
@@ -195,7 +206,7 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
         ]
     )
     
-    # 5. Initialize Memory
+    # 6. Initialize Memory
     try:
         session = AdvancedSQLiteSession(
             session_id=session_id,
@@ -234,7 +245,7 @@ def _extract_call_id(item) -> Optional[str]:
     if getattr(item, "call_id", None): return item.call_id
     return None
 
-# 5. FASTAPI & STREAMING
+# FASTAPI & STREAMING
 import sys
 import asyncio
 from contextlib import asynccontextmanager
@@ -276,44 +287,159 @@ class ChatRequestMCP(BaseModel):
 
 
 from fastapi import Request
-from AI.utils import calculate_cost
+from AI.group_customer_analyze.preprocess_data_group_c import (
+    save_df, prepared_big_data, get_cleaned_catalog, get_cleaned_customers
+)
+from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
+    analyze_customer_orders_async, calculate_cost, is_data_ready
+from AI.MCP_tools.get_SD_data import handle_distributor_data, get_distributor_data
+
+
+class DataSyncError(Exception):
+    """Generic error for upstream sync failures."""
+    pass
+
+class UpstreamMissingError(DataSyncError):
+    """Specific error for 404s from the upstream provider."""
+    def __init__(self, message: str, upstream_detail: dict):
+        super().__init__(message)
+        self.upstream_detail = upstream_detail
+
+class DataPreprocessingError(Exception):
+    """Error for when pandas/CSV processing fails."""
+    pass
+
+async def sync_and_process_distributor_data(distributor_id: str) -> bool:
+    """
+    Checks if data needs to be downloaded, fetches it, and preprocesses it.
+    Returns True if a sync occurred, False if data was already ready.
+    Raises custom exceptions on failure.
+    """
+    # Assuming is_data_ready is imported
+    should_download_files = is_data_ready(distributor_id, 'ask_ai')
+    
+    if should_download_files:
+        return False # Data is already ready, no sync needed
+
+    # STEP 1: FETCH & DOWNLOAD DATA
+    try:
+        timeout_config = httpx.Timeout(5.0, read=120.0)
+        async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
+            fetch_tasks = [
+                get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
+                get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
+                get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
+                get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client)
+            ]
+            data, data1, data2, data3 = await asyncio.gather(*fetch_tasks)
+
+        async with aiohttp.ClientSession() as download_session:
+            handle_tasks = [
+                handle_distributor_data(data, "customers", distributor_id, download_session),
+                handle_distributor_data(data1, "orders", distributor_id, download_session),
+                handle_distributor_data(data2, "order_products", distributor_id, download_session),
+                handle_distributor_data(data3, "catalog", distributor_id, download_session)
+            ]
+            await asyncio.gather(*handle_tasks)
+
+    except Exception as e:
+        error_msg = str(e)
+        if "HTTP Error" in error_msg:
+            try:
+                json_part = error_msg.split("HTTP Error 404: ")[1]
+                upstream_detail = json.loads(json_part)
+                # Raise our custom 404 error
+                raise UpstreamMissingError("Upstream Resource Missing", upstream_detail)
+            except (IndexError, json.JSONDecodeError):
+                pass # Fall through to generic error
+
+        # Raise generic sync error
+        raise DataSyncError(f"Data sync failed: {error_msg}")
+
+    # STEP 2: PREPROCESS DATA
+    file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
+    file_path_products = os.path.join('data', distributor_id, 'work_data_folder','raw_file_order_products.csv')
+    file_path_customers = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_customers.csv')
+    file_path_catalog = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_catalog.csv')
+
+    try:
+        full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+            str(file_path_orders), 
+            str(file_path_products)
+        )
+        catalog_df, catalog_path = await get_cleaned_catalog(file_path_catalog)
+        customers_df, customers_path = await get_cleaned_customers(file_path_customers)
+
+        cleaned_orders_path = os.path.join('data', distributor_id, 'cleaned_orders.csv') 
+        cleaned_products_path = os.path.join('data', distributor_id, 'cleaned_products.csv')
+        cleaned_catalog_path = os.path.join('data', distributor_id, 'cleaned_catalog.csv')
+        cleaned_customers_path = os.path.join('data', distributor_id, 'cleaned_customers.csv')
+
+        await asyncio.gather(
+            save_df(full_cleaned_orders, str(cleaned_orders_path)),
+            save_df(full_cleaned_products, str(cleaned_products_path)),
+            save_df(catalog_df, str(cleaned_catalog_path)),
+            save_df(customers_df, str(cleaned_customers_path))
+        )
+    except Exception as e:
+        logger2.error(f"Data processing error: {e}")
+        raise DataPreprocessingError(str(e))
+
+    return True # Indicates a successful fresh sync
+
 async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> AsyncGenerator[str, None]:
     async with AsyncExitStack() as stack:
+        distributor_id = str(request.distributor_id)
+        
         try:
-            session_id = str(request.distributor_id)
-            agent, session = await build_main_agent_session(session_id, stack)
-            yield f"data: {json.dumps({'type': 'status', 'content': f'Agent {agent.name} is thinking...'})}\n\n"
+            # 1. DATA SYNC & PREPROCESSING (Non-blocking)
+            # Notify UI that we are validating/syncing data
+            yield f"data: {json.dumps({'type': 'status', 'content': 'Synchronizing your latest workspace data...'})}\n\n"
+            
+            # Execute the shared utility
+            did_sync = await sync_and_process_distributor_data(distributor_id)
+            if did_sync:
+                yield f"data: {json.dumps({'type': 'status', 'content': 'Data up to date. Preparing your analysis...'})}\n\n"
+
+            # 2. AGENT INITIALIZATION
+            agent, session = await build_main_agent_session(distributor_id, stack)
+            yield f"data: {json.dumps({'type': 'status', 'content': f'Analyzing your request..'})}\n\n"
 
             runner = Runner.run_streamed(agent, request.message, session=session)
 
+            # State tracking for the stream
             tool_timings: Dict[str, float] = {} 
-            active_tools: Dict[str, str] = {} # Map call_id to tool_name
+            active_tools: Dict[str, str] = {} 
             buffer = ""
-            BUFFER_THRESHOLD = 4 # Reduced for smoother typing effect
+            BUFFER_THRESHOLD = 20 # Wait for 20 chars or a newline to prevent frontend jitter
 
+            # 3. STREAM PROCESSING LOOP
             async for event in runner.stream_events():
+                # Safety check: Stop processing if user closed the tab
                 if await req.is_disconnected():
-                    logger2.warning(f"Client disconnected early from session {request.distributor_id}.")
+                    logger2.warning(f"Client disconnected early from session {distributor_id}.")
                     break 
 
                 event_type = getattr(event, "type", "")
 
-                # --- Text Response ---
+                # --- Handle Text Generation ---
                 if event_type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     delta = event.data.delta or ""
                     buffer += delta
-                    if len(buffer) >= BUFFER_THRESHOLD:
+                    
+                    # Flush buffer if it hits the size threshold or contains a line break (good for tables)
+                    if len(buffer) >= BUFFER_THRESHOLD or "\n" in buffer:
                         yield f"data: {json.dumps({'type': 'token', 'content': buffer})}\n\n"
                         buffer = ""
 
-                # --- Tool Interactions ---
+                # --- Handle Tool Interactions ---
                 elif event_type == "run_item_stream_event":
                     item = event.item
                     item_type = getattr(item, "type", "")
                     
                     if item_type == "tool_call_item":
-                        # Flush buffer before showing tool status
-                        if buffer:
+                        # Flush any pending text before jumping into a tool status
+                        if buffer: 
                             yield f"data: {json.dumps({'type': 'token', 'content': buffer})}\n\n"
                             buffer = ""
                         
@@ -325,39 +451,82 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                             active_tools[call_id] = tool_name
                         
                         logger2.info(f">> START: {tool_name} (ID: {call_id})")
-                        yield f"data: {json.dumps({'type': 'status', 'content': f'🛠️ Calling: {tool_name}'})}\n\n"
+                        TOOL_MESSAGES = {
+                            # Customer interactions
+                            "customer_agent": "Analyzing customer records...",
+                            "get_customer_details": "Querying client database...",
+
+                            "orders_agent": "Processing orders activities...",
+                            "sales_orchestrator": "Evaluating order metrics...",
+
+                            "catalog_agent": "Reviewing product catalog...",
+                            "inventory_lookup": "Analyzing inventory parameters...",
+
+                            "data_analyzer": "Aggregating data points...",
+                            "calculator_tool": "Compiling performance metrics..."
+                        }
+                        display_message = TOOL_MESSAGES.get(
+                            tool_name, 
+                            "Verifying with the knowledge base..." 
+                        )
+
+                        yield f"data: {json.dumps({'type': 'status', 'content': f'{display_message}'})}\n\n"
+                        
 
                     elif item_type == "tool_call_output_item":
-                         call_id = _extract_call_id(item)
-                         duration_str = "unknown"
-                         tool_name = active_tools.get(call_id, "Tool")
+                        call_id = _extract_call_id(item)
+                        duration_str = "unknown"
+                        tool_name = active_tools.get(call_id, "Tool")
 
-                         if call_id and call_id in tool_timings:
-                             duration = time.time() - tool_timings.pop(call_id)
-                             duration_str = f"{duration:.2f}s"
-                             active_tools.pop(call_id, None)
+                        # Calculate how long the tool took
+                        if call_id and call_id in tool_timings:
+                            duration = time.time() - tool_timings.pop(call_id)
+                            duration_str = f"{duration:.2f}s"
+                            active_tools.pop(call_id, None)
                          
-                         logger2.info(f"<< FINISH: {tool_name} (ID {call_id}) | Duration: {duration_str}")
-                         # Now the UI knows EXACTLY which tool finished
-                         yield f"data: {json.dumps({'type': 'status', 'content': f'✅ {tool_name} finished ({duration_str})'})}\n\n"
+                        logger2.info(f"<< FINISH: {tool_name} (ID {call_id}) | Duration: {duration_str}")
+                        yield f"data: {json.dumps({'type': 'status', 'content': f'{tool_name} finished ({duration_str})'})}\n\n"
 
-            # Flush any remaining text in the buffer
+            # 4. FINAL CLEANUP & METADATA
             if buffer:
                 yield f"data: {json.dumps({'type': 'token', 'content': buffer})}\n\n"
 
-            calculate_cost(runner, model="gpt-5.4-mini")
-
-            final_metadata = json.dumps({"type": "metadata", "cost": 0, "status": "completed"})
+            # Process cost and finalize
+            calculated_cost = calculate_cost(runner, model="gpt-5.4-mini")
+            final_metadata = json.dumps({"type": "metadata", "cost": calculated_cost, "status": "completed"})
+            
             yield f"data: {final_metadata}\n\n"
             yield "event: done\ndata: [DONE]\n\n"
 
+        # 5. ERROR HANDLING (Yielded to Frontend)
+        except UpstreamMissingError as e:
+            error_payload = {
+                "type": "error",
+                "content": "Upstream Resource Missing",
+                "distributor_id": distributor_id,
+                "upstream_message": e.upstream_detail.get("message", "").strip()
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            
+        except DataPreprocessingError as e:
+            error_payload = {
+                "type": "error",
+                "content": "Data Preprocessing Failed",
+                "message": "Failed to fetch or preprocess distributor data from the upstream source. Report generation aborted.",
+                "distributor_id": distributor_id
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            
+        except DataSyncError as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+            
         except asyncio.CancelledError:
-            logger2.warning(f"Client disconnected session {request.distributor_id}")
+            logger2.warning(f"Client disconnected session {distributor_id}")
             
         except Exception as e:
             logger2.error(f"Stream Error: {e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'content': 'An unexpected error occurred during generation.'})}\n\n"
-        
+            yield f"data: {json.dumps({'type': 'error', 'content': f'An unexpected error occurred: {str(e)}'})}\n\n"
+
 
 @app.post("/chat_mcp")
 async def chat_endpoint(request: ChatRequestMCP, req: Request):

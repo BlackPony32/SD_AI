@@ -63,21 +63,75 @@ def _calculate_discount_distribution(orders: pd.DataFrame) -> list:
     """Calculates overall Discount Distribution."""
     try:
         orders_copy = orders.copy() # Avoid SettingWithCopyWarning
-        orders_copy['discount_category'] = orders_copy['appliedDiscountsType'].fillna('NONE')
-        orders_copy.loc[(orders_copy['discount_category'] == 'NONE') & (orders_copy['totalDiscountValue'] > 0), 'discount_category'] = 'Other Discount'
- 
+        
+        # --- START OF UPDATED CALCULATE LOGIC ---
+        # 1. Filter out Refunds immediately to ensure clean net data
+        if 'paymentStatus' in orders_copy.columns:
+            orders_copy = orders_copy[orders_copy['paymentStatus'].fillna('').str.upper() != 'REFUNDED']
+
+        # 2. Determine individual discount presence mathematically
+        orders_copy['has_cust'] = orders_copy['customerDiscountValue'].fillna(0) > 0
+        orders_copy['has_mfg'] = orders_copy['manufacturerDiscountValue'].fillna(0) > 0
+        orders_copy['has_invoice'] = orders_copy['totalOrderDiscountValue'].fillna(0) > 0
+        
+        orders_copy['remainder'] = orders_copy['totalDiscountValue'].fillna(0) - (
+            orders_copy['customerDiscountValue'].fillna(0) + 
+            orders_copy['manufacturerDiscountValue'].fillna(0) + 
+            orders_copy['totalOrderDiscountValue'].fillna(0)
+        )
+        orders_copy['has_item_or_slot'] = orders_copy['remainder'] > 0.01
+        
+        # Count concurrent discount types
+        orders_copy['active_discount_types_count'] = (
+            orders_copy['has_cust'].astype(int) + 
+            orders_copy['has_mfg'].astype(int) + 
+            orders_copy['has_invoice'].astype(int) + 
+            orders_copy['has_item_or_slot'].astype(int)
+        )
+        
+        if 'appliedDiscountsType' not in orders_copy.columns:
+            orders_copy['appliedDiscountsType'] = 'NONE'
+
+        # 3. Vectorized Categorization using np.select
+        conditions = [
+            orders_copy['totalDiscountValue'].fillna(0) <= 0,
+            orders_copy['active_discount_types_count'] > 1,
+            orders_copy['has_cust'],
+            orders_copy['has_mfg'],
+            orders_copy['has_invoice'],
+            orders_copy['appliedDiscountsType'].fillna('').str.upper() == 'ITEM_DISCOUNT'
+        ]
+        
+        choices = [
+            'No Discount (Baseline)',
+            'Stacked / Mixed Discounts',
+            'Customer Discount',
+            'Manufacturer Discount',
+            'Invoice Total Discount',
+            'Discount on Selected Entities'
+        ]
+        
+        # Assign to 'discount_category' to align with the existing output logic
+        orders_copy['discount_category'] = np.select(conditions, choices, default='Slotting')
+
+        # 4. Base metric counting
         num_orders_with_discounts = (orders_copy['totalDiscountValue'] > 0).sum()
         total_orders = len(orders_copy)
         percentage_orders_with_discounts = (num_orders_with_discounts / total_orders * 100) if total_orders > 0 else 0
- 
+
+        # Group by the newly calculated categories
         discount_distribution = orders_copy.groupby('discount_category').agg(
             num_orders=('id', 'count'),
             total_discount=('totalDiscountValue', 'sum')
         ).reset_index()
- 
+        # --- END OF UPDATED CALCULATE LOGIC ---
+
+        # The remainder of your output formatting remains untouched
         dd_combined = discount_distribution.copy()
+        
+        # Kept for safety, though the new logic sets baseline as 'No Discount (Baseline)' rather than 'NONE'
         dd_combined['discount_category'] = dd_combined['discount_category'].replace('NONE', 'No Discount')
- 
+
         lines_combined = [
             "## Overall Discount Distribution",
             f"- **Orders with Discounts:** {num_orders_with_discounts} ({format_percentage(percentage_orders_with_discounts)})",
@@ -87,8 +141,9 @@ def _calculate_discount_distribution(orders: pd.DataFrame) -> list:
         ]
         for _, row in dd_combined.iterrows():
             lines_combined.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
- 
+
         return lines_combined
+    
     except Exception as e:
         logger2.warning(f"Can not count discount statistics due to: {e}")
         return ["## Overall Discount Distribution", f"Error generating section: {e}"]
@@ -1407,10 +1462,10 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
         )
 
         answer = runner.final_output
-        answer = f"<div id=\"suggestions-block\">\n\n{answer}\n</div>"
-        #print(answer)
+        answer = f"<div id=\"suggestions-block\">\n{answer}\n\n</div>"
+        print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
-        calculate_cost(runner, model="gpt-4.1-mini")
+        calculate_cost(runner, model="gpt-5.4-mini")
 
         sectioned_answer = {'suggestions_div' : answer}
         if isinstance(sectioned_answer, dict):
@@ -1522,7 +1577,7 @@ async def main_batch_process(merged_orders, products_df, customer_df, uuid):
 
     raw_full_report = "\n".join(report_parts).strip()
     final_clean_report = await asyncio.to_thread(clean_markdown, raw_full_report)
-    
+    #print(final_clean_report)
     clean_sections = await asyncio.to_thread(
         lambda: {k: clean_markdown(v) for k, v in sectioned_report.items()}
     )

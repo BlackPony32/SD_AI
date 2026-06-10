@@ -193,13 +193,19 @@ def preprocess_orders(orders_df: pd.DataFrame):
         # Clean financial columns
         try:
             money_cols = ['totalAmount', 'totalDiscountValue', 'deliveryFee']
-            orders_df[money_cols] = orders_df[money_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
+            orders_df = orders_df.copy()
+
+            # 2. Use .loc for explicit, safe assignment
+            orders_df.loc[:, money_cols] = orders_df[money_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
+
             logger.info("Financial columns cleaned successfully")
         except Exception as e:
             logger.error(f"Error cleaning financial columns: {str(e)}")
             return pd.DataFrame(), "There was an issue processing the financial columns in the orders file. Please ensure they contain numeric data."
 
-        orders_df = orders_df.round({col: 2 for col in money_cols})
+        # 3. Use .loc here as well to safely round the values in place
+        for col in money_cols:
+            orders_df.loc[:, col] = orders_df[col].round(2)
         return orders_df
 
     except Exception as e:
@@ -328,11 +334,57 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
             total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
 
             # Discount Analysis
+            # 1. Base metric counting & safe division
+            total_orders = len(orders)
             total_discount_amount = orders['totalDiscountValue'].sum()
             num_orders_with_discounts = (orders['totalDiscountValue'] > 0).sum()
-            orders['discount_category'] = orders['appliedDiscountsType'].fillna('NONE')
-            orders.loc[(orders['discount_category'] == 'NONE') & (orders['totalDiscountValue'] > 0), 'discount_category'] = 'Other Discount'
-            percentage_orders_with_discounts = num_orders_with_discounts / len(orders) * 100
+            percentage_orders_with_discounts = (num_orders_with_discounts / total_orders * 100) if total_orders > 0 else 0
+            
+            # 2. Determine individual discount presence mathematically
+            orders['has_cust'] = orders['customerDiscountValue'].fillna(0) > 0
+            orders['has_mfg'] = orders['manufacturerDiscountValue'].fillna(0) > 0
+            orders['has_invoice'] = orders['totalOrderDiscountValue'].fillna(0) > 0
+            
+            orders['remainder'] = orders['totalDiscountValue'].fillna(0) - (
+                orders['customerDiscountValue'].fillna(0) + 
+                orders['manufacturerDiscountValue'].fillna(0) + 
+                orders['totalOrderDiscountValue'].fillna(0)
+            )
+            orders['has_item_or_slot'] = orders['remainder'] > 0.01
+            
+            # Count concurrent discount types
+            orders['active_discount_types_count'] = (
+                orders['has_cust'].astype(int) + 
+                orders['has_mfg'].astype(int) + 
+                orders['has_invoice'].astype(int) + 
+                orders['has_item_or_slot'].astype(int)
+            )
+            
+            if 'appliedDiscountsType' not in orders.columns:
+                orders['appliedDiscountsType'] = 'NONE'
+            
+            # 3. Vectorized Categorization using np.select
+            conditions = [
+                orders['totalDiscountValue'].fillna(0) <= 0,
+                orders['active_discount_types_count'] > 1,
+                orders['has_cust'],
+                orders['has_mfg'],
+                orders['has_invoice'],
+                orders['appliedDiscountsType'].fillna('').str.upper() == 'ITEM_DISCOUNT'
+            ]
+            
+            choices = [
+                'No Discount',  # Renamed to map cleanly without needing a .replace() later
+                'Stacked / Mixed Discounts',
+                'Customer Discount',
+                'Manufacturer Discount',
+                'Invoice Total Discount',
+                'Discount on Selected Entities'
+            ]
+            
+            orders['discount_category'] = np.select(conditions, choices, default='Other Discount')
+            
+            # Group by the newly calculated categories
             discount_distribution = orders.groupby('discount_category').agg(
                 num_orders=('id', 'count'),
                 total_discount=('totalDiscountValue', 'sum')
@@ -510,18 +562,19 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 
             # 4) Discount Distribution
             dd = discount_distribution.copy()
-            dd['discount_category'] = dd['discount_category'].replace('NONE', 'No Discount')
-            percent_with_discounts = percentage_orders_with_discounts if total_orders > 0 else 0  # Assume/guard
+
             lines = [
                 "## Discount Distribution",
                 f"- **Orders with Discounts:** {num_orders_with_discounts} "
-                f"({format_percentage(percent_with_discounts)})",
+                f"({format_percentage(percentage_orders_with_discounts)})",
                 "",
                 "| Discount Type | Number of Orders | Total Discount |",
                 "|---------------|------------------|----------------|",
             ]
+
             for _, row in dd.iterrows():
                 lines.append(f"| {format_status(row['discount_category'])} | {row['num_orders']} | {usd(row['total_discount'])} |")
+
             add_section("discount_distribution", lines)
 
             # 5) Fulfillment Analysis
