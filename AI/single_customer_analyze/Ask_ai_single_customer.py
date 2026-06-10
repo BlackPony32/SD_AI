@@ -855,7 +855,7 @@ def get_top_n_orders(
     """
     logger1.info(f"Tool 'get_top_n_orders' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  status_filter: {status_filter}, end_date: {end_date}")
     # 1. Path Setup
-    csv_path = Path("data") / user_id / "oorders.csv"
+    csv_path = Path("data") / user_id / "work_ord.csv"
     if not csv_path.exists():
         return f"Error: File not found."
 
@@ -863,7 +863,7 @@ def get_top_n_orders(
         # Load specific columns including Date and Statuses
         # Adjusted to match your CSV structure
         relevant_cols = [
-            'customId_customId', 'customer_name', 'totalAmount', 
+            'customId_customId', 'totalAmount', 
             'totalQuantity', 'createdAt', 'orderStatus' 
         ]
         dataf = pd.read_csv(csv_path, usecols=relevant_cols)
@@ -923,7 +923,7 @@ def get_top_n_orders(
         d_str = row['createdAt'].strftime('%Y-%m-%d') if pd.notnull(row['createdAt']) else "N/A"
         output.append(
             f"ID: {row['customId_customId']} | Date: {d_str} | "
-            f"Customer: {row['customer_name']} | ${row['totalAmount']:.2f}"
+            f"${row['totalAmount']:.2f}"
         )
 
     return '\n'.join(output)
@@ -955,9 +955,8 @@ def get_top_n_products(
         'manufacturer' (Brand/Manufacturer).
     """
     logger1.info(f"Tool 'get_top_n_products' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  group_by: {group_by}, end_date: {end_date}")
-    
     # 1. Path Setup
-    csv_path = Path("data") / user_id / "pproducts.csv"
+    csv_path = Path("data") / user_id / "work_prod.csv"
     if not csv_path.exists():
         return f"Error: File not found."
 
@@ -965,10 +964,10 @@ def get_top_n_products(
         dataf = pd.read_csv(csv_path)
         # Ensure date column is datetime
         dataf['createdAt'] = pd.to_datetime(dataf['createdAt'], errors='coerce')
-        
+        dataf['product_variant'] = dataf['name'].astype(str) + ' - ' + dataf['sku'].astype(str)  
         relevant_cols = [
             'product_variant', 'productCategoryName', 'manufacturerName',
-            'totalAmount', 'quantity', 'orderId', 'customer_name', 'createdAt'
+            'totalAmount', 'quantity', 'orderId', 'createdAt'
         ]
         # Check if columns exist (dynamic check because CSVs vary)
         existing_cols = [c for c in relevant_cols if c in dataf.columns]
@@ -1024,7 +1023,6 @@ def get_top_n_products(
         totalRevenue=('totalAmount', 'sum'),
         totalQuantity=('quantity', 'sum'),
         orderCount=('orderId', 'nunique'),
-        customerCount=('customer_name', 'nunique')
     ).reset_index()
 
     # Calculate Metrics
@@ -1052,7 +1050,7 @@ def get_top_n_products(
     
     output_strings = [
         f"--- {direction_label} {n} {label}s by {by_type.capitalize()}{period_info} ---",
-        f"{label} | Revenue | Qty | Orders | Customers | Avg Rev/Order",
+        f"{label} | Revenue | Qty | Orders  | Avg Rev/Order",
         "-" * 100
     ]
 
@@ -1062,7 +1060,6 @@ def get_top_n_products(
             f"${row['totalRevenue']:,.2f} | "
             f"{int(row['totalQuantity'])} | "
             f"{row['orderCount']} | "
-            f"{row['customerCount']} | "
             f"${row['avgRevenuePerOrder']:.2f}"
         )
         output_strings.append(formatted_row)
@@ -1352,42 +1349,6 @@ def get_product_details(user_id:str, name:str=None, sku:str=None, category:str=N
     return report_string
 
 
-@function_tool
-def get_orders_by_customer_id(user_id:str, customer_id:str)-> str:
-    """
-    Returns a DataFrame in md format with specific order details for a given customer_id - use get_customers tool before.
-    """
-    logger1.info(f"Tool 'get_orders_by_customer' called called for: {user_id} and {customer_id}")
-    # Filter DataFrame by customer_id
-    dataframe = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
-    customer_orders_df = dataframe[dataframe['customerId'] == customer_id].copy()
-    
-    # Define columns requested
-    requested_columns = [
-        'id',
-        'customId_customId',
-        'totalOrderDiscountAmount',
-        'totalOrderDiscountType',
-        'createdAt',
-        'orderStatus',
-        'deliveryStatus',
-        'paymentStatus',
-        'totalAmount',
-        'totalQuantity'
-    ]
-    
-    # Select and rename columns
-    customer_orders_summary = customer_orders_df[requested_columns]
-    
-    # Rename columns as per user request
-    column_rename_map = {
-        'id': 'order_id',
-        'customId_customId': 'custom_order_id'
-    }
-    customer_orders_summary = customer_orders_summary.rename(columns=column_rename_map)
-    customer_orders_summary_md = customer_orders_summary.to_markdown(index=False)
-    return customer_orders_summary_md
-
 from AI.MCP_tools.faq_file_search import init_and_load_md, search_md_db, format_search_results
 
 @function_tool
@@ -1445,7 +1406,6 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
             get_order_details,
             get_product_catalog,
             get_product_details,
-            get_orders_by_customer_id,
             look_up_faq]
 
         )

@@ -567,9 +567,8 @@ def one_file_preprocess_catalog(filepath: str) -> str:
     Clean CSV logic:
     1. Removes 'INACTIVE' status rows.
     2. Drops technical/internal IDs.
-    3. Drops columns with > 75% missing values.
-    4. Fills inventory NaNs with 0.
-    5. Saves to 'cleaned_catalog.csv'.
+    3. Fills inventory NaNs with 0.
+    4. Saves to 'cleaned_catalog.csv'.
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File {filepath} not found.")
@@ -582,27 +581,24 @@ def one_file_preprocess_catalog(filepath: str) -> str:
         # We use .str.upper() to ensure we catch 'inactive', 'Inactive', etc.
         df = df[df['status'].str.upper() != 'INACTIVE'].copy()
     
-    # 2. Identify and drop sparse columns (> 95% empty)
-    limit = len(df) * 0.05
-    df_clean = df.dropna(thresh=limit, axis=1).copy()
     
-    # 3. Drop specific 'useless' technical columns if they exist
+    # 2. Drop specific 'useless' technical columns if they exist
     technical_cols = ['status', 'requiredFieldsMissing', 'description', 'hasColorVariation', 'hasSizeVariation', 'tags_tag_tag','type']
-    cols_to_drop = [col for col in technical_cols if col in df_clean.columns]
-    df_clean.drop(columns=cols_to_drop, inplace=True)
+    cols_to_drop = [col for col in technical_cols if col in df.columns]
+    df.drop(columns=cols_to_drop, inplace=True)
     
-    # 4. Standardize inventory columns (fill NaNs with 0)
-    inv_cols = [c for c in df_clean.columns if 'inventory' in c.lower()]
+    # 3. Standardize inventory columns (fill NaNs with 0)
+    inv_cols = [c for c in df.columns if 'inventory' in c.lower()]
     for col in inv_cols:
-        df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
     # Identify all dropped columns
-    dropped_cols = list(original_cols - set(df_clean.columns))
+    dropped_cols = list(original_cols - set(df.columns))
 
-    # 5. Save to the requested filename
+    # 4. Save to the requested filename
     file_path_catalog = os.path.join('data', 'FULL_DIST_TEST', 'cleaned_catalog.csv')
 
-    return df_clean, file_path_catalog
+    return df, file_path_catalog
 
     #df_clean.to_csv(file_path_catalog, index=False)
     #

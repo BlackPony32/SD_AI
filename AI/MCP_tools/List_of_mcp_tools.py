@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import datetime
@@ -11,6 +12,7 @@ import itertools
 import numpy as np
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+from rapidfuzz import process, fuzz
 
 
 # --- Third Party Imports ---
@@ -277,7 +279,7 @@ def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> 
     """
     Searches for customers by name or ID and returns their details.
     Returns a JSON string mapping Display Names to customer_ids.
-    Use this to look up a customer_id when the user provides a partial or fuzzy name.
+    Uses fuzzy matching to handle typos and partial names.
     """
     base_path = Path("data") / str(user_id)
     customers_path = base_path / "cleaned_customers.csv"
@@ -287,7 +289,7 @@ def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> 
         return json.dumps({"Error": f"Customer file not found for user {user_id}"})
         
     try:
-        # 1. Read master customer list (Ensures we find 0-order customers)
+        # 1. Read master customer list
         df_c = pd.read_csv(customers_path, encoding='utf-8-sig', dtype=str)
         df_c.columns = df_c.columns.str.strip().str.replace('\ufeff', '')
         
@@ -312,13 +314,23 @@ def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> 
         if 'displayedName' in df_c.columns: search_series += df_c['displayedName'] + " "
         if 'customId_customId' in df_c.columns: search_series += df_c['customId_customId']
         
-        # 4. Apply search filter if provided
+        # 4. Apply FUZZY search filter if provided
         if search_name:
-            mask = search_series.str.contains(str(search_name), case=False, na=False)
-            df_c = df_c[mask]
+            # Extract matches with a similarity score of 70 or higher
+            matches = process.extract(
+                search_name.lower(), 
+                search_series.str.lower().to_dict(), 
+                scorer=fuzz.WRatio, 
+                limit=None, 
+                score_cutoff=70.0
+            )
             
-        if df_c.empty:
-            return json.dumps({"Error": f"No customers found matching '{search_name}'"})
+            if not matches:
+                return json.dumps({"Error": f"No customers found matching '{search_name}' (even with fuzzy matching)"})
+            
+            # matches returns tuples of (matched_string, score, dataframe_index)
+            matched_indices = [match[2] for match in matches]
+            df_c = df_c.loc[matched_indices]
             
         # 5. Build results list
         results = []
@@ -4377,5 +4389,19 @@ def look_up_faq(query: Optional[str]) -> str:
 
 
 if __name__ == "__main__":
-    print(" Starting MCP Tools Server...")
+    print(" Starting Multi-Agent MCP Server...")
+    
+    # --- OS-Aware Event Loop Setup ---
+    if sys.platform == "win32":
+        # LOCAL WINDOWS FIX: Prevents "WinError 10054" when clients disconnect
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        print(" Running on Windows: Using SelectorEventLoop (Safe Mode)")
+    else:
+        # PRODUCTION LINUX (GCP)
+        try:
+            import uvloop
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            print(" Running on Linux: Loaded uvloop (High Performance Mode)")
+        except ImportError:
+            print(" Running on Linux: Standard asyncio loop (uvloop not installed)")
     mcp.run(transport="streamable-http")

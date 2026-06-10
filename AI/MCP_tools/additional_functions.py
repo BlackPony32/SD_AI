@@ -1754,7 +1754,7 @@ def _sales_trends_catalog_report(orders_path, catalog_path, products_path) -> li
             if not top_products:
                 return ["Can not generate report: No top products could be identified from the data."]
 
-            report_lines = ["#  Top 3 Products: Customer Insights & Demographics\n"]
+            report_lines = ["# Top 3 Sales Trends\n"]
             
             for i, product_name in enumerate(top_products, 1):
                 report_lines.append(f"## {i}. {product_name}\n")
@@ -1810,7 +1810,7 @@ def _calculate_key_metrics_orders(orders_path) -> list:
         std_delivery = orders['deliveryFee'].std() if total_orders > 1 else 0
 
         lines = [
-            "## 1. Executive Key Metrics",
+            "## Executive Key Metrics",
             "*Overview of financial performance and order variability.*",
             "",
             "### Sales & Orders",
@@ -1849,7 +1849,7 @@ def _calculate_sales_orders_performance(orders_path) -> list:
         monthly['pct_change'] = monthly['total_sales'].pct_change() * 100
         
         lines = [
-            "## 2. Sales Performance & Trends",
+            "## Sales Performance & Trends",
             "*Monthly breakdown of revenue and order volume.*",
             "",
             "| Month | Total Sales | Orders | Avg Sales/Order | % Change (MoM) |",
@@ -1868,70 +1868,174 @@ def _calculate_sales_orders_performance(orders_path) -> list:
         return ["This report is currently unavailable due to a temporary change. Please check back later or contact support if you need assistance."]
 
 def _calculate_discount_distribution(orders_path) -> list:
-    """Calculates Discount Distribution with Revenue & Baseline Comparison."""
+    """
+    Calculates advanced Global Discount Performance with optimized vectorized
+    categorization, refund filtering, and strict financial metrics.
+    """
     try:
+        # Load and clean headers
         orders = pd.read_csv(orders_path, encoding='utf-8-sig')
         orders.columns = orders.columns.str.strip().str.replace('\ufeff', '')
         
-        # Categorize Discounts
+        # 1. OPTIMIZATION: Filter out Refunds immediately to ensure clean net data
+        if 'paymentStatus' in orders.columns:
+            orders = orders[orders['paymentStatus'].fillna('').str.upper() != 'REFUNDED'].copy()
+        
+        # 2. Determine individual discount presence mathematically
+        orders['has_cust'] = orders['customerDiscountValue'].fillna(0) > 0
+        orders['has_mfg'] = orders['manufacturerDiscountValue'].fillna(0) > 0
+        orders['has_invoice'] = orders['totalOrderDiscountValue'].fillna(0) > 0
+        
+        orders['remainder'] = orders['totalDiscountValue'].fillna(0) - (
+            orders['customerDiscountValue'].fillna(0) + 
+            orders['manufacturerDiscountValue'].fillna(0) + 
+            orders['totalOrderDiscountValue'].fillna(0)
+        )
+        orders['has_item_or_slot'] = orders['remainder'] > 0.01
+        
+        # Count concurrent discount types
+        orders['active_discount_types_count'] = (
+            orders['has_cust'].astype(int) + 
+            orders['has_mfg'].astype(int) + 
+            orders['has_invoice'].astype(int) + 
+            orders['has_item_or_slot'].astype(int)
+        )
+        
         if 'appliedDiscountsType' not in orders.columns:
-            orders['DiscountType'] = np.where(orders['totalDiscountValue'] > 0, 'Generic', 'None')
-        else:
-            orders['DiscountType'] = orders['appliedDiscountsType'].fillna('None').astype(str)
-            orders.loc[orders['DiscountType'].str.upper() == 'NONE', 'DiscountType'] = 'No Discount'
-            orders.loc[(orders['DiscountType'] == 'No Discount') & (orders['totalDiscountValue'] > 0), 'DiscountType'] = 'Custom/Other'
+            orders['appliedDiscountsType'] = 'NONE'
 
+        # 3. OPTIMIZATION: Vectorized Categorization using np.select
+        conditions = [
+            orders['totalDiscountValue'].fillna(0) <= 0,
+            orders['active_discount_types_count'] > 1,
+            orders['has_cust'],
+            orders['has_mfg'],
+            orders['has_invoice'],
+            orders['appliedDiscountsType'].fillna('').str.upper() == 'ITEM_DISCOUNT'
+        ]
+        
+        choices = [
+            'No Discount (Baseline)',
+            'Stacked / Mixed Discounts',
+            'Customer Discount',
+            'Manufacturer Discount',
+            'Invoice Total Discount',
+            'Discount on Selected Entities'
+        ]
+        
+        orders['DiscountCategory'] = np.select(conditions, choices, default='Slotting')
+
+        # 4. OPTIMIZATION: Calculate Global Metrics using totalAmountWithoutDelivery
+        total_revenue = orders['totalAmountWithoutDelivery'].sum()
         total_orders = len(orders)
         num_with_disc = (orders['totalDiscountValue'] > 0).sum()
         
-        stats = orders.groupby('DiscountType').agg(
-            Count=('customer_id', 'count'),
+        stats = orders.groupby('DiscountCategory').agg(
+            Count=('id', 'count'),
             TotalDiscount=('totalDiscountValue', 'sum'),
-            TotalSales=('totalAmount', 'sum') 
+            NetSales=('totalAmountWithoutDelivery', 'sum') 
         ).reset_index()
         
-        stats['AvgOrderValue'] = stats['TotalSales'] / stats['Count']
+        # Restore Gross Sales for accurate AOV scaling
+        stats['GrossSales'] = stats['NetSales'] + stats['TotalDiscount']
         
-        # Baseline (No Discount)
-        baseline_row = stats[stats['DiscountType'] == 'No Discount']
-        baseline_aov = baseline_row['AvgOrderValue'].iloc[0] if not baseline_row.empty else 0
+        # 5. Calculate Core Performance Metrics with Divide-by-Zero Safeties
+        stats['AvgOrderValue'] = np.where(
+            stats['Count'] > 0, 
+            stats['GrossSales'] / stats['Count'], 
+            0
+        )
         
+        stats['EffectiveDiscountRate'] = np.where(
+            stats['GrossSales'] > 0, 
+            (stats['TotalDiscount'] / stats['GrossSales']) * 100, 
+            0
+        )
+        
+        stats['RevenueShare'] = np.where(
+            total_revenue > 0, 
+            (stats['NetSales'] / total_revenue) * 100, 
+            0
+        )
+        
+        # Extract baseline AOV
+        baseline_row = stats[stats['DiscountCategory'] == 'No Discount (Baseline)']
+        baseline_aov = baseline_row['AvgOrderValue'].values[0] if not baseline_row.empty else 0
+        
+        # Advanced Metrics with Safety Overrides
+        stats['AOVLift'] = np.where(
+            baseline_aov > 0, 
+            ((stats['AvgOrderValue'] - baseline_aov) / baseline_aov) * 100, 
+            0
+        )
+        
+        stats['DiscountEfficiency'] = np.where(
+            stats['TotalDiscount'] > 0, 
+            stats['GrossSales'] / stats['TotalDiscount'], 
+            0
+        )
+        
+        # Dynamic health status
+        def assign_status(row):
+            if row['DiscountCategory'] == 'No Discount (Baseline)':
+                return 'Healthy Baseline'
+            if row['EffectiveDiscountRate'] > 40:
+                return 'Critical Margin Loss'
+            if row['EffectiveDiscountRate'] > 20 or (row['DiscountEfficiency'] > 0 and row['DiscountEfficiency'] < 5):
+                return 'Review (Leakage Risk)'
+            if row['DiscountEfficiency'] >= 15:
+                return 'Highly Efficient'
+            return 'Stable / Moderate'
+
+        stats['Status'] = stats.apply(assign_status, axis=1)
+        
+        # Sort output
+        stats['is_baseline'] = stats['DiscountCategory'] == 'No Discount (Baseline)'
+        stats = stats.sort_values(by=['is_baseline', 'NetSales'], ascending=[False, False]).drop(columns=['is_baseline'])
+        
+        # 6. Format Output Report
         lines = [
-            "## 3. Discount Distribution & Efficiency",
-            f"- **Orders with Discounts:** {num_with_disc} ({format_percentage(num_with_disc/total_orders*100)})",
+            "## Global Discount Performance Report",
+            f"**Total Orders:** {total_orders} | **Orders with Discounts:** {num_with_disc} ({format_percentage(num_with_disc/total_orders*100) if total_orders > 0 else '0.0%' })",
             "",
-            "| Discount Type | Orders | Total Discount Given | Avg Order Value | Performance vs Baseline |",
-            "|---|---|---|---|---|",
+            "| Discount Category | Orders | % of Total Revenue | EDR (Margin Cut) | Avg Order Value | AOV Lift | Return on $1 Discount | Performance Status |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         
-        stats = stats.sort_values('Count', ascending=False)
-        
         for _, row in stats.iterrows():
-            name = format_status(row['DiscountType'])
+            name = row['DiscountCategory']
             count = row['Count']
-            disc_val = usd(row['TotalDiscount'])
+            share = format_percentage(row['RevenueShare'])
+            edr = format_percentage(row['EffectiveDiscountRate']) if row['TotalDiscount'] > 0 else "0.0%"
             aov = usd(row['AvgOrderValue'])
+            lift = f"{row['AOVLift']:+.1f}%" if name != 'No Discount (Baseline)' else "0.0%"
             
-            if name == 'No Discount':
-                perf = "(Baseline)"
-            elif baseline_aov > 0:
-                diff = (row['AvgOrderValue'] - baseline_aov) / baseline_aov * 100
-                perf = f"{diff:+.1f}% Lift"
-            else:
-                perf = "-"
-                
-            lines.append(f"| {name} | {count} | {disc_val} | {aov} | {perf} |")
-        
-        lines.append("")
-        lines.append("> **What is Performance vs Baseline?**")
-        lines.append("> This compares the Average Order Value (AOV) of this specific discount type against the 'No Discount' baseline.")
-        lines.append("> - **Positive Lift (+):** Customers using this discount actually spend *more* than full-price customers.")
-        lines.append("> - **Negative Lift (-):** Customers using this discount spend *less* than average.")
+            efficiency = f"{usd(row['DiscountEfficiency'])} generated" if row['TotalDiscount'] > 0 else "-"
+            status = row['Status']
+            
+            lines.append(f"| {name} | {count} | {share} | {edr} | {aov} | {lift} | {efficiency} | {status} |")
+            
+        lines.extend([
+            "",
+            "### Key Performance Metric Explanations",
+            "- **% of Total Revenue:** Indicates the concentration of incoming cash flow tied to that specific discount bucket.",
+            "  * *Formula:* `(Net Sales of Category / Total Global Net Sales) * 100`",
+            "- **Effective Discount Rate (EDR):** The actual percentage removed from the gross pricing of those orders. This reveals your true margin cut.",
+            "  * *Formula:* `(Total Discount Given / Gross Sales of Category) * 100`",
+            "- **Avg Order Value (AOV):** The mean dollar size per purchase inside that specific bucket, excluding delivery fees to show true retail volume.",
+            "  * *Formula:* `Gross Sales of Category / Order Count of Category`",
+            "- **AOV Lift:** Compares shopping cart performance directly against full-price orders. A *negative lift* indicates promotions are applied to smaller cart sizes rather than scaling up basket depth.",
+            "  * *Formula:* `((Category AOV - Baseline AOV) / Baseline AOV) * 100`",
+            "- **Return on $1 Discount (Discount Efficiency):** Measures promotional efficiency. It tracks how many gross dollars of retail volume were moved for every single dollar given away in promotions.",
+            "  * *Formula:* `Gross Sales of Category / Total Discount Given`",
+            "- **Performance Status:** Automated health grading lanes based on discount margins (EDR) and financial returns. Flags code stacking combinations or legacy slots that drain business profit margins."
+        ])
             
         return lines
+
     except Exception as e:
-        logger2.error(f"Error calculating discount distribution in _calculate_discount_distribution: {e}")
-        return ["This report is currently unavailable due to a temporary change. Please check back later or contact support if you need assistance."]
+        logger2.error(f"Error calculating discount distribution in calculate_discount_performance_report: {e}")
+        return ["This report is currently unavailable due to a temporary structural update. Please try again or contact support if the issue persists."]
 
 def _calculate_orders_fulfillment(orders_path) -> list:
     """Calculates Fulfillment Breakdown with Revenue Column."""
@@ -1948,7 +2052,7 @@ def _calculate_orders_fulfillment(orders_path) -> list:
         ).sort_values('Count', ascending=False)
         
         lines = [
-            "## 4. Fulfillment Analysis",
+            "## Fulfillment Analysis",
             "*Breakdown of orders and revenue by delivery status.*",
             "",
             "| Delivery Status | Orders | Percentage | Revenue |",
@@ -1978,7 +2082,7 @@ def _calculate_payment_status(orders_path) -> list:
         ).sort_values('Count', ascending=False)
         
         lines = [
-            "## 5. Payment Status Analysis",
+            "## Payment Status Analysis",
             "| Payment Status | Orders | Percentage | Revenue |",
             "|---|---|---|---|",
         ]
@@ -2269,10 +2373,10 @@ async def main():
         products_path="data\\FULL_DIST_TEST\\cleaned_products.csv",
         customers_path="data\\FULL_DIST_TEST\\cleaned_customers.csv",
         catalog_path="data\\FULL_DIST_TEST\\cleaned_catalog.csv",
-        agent_type="catalog_agent",
-        report_type="bundle_performance_report"
+        agent_type="orders_agent",
+        report_type="discount_report"
     )
-    print(report.get("sections", "No full report generated.").get("bundle_performance_report", "Report section not found."))
+    print(report.get("sections", "No full report generated.").get("discount_report", "Report section not found."))
 
 
 if __name__ == "__main__":

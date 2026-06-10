@@ -529,6 +529,47 @@ def _is_csv_empty(filepath: str) -> bool:
             
     return False
 
+def is_data_ready(user_folder: str, entity: str) -> bool:
+    """
+    Checks if ALL required files exist and are less than 2 hours old.
+    Returns True if data is ready (skip download), False otherwise.
+    """
+    # can be made dynamic later
+    entity_file_map = {
+        "catalog": ["raw_file_catalog.csv", "raw_file_order_products.csv"],
+        "customers": ["raw_file_customers.csv", "raw_file_orders.csv", "raw_file_order_products.csv"],
+        "orders": ["raw_file_orders.csv", "raw_file_order_products.csv"],
+        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"]
+        # Add 'activities' dependencies
+    }
+    
+    required_files = entity_file_map.get(entity, [])
+    
+    max_age_seconds = 2 * 60 * 60 # 2 hours in seconds
+    current_time = time.time()
+    folder_check_path = os.path.join('data', user_folder, 'work_data_folder')
+
+    for filename in required_files:
+        file_path = os.path.join(folder_check_path, filename)
+        
+        # 1. Check if the file exists at all
+        if not os.path.exists(file_path):
+            print(f"Data Check: Missing required file -> {filename}")
+            return False
+            
+        # 2. Check how old the file is
+        # getmtime returns the time of last modification in seconds since the epoch
+        file_age_seconds = current_time - os.path.getmtime(file_path)
+        
+        if file_age_seconds > max_age_seconds:
+            print(f"Data Check: File too old -> {filename} is {file_age_seconds / 3600:.2f} hours old.")
+            return False
+
+    print("Data Check: All files are present and fresh!")
+    return True
+
+
+
 # MCP logic
 TOPIC_CONFIG = {
         "customers": [
