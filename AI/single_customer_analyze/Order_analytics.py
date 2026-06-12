@@ -261,7 +261,10 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
         # Step 1: Load data
         try:
             if orders.empty or products.empty:
-                message = """The report cannot be generated based on empty data (No valid orders found).\n You can create a new order to start analyzing your data - check this guide: https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents\n and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: https://meetings.hubspot.com/john-vasylets/customers"""
+                message = """The report cannot be generated based on empty data (No valid orders found). \n
+You can create a new order to start analyzing your data - check this guide: [How to Create and Process a New Direct Order](https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents)\n
+and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: [Schedule a Meeting](https://meetings.hubspot.com/john-vasylets/customers)\n
+"""
                 return {
                     "full_report": message,
                     "sections": {}
