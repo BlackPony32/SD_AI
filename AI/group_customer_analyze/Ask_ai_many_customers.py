@@ -968,7 +968,14 @@ async def create_Ask_ai_many_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLite
         logger2.error(f"error creating session: {e}")
 
     try:
-        instructions = await prompt_agent_Ask_ai_many(USER_ID)
+        from AI.utils import _is_csv_empty
+        df_path = Path(f"data/{USER_ID}/work_data_folder/cleaned_real_big_orders.csv")
+        if _is_csv_empty(df_path):
+            NEW_USER_BOOL = True
+        else:
+            NEW_USER_BOOL = False
+
+        instructions = await prompt_agent_Ask_ai_many(USER_ID, NEW_USER_BOOL)
         agent = Agent(
             name="Warehouse_Inventory_Assistant",
             instructions=instructions,

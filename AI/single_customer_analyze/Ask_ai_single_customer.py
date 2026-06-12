@@ -1391,7 +1391,13 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
         logger1.error(f"error creating session: {e}")
 
     try:
-        instructions = await prompt_agent_Ask_ai_solo(USER_ID)
+        from AI.utils import _is_csv_empty
+        df_path = Path(f"data/{USER_ID}/work_ord.csv")
+        if _is_csv_empty(df_path):
+            NEW_USER_BOOL = True
+        else:
+            NEW_USER_BOOL = False
+        instructions = await prompt_agent_Ask_ai_solo(USER_ID, NEW_USER_BOOL)
         agent = Agent(
             name="Warehouse_Inventory_Assistant",
             instructions=instructions,
