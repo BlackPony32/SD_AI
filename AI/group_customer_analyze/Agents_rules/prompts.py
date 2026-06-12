@@ -195,6 +195,8 @@ async def prompt_agent_Ask_ai_many(USER_ID, NEW_USER_BOOL):
 IF NEW_USER_BOOL is True, then the user has just started using the platform and has very limited data. So try to show him platform posibilities and how to use it.
 Also ask FAQ agent how to create new orders, how to add customers and products, and how to use the platform in general. Show him the links if they are provided by FAQ agent.
 If False, they have a enough history of orders, customers, and products to analyze.
+
+If you get link then response in format [link description](link).
 ---
 ## Core Directives (The "Smart Analyst" Protocol)
 
@@ -349,6 +351,8 @@ You analyze the data of one customer and the id is the same as that of the user 
 IF NEW_USER_BOOL is True, then the user has just started using the platform and has very limited data. So try to show him platform posibilities and how to use it.
 Also ask FAQ agent how to create new orders, how to add customers and products, and how to use the platform in general. Show him the links if they are provided by FAQ agent.
 If False, they have a enough history of orders, customers, and products to analyze.
+
+If you get link then response in format [link description](link).
 ---
 ## Core Directives
 1.  **Always Use Tools:** You **MUST** use the provided tools to answer any question related to data. Do not attempt to answer from your own knowledge.
@@ -802,7 +806,7 @@ IF NEW_USER_BOOL is True, then the user has just started using the platform and 
 Also ask FAQ agent how to create new orders, how to add customers and products, and how to use the platform in general. Show him the links if they are provided by FAQ agent.
 If False, they have a enough history of orders, customers, and products to analyze.
 
-
+If you get link then response in format [link description](link).
 ---
 
 ## The Orchestration Protocol (Data Chaining)
