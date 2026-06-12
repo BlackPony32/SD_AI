@@ -1034,12 +1034,18 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
             #print(check_if_orders_has_data.head(3))
             if check_if_orders_has_data.empty:
                 logger2.info("Orders data is empty after processing.")
+                message = """
+                The report cannot be generated based on empty data (No valid orders found). 
+                You can create a new order to start analyzing your data - check this guide: https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents
+                and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: https://meetings.hubspot.com/john-vasylets/customers
+                """
                 return JSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,
                     content={
                     "Status": "Empty Data",
-                    "Reason": "The report cannot be generated based on empty data (No valid orders found).",
-                    "uuid": request.customer_ids
+                    "Reason": message,
+                    "incorrect_uuid": request.customer_ids,
+                    "uuid": uuid
                 }
                 )
         except Exception as e:
@@ -1429,7 +1435,7 @@ async def create_mcp_reports(request: MCPRequest = Body(...)):
                 message = """
                 The report cannot be generated based on empty data (No valid orders found). 
                 You can create a new order to start analyzing your data - check this guide: https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents
-                and ask AI agent fir help with platform navigation and order creation, or you can clarify with our specialist: https://meetings.hubspot.com/john-vasylets/customers
+                and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: https://meetings.hubspot.com/john-vasylets/customers
                 """
                 return JSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,

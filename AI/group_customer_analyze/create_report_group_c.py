@@ -1463,7 +1463,7 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
 
         answer = runner.final_output
         answer = f"<div id=\"suggestions-block\">\n{answer}\n\n</div>"
-        print(answer)
+        #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model="gpt-5.4-mini")
 
