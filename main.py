@@ -1044,7 +1044,7 @@ and ask AI agent for help with platform navigation and order creation, or you ca
                     "Status": "Empty Data",
                     "Reason": message,
                     "incorrect_uuid": request.customer_ids,
-                    "uuid": uuid
+                    "uuid": str(uuid)
                 }
                 )
         except Exception as e:

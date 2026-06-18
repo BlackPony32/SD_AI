@@ -265,9 +265,27 @@ async def generate_sales_report(orders_path: str, products_path: str, customer_i
 You can create a new order to start analyzing your data - check this guide: [How to Create and Process a New Direct Order](https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents)\n
 and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: [Schedule a Meeting](https://meetings.hubspot.com/john-vasylets/customers)\n
 """
+                # Define all the section keys your report normally returns
+                section_keys = [
+                    "total_sales_by_status",
+                    "key_metrics",
+                    "payment_status_analysis",
+                    "discount_distribution",
+                    "fulfillment_analysis",
+                    "top_products",
+                    "sales_team_performance",
+                    "customer_purchase_analysis",
+                    "monthly_sales_trends",
+                    "suggestions",
+                    "suggestions_div"
+                ]
+                
+                # Create a dictionary where every section gets the empty data message
+                empty_sections = {key: message for key in section_keys}
+
                 return {
                     "full_report": message,
-                    "sections": {}
+                    "sections": empty_sections
                 }
             else:
                 logger.info(f"Loaded {len(orders)} orders and {len(products)} products")
