@@ -2651,7 +2651,7 @@ def _generate_product_report(df_to_report: pd.DataFrame, filters: list, period_m
 @log_tool_usage
 def get_product_details(
     user_id: str, 
-    name: Optional[str] = None, 
+    product_name: Optional[str] = None, 
     sku: Optional[str] = None, 
     category: Optional[str] = None, 
     manufacturer: Optional[str] = None,
@@ -2664,7 +2664,7 @@ def get_product_details(
 
     Args:
         user_id (str): The user's ID.
-        name (str): Filter by product name (partial match).
+        product_name (str): Filter by product name (partial match).
         sku (str): Filter by SKU.
         category (str): Filter by category.
         manufacturer (str): Filter by manufacturer.
@@ -2724,9 +2724,9 @@ def get_product_details(
     filters = []
     filtered_df = df_products.copy()
 
-    if name and 'name' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['name'].fillna('').str.contains(name, case=False, na=False)]
-        filters.append(f"Name='{name}'")
+    if product_name and 'name' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['name'].fillna('').str.contains(product_name, case=False, na=False)]
+        filters.append(f"Name='{product_name}'")
         
     if sku and 'sku' in filtered_df.columns:
         filtered_df = filtered_df[filtered_df['sku'].fillna('').str.contains(sku, case=False, na=False)]
