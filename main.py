@@ -81,23 +81,37 @@ import subprocess
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
+MCP_PORT = 8001 
+MCP_LOCAL_URL = f"http://127.0.0.1:{MCP_PORT}"
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Start the MCP server as a subprocess when FastAPI starts
-    print("Starting MCP Server...")
+    print("Starting MCP Server subprocess...")
     
-    # sys.executable dynamically points to the exact python binary  FastAPI app on GCP
     mcp_process = subprocess.Popen(
         [sys.executable, "-m", "AI.MCP_tools.List_of_mcp_tools"]
     )
     
-    yield # This yields control back to FastAPI to handle web requests
+    # Block FastAPI startup until MCP is responsive
+    is_ready = False
+    async with httpx.AsyncClient() as client:
+        for attempt in range(15): # 15 seconds
+            try:
+                response = await client.get(MCP_LOCAL_URL)
+                is_ready = True
+                print("MCP Server is up and accepting connections.")
+                break
+            except httpx.RequestError:
+                await asyncio.sleep(1)
+                
+    if not is_ready:
+        print("CRITICAL: MCP Server failed to bind to port in time.")
+
+    yield # Yield control back to FastAPI to handle web requests
     
-    # 2. Clean up and terminate the MCP server when FastAPI shuts down
     print("Shutting down MCP Server...")
     mcp_process.terminate()
     try:
-        # Give it a few seconds to shut down cleanly before forcing it
         mcp_process.wait(timeout=8)
     except subprocess.TimeoutExpired:
         print("MCP Server didn't terminate in time, killing...")

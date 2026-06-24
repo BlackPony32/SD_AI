@@ -409,11 +409,13 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
             tool_timings: Dict[str, float] = {} 
             active_tools: Dict[str, str] = {} 
             buffer = ""
-            BUFFER_THRESHOLD = 20
+            json_buffer = "" # New dedicated quarantine buffer
+            
+            # Increased threshold slightly to ensure long JSON keys aren't split across stream chunks
+            BUFFER_THRESHOLD = 25 
             
             capturing_json = False
-            json_marker = ""
-            suggestions_sent = False  # Track if suggestion data was pushed successfully
+            suggestions_sent = False
 
             # 3. STREAM PROCESSING LOOP
             async for event in runner.stream_events():
@@ -426,56 +428,40 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                 # --- Handle Text Generation ---
                 if event_type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     delta = event.data.delta or ""
-                    buffer += delta
                     
-                    if not capturing_json:
-                        trigger = None
-                        if "```json" in buffer:
-                            trigger = "```json"
-                        elif "'''json" in buffer:
-                            trigger = "'''json"
+                    if capturing_json:
+                        # Once triggered, NEVER stream to frontend. Quarantine everything.
+                        json_buffer += delta
+                    else:
+                        buffer += delta
+                        
+                        # Look for JSON markers (Standard Markdown OR Raw Unformatted JSON)
+                        trigger_idx = -1
+                        potential_triggers = ["```json", "'''json", '{"suggested_prompts"', '{"option_1"']
+                        
+                        for t in potential_triggers:
+                            idx = buffer.find(t)
+                            if idx != -1 and (trigger_idx == -1 or idx < trigger_idx):
+                                trigger_idx = idx
+                                
+                        if trigger_idx != -1:
+                            # Flush everything right up to the trigger as normal text
+                            text_to_flush = buffer[:trigger_idx]
+                            if text_to_flush:
+                                yield f"data: {json.dumps({'type': 'token', 'content': text_to_flush})}\n\n"
                             
-                        if trigger:
-                            idx = buffer.find(trigger)
-                            if idx > 0:
-                                yield f"data: {json.dumps({'type': 'token', 'content': buffer[:idx]})}\n\n"
-                                buffer = buffer[idx:]
-                            
+                            # Move the rest into quarantine and activate JSON capture mode
+                            json_buffer = buffer[trigger_idx:]
+                            buffer = ""
                             capturing_json = True
-                            json_marker = trigger
                         else:
+                            # Safely stream standard text, keeping a 25-character trailing margin 
+                            # in the buffer so we don't accidentally split a trigger keyword in half.
                             if len(buffer) >= BUFFER_THRESHOLD or "\n" in buffer:
-                                split_point = max(0, len(buffer) - 10)
+                                split_point = max(0, len(buffer) - 25)
                                 if split_point > 0:
                                     yield f"data: {json.dumps({'type': 'token', 'content': buffer[:split_point]})}\n\n"
                                     buffer = buffer[split_point:]
-
-                    if capturing_json:
-                        start_idx = buffer.find(json_marker) + len(json_marker)
-                        end_marker = "```" if json_marker == "```json" else "'''"
-                        end_idx = buffer.find(end_marker, start_idx)
-                        
-                        if end_idx != -1:
-                            block_content = buffer[start_idx:end_idx].strip()
-                            is_target = False
-                            
-                            if '"suggested_prompts"' in block_content:
-                                try:
-                                    parsed_data = json.loads(block_content)
-                                    if "suggested_prompts" in parsed_data:
-                                        yield f"data: {json.dumps({'type': 'suggestions', 'content': parsed_data['suggested_prompts']})}\n\n"
-                                        buffer = buffer[:buffer.find(json_marker)] + buffer[end_idx + len(end_marker):]
-                                        is_target = True
-                                        suggestions_sent = True
-                                except json.JSONDecodeError:
-                                    pass
-                            
-                            if not is_target:
-                                chunk_to_flush = buffer[:end_idx + len(end_marker)]
-                                yield f"data: {json.dumps({'type': 'token', 'content': chunk_to_flush})}\n\n"
-                                buffer = buffer[end_idx + len(end_marker):]
-                                
-                            capturing_json = False
 
                 # --- Handle Tool Interactions ---
                 elif event_type == "run_item_stream_event":
@@ -486,7 +472,6 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                         if buffer: 
                             yield f"data: {json.dumps({'type': 'token', 'content': buffer})}\n\n"
                             buffer = ""
-                            capturing_json = False
                         
                         tool_name = _extract_tool_info(item)
                         call_id = _extract_call_id(item) 
@@ -523,38 +508,40 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                         yield f"data: {json.dumps({'type': 'status', 'content': f'{tool_name} finished ({duration_str})'})}\n\n"
 
             # 4. FINAL CLEANUP & METADATA
-            if not suggestions_sent:
-                # Attempt to parse a partial/unclosed json block first
-                if capturing_json and buffer:
-                    try:
-                        start_idx = buffer.find(json_marker) + len(json_marker)
-                        clean_buffer = buffer[start_idx:].strip()
-                        clean_buffer = clean_buffer.replace("```", "").replace("'''", "").strip()
-                        
-                        if '"suggested_prompts"' in clean_buffer:
-                            parsed_data = json.loads(clean_buffer)
-                            if "suggested_prompts" in parsed_data:
-                                yield f"data: {json.dumps({'type': 'suggestions', 'content': parsed_data['suggested_prompts']})}\n\n"
-                                buffer = buffer[:buffer.find(json_marker)]
-                                suggestions_sent = True
-                    except json.JSONDecodeError:
-                        pass 
-
-                # Fallback implementation: If parsing failed or block was entirely truncated
-                if not suggestions_sent:
-                    fallback_prompts = {
-                        "option_1": "Find growth opportunities",
-                        "option_2": "Reduce operational risk"
-                    }
-                    yield f"data: {json.dumps({'type': 'suggestions', 'content': fallback_prompts})}\n\n"
-                    
-                    # Clean the broken JSON snippet text entirely out of the text buffer
-                    if json_marker and json_marker in buffer:
-                        buffer = buffer[:buffer.find(json_marker)].strip()
-
             # Flush any remaining valid text markdown
             if buffer:
                 yield f"data: {json.dumps({'type': 'token', 'content': buffer})}\n\n"
+
+            # Try to safely extract and parse the quarantined JSON
+            if capturing_json and json_buffer:
+                import re
+                # Use regex to aggressively find anything resembling a JSON object block,
+                # ignoring broken backticks or conversational text trailing at the end.
+                json_match = re.search(r'\{.*\}', json_buffer, re.DOTALL)
+                
+                if json_match:
+                    clean_json_str = json_match.group(0)
+                    try:
+                        parsed_data = json.loads(clean_json_str)
+                        
+                        # Handle both variations (nested "suggested_prompts" or flat dictionary)
+                        target_data = parsed_data.get("suggested_prompts", parsed_data)
+                        
+                        # Validate it has actual content
+                        if target_data and len(target_data) > 0:
+                            yield f"data: {json.dumps({'type': 'suggestions', 'content': target_data})}\n\n"
+                            suggestions_sent = True
+                    except json.JSONDecodeError:
+                        logger2.warning("Agent returned malformed JSON. Relying on fallback.")
+
+            # Fallback if no valid suggestions were parsed or generated
+            # Notice we DO NOT yield the broken json_buffer text to the frontend. It is simply erased.
+            if not suggestions_sent:
+                fallback_prompts = {
+                    "option_1": "Find growth opportunities",
+                    "option_2": "Reduce operational risk"
+                }
+                yield f"data: {json.dumps({'type': 'suggestions', 'content': fallback_prompts})}\n\n"
 
             calculated_cost = calculate_cost(runner, model="gpt-5.4-mini")
             final_metadata = json.dumps({"type": "metadata", "cost": calculated_cost, "status": "completed"})
@@ -589,8 +576,17 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
             
         except Exception as e:
             logger2.error(f"Stream Error: {e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'content': f'An unexpected error occurred: {str(e)}'})}\n\n"
             
+            error_str = str(e)
+
+            if "MCP server" in error_str or "Could not reach" in error_str:
+                friendly_msg = "Our AI service is experiencing a brief connection troubles. Please try asking your question again in a moment!"
+            else:
+                friendly_msg = "We ran into an unexpected snag while processing your request. Please try again shortly."
+                
+            # 4. Yield the friendly message to the frontend
+            yield f"data: {json.dumps({'type': 'error', 'content': friendly_msg})}\n\n" 
+
 @app.post("/chat_mcp")
 async def chat_endpoint(request: ChatRequestMCP, req: Request):
     return StreamingResponse(
