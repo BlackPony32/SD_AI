@@ -78,6 +78,7 @@ ORDER_TOOLS_LIST = [
 CUSTOMER_TOOLS_LIST = [
     "get_top_n_customers",
     "get_customers",
+    "describe_customer",
     "get_orders_by_customer",
     "get_stopped_ordering_report",
     "get_opportunity_report",

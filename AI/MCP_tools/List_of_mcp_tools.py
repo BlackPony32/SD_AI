@@ -275,11 +275,11 @@ def get_top_n_customers(
 
 @mcp.tool(name="get_customers")
 @log_tool_usage
-def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> str:
+def get_customers(user_id: Optional[str], search_query: Optional[str] = None) -> str:
     """
-    Searches for customers by name or ID and returns their details.
-    Returns a JSON string mapping Display Names to customer_ids.
-    Uses fuzzy matching to handle typos and partial names.
+    Searches for customers using a hybrid approach:
+    1. Exact substring match across ALL columns (finds IDs, exact names, emails).
+    2. Fuzzy match on Name/ID columns (handles typos).
     """
     base_path = Path("data") / str(user_id)
     customers_path = base_path / "cleaned_customers.csv"
@@ -303,36 +303,43 @@ def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> 
             df_o = pd.read_csv(orders_path, usecols=['customer_id'], encoding='utf-8-sig')
             order_counts = df_o['customer_id'].value_counts()
             
-        # Ensure searchable columns exist and fill NAs
-        for col in ['name', 'displayedName', 'customId_customId']:
-            if col in df_c.columns:
-                df_c[col] = df_c[col].fillna('')
-                
-        # 3. Build a unified search string for each row
-        search_series = pd.Series("", index=df_c.index)
-        if 'name' in df_c.columns: search_series += df_c['name'] + " "
-        if 'displayedName' in df_c.columns: search_series += df_c['displayedName'] + " "
-        if 'customId_customId' in df_c.columns: search_series += df_c['customId_customId']
-        
-        # 4. Apply FUZZY search filter if provided
-        if search_name:
-            # Extract matches with a similarity score of 70 or higher
+        # Ensure all NAs are filled with empty strings
+        df_c = df_c.fillna('')
+            
+        # --- 3. APPLY HYBRID SEARCH LOGIC ---
+        if search_query:
+            search_lower = search_query.lower()
+            
+            # Strategy A: Global Substring Search (Searches EVERYTHING without fuzzy dilution)
+            row_strings = df_c.astype(str).agg(' '.join, axis=1).str.lower()
+            exact_mask = row_strings.str.contains(search_lower, regex=False)
+            exact_indices = exact_mask[exact_mask].index.tolist()
+            
+            # Strategy B: Targeted Fuzzy Search (Searches key columns to handle typos)
+            targeted_search_series = pd.Series("", index=df_c.index)
+            for col in ['name', 'displayedName', 'customId_customId', 'billingAddress_formatted_address']:
+                if col in df_c.columns:
+                    targeted_search_series += df_c[col] + " "
+                    
             matches = process.extract(
-                search_name.lower(), 
-                search_series.str.lower().to_dict(), 
+                search_lower, 
+                targeted_search_series.str.lower().to_dict(), 
                 scorer=fuzz.WRatio, 
                 limit=None, 
                 score_cutoff=70.0
             )
+            fuzzy_indices = [match[2] for match in matches]
             
-            if not matches:
-                return json.dumps({"Error": f"No customers found matching '{search_name}' (even with fuzzy matching)"})
+            # Combine the results from both strategies and remove duplicates
+            all_matched_indices = list(set(exact_indices + fuzzy_indices))
             
-            # matches returns tuples of (matched_string, score, dataframe_index)
-            matched_indices = [match[2] for match in matches]
-            df_c = df_c.loc[matched_indices]
+            if not all_matched_indices:
+                return json.dumps({"Error": f"No customers found matching '{search_query}'"})
             
-        # 5. Build results list
+            # Filter dataframe to only the matched rows
+            df_c = df_c.loc[all_matched_indices]
+            
+        # 4. Build results list
         results = []
         for _, row in df_c.iterrows():
             c_id = row[cust_id_col]
@@ -344,7 +351,6 @@ def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> 
             custom_id = row.get('customId_customId', '')
             count = order_counts.get(c_id, 0)
             
-            # Construct a rich display string for the agent
             display_parts = [str(c_name)]
             if custom_id:
                 display_parts.append(f"[Custom ID: {custom_id}]")
@@ -356,31 +362,167 @@ def get_customers(user_id: Optional[str], search_name: Optional[str] = None) -> 
                 "order_count": int(count)
             })
             
-        # 6. Sort by most active customers first
+        # 5. Sort by most active customers first
         results.sort(key=lambda x: x["order_count"], reverse=True)
         
-        # 7. Truncate to top 50 to protect context window
+        # 6. Truncate to top 50 to protect context window
         is_truncated = len(results) > 50
         results = results[:50]
         
-        # 8. Format as Dictionary for Agent consumption
+        # 7. Format as Dictionary for Agent consumption
         output_dict = {}
         for r in results:
             output_dict[r["display_name"]] = r["customer_id"]
             
         if is_truncated:
-            output_dict["_warning"] = f"Found more than 50 matches. Showing top 50 by order count. Refine search_name if needed."
+            output_dict["_warning"] = f"Found more than 50 matches. Showing top 50 by order count. Refine search_query if needed."
             
         return json.dumps(output_dict, indent=2)
 
     except Exception as e:
         return json.dumps({"Error": f"Failed: {str(e)}\n{traceback.format_exc()}"})
 
+@mcp.tool(name="describe_customer")
+@log_tool_usage
+def describe_customer(user_id: Optional[str], search_query: Optional[str]) -> str:
+    """
+    Finds a specific customer and generates a comprehensive profile including 
+    contact details, lifetime value, and an automated 'Health/Engagement' status.
+    
+    Parameters:
+    - user_id (str): The unique identifier for the current user/workspace to locate the correct data files.
+    - search_query (str): The specific identifier to search for. This can be an exact system UUID, a custom/internal ID (e.g., '794510'), a full name, or a partial name (e.g., 'bistro').
+    
+    Returns:
+    - A formatted Markdown string containing the customer's profile, health status, and LTV. 
+    - If multiple customers match the search_query, it returns a clarification prompt listing the options.
+    - If no customer is found, it returns an error message.
+    """
+    if not search_query:
+        return "Error: A search_query must be provided."
+        
+    base_path = Path("data") / str(user_id)
+    customers_path = base_path / "cleaned_customers.csv"
+    orders_path = base_path / "cleaned_orders.csv"
+    
+    sq = str(search_query).strip().lower()
+    sq_numeric = sq.replace('.0', '')
+    
+    if not customers_path.exists():
+        return f"Error: Customer file not found for user {user_id}"
+
+    try:
+        # --- 1. FAST CUSTOMER RESOLUTION ---
+        # Load customers as strings to prevent ID parsing errors
+        df_cust = pd.read_csv(customers_path, encoding='utf-8-sig', dtype=str).fillna('')
+        df_cust.columns = df_cust.columns.str.strip().str.replace('\ufeff', '')
+        cust_id_col = 'combinedid' if 'combinedid' in df_cust.columns else 'id'
+        
+        # Exact/Substring Match Logic
+        mask_id = df_cust[cust_id_col].str.lower() == sq
+        mask_custom = df_cust.get('customId_customId', pd.Series('')).str.lower().str.replace(r'\.0$', '', regex=True) == sq_numeric
+        mask_name = df_cust.get('name', pd.Series('')).str.lower().str.contains(sq, regex=False)
+        mask_disp = df_cust.get('displayedName', pd.Series('')).str.lower().str.contains(sq, regex=False)
+        
+        matched_custs = df_cust[mask_id | mask_custom | mask_name | mask_disp].copy()
+        
+        if matched_custs.empty:
+            return f"No customers found matching '{search_query}'."
+            
+        # Handle Multiple Matches
+        if len(matched_custs) > 1:
+            mask_perfect_name = df_cust.get('name', pd.Series('')).str.lower() == sq
+            mask_perfect_disp = df_cust.get('displayedName', pd.Series('')).str.lower() == sq
+            perfect_matches = df_cust[mask_id | mask_custom | mask_perfect_name | mask_perfect_disp]
+            
+            if len(perfect_matches) == 1:
+                matched_custs = perfect_matches
+            else:
+                names = [f"- {r.get('displayedName') or r.get('name')} (ID: {r.get('customId_customId', '')})" for _, r in matched_custs.head(5).iterrows()]
+                return f"Multiple customers match '{search_query}'. Please clarify:\n" + "\n".join(names)
+
+        target_customer = matched_custs.iloc[0]
+        target_uuid = str(target_customer[cust_id_col]).strip()
+
+        # --- 2. EXTRACT CORE PROFILE DATA ---
+        c_name = target_customer.get('displayedName') or target_customer.get('name') or "Unknown"
+        c_custom_id = target_customer.get('customId_customId', 'N/A').replace('.0', '')
+        c_status = target_customer.get('status', 'UNKNOWN').upper()
+        c_terms = target_customer.get('paymentTerms_name', 'Not Set')
+        c_discount = target_customer.get('percentDiscount', '0')
+        
+        # Prioritize shipping address, fallback to billing
+        address = target_customer.get('shippingAddress_formatted_address')
+        if not address or address == '-':
+            address = target_customer.get('billingAddress_formatted_address', 'No address on file')
+
+        # --- 3. LOAD ORDERS (OPTIMIZED FOR SPEED) ---
+        # We only load 3 columns to save memory and processing time
+        order_count = 0
+        total_spent = 0.0
+        aov = 0.0
+        days_since_last_order = None
+        
+        if orders_path.exists():
+            df_ord = pd.read_csv(orders_path, usecols=lambda c: c in ['customer_id', 'totalAmount', 'createdAt'], encoding='utf-8-sig')
+            customer_orders = df_ord[df_ord['customer_id'].astype(str).str.strip() == target_uuid].copy()
+            
+            if not customer_orders.empty:
+                order_count = len(customer_orders)
+                customer_orders['totalAmount'] = pd.to_numeric(customer_orders.get('totalAmount', 0), errors='coerce').fillna(0)
+                total_spent = customer_orders['totalAmount'].sum()
+                aov = total_spent / order_count if order_count > 0 else 0
+                
+                # Calculate Recency
+                if 'createdAt' in customer_orders.columns:
+                    customer_orders['createdAt'] = pd.to_datetime(customer_orders['createdAt'], errors='coerce').dt.tz_localize(None)
+                    last_order_date = customer_orders['createdAt'].max()
+                    if pd.notna(last_order_date):
+                        days_since_last_order = (datetime.now() - last_order_date).days
+
+        # --- 4. CALCULATE HEALTH & ENGAGEMENT FLAG ---
+        health_flag = "Prospect (No Orders Yet)"
+        if days_since_last_order is not None:
+            if days_since_last_order <= 30:
+                health_flag = f"Active & Engaged (Last order {days_since_last_order} days ago)"
+            elif days_since_last_order <= 90:
+                health_flag = f"Slipping / Needs Follow-up (Last order {days_since_last_order} days ago)"
+            else:
+                health_flag = f"Churn Risk / Inactive (Last order {days_since_last_order} days ago)"
+
+        # Check for missing profile data
+        warnings = []
+        if address == 'No address on file': warnings.append("Missing Address")
+        if c_terms in ['Not Set', '', '-']: warnings.append("Missing Payment Terms")
+        warning_str = f"Profile Warnings: {', '.join(warnings)}" if warnings else "✅ Profile Complete"
+
+        # --- 5. FORMAT OUTPUT ---
+        lines = [
+            f"## Customer Profile: {c_name} (ID: {c_custom_id})",
+            f"**Status:** {c_status} | **Engagement:** {health_flag}",
+            f"{warning_str}",
+            "---",
+            f"### Contact & Terms",
+            f"- **Address:** {address.replace(chr(10), ' ')}",
+            f"- **Payment Terms:** {c_terms}",
+            f"- **Global Discount:** {c_discount}%",
+            "",
+            f"### Lifetime Value (LTV)",
+            f"- **Total Orders:** {order_count:,}",
+            f"- **Total Spent:** ${total_spent:,.2f}",
+            f"- **Average Order Value:** ${aov:,.2f}"
+        ]
+
+        return '\n'.join(lines)
+
+    except Exception as e:
+        return f"Error analyzing customer: {str(e)}\n{traceback.format_exc()}"
+
 @mcp.tool(name="get_orders_by_customer")
 @log_tool_usage
 def get_orders_by_customer(
     user_id: Optional[str], 
-    customer_id: Optional[str], 
+    search_query: Optional[str], 
     limit: int = 10, 
     status_filter: Optional[str] = None,
     sort_by: Optional[str] = 'Date',
@@ -388,76 +530,94 @@ def get_orders_by_customer(
 ) -> str:
     """
     Returns a summary and detailed list of orders for a specific customer.
-    
-    Parameters:
-    - user_id: User's ID.
-    - customer_id: The specific customer ID, custom ID, or Name to look up.
-    - limit: Number of orders to display in the table (default: 10).
-    - status_filter: Optional filter for orderStatus (e.g., 'COMPLETED', 'CANCELED').
-    - sort_by: Column to sort by. Options: 'Date', 'Total', 'Qty' (default: 'Date').
-    - sort_order: 'desc' (default, newest/highest first) or 'asc' (oldest/lowest first).
+    Requires the search to resolve to exactly ONE customer to prevent merged reports.
     """
-    #logger2.info(f"Tool 'get_orders_by_customer' called for: {user_id} customer_identifier: {customer_id}, limit: {limit}, status_filter: {status_filter}")
-    
     base_path = Path("data") / str(user_id)
     csv_path = base_path / "cleaned_orders.csv"
     customers_path = base_path / "cleaned_customers.csv"
     
     is_ascending = (sort_order.lower() == 'asc')
-    search_val = str(customer_id).strip()
-    search_val_numeric = search_val.replace('.0', '')
+    
+    if not search_query:
+        return "Error: A search_query must be provided."
+        
+    sq = str(search_query).strip().lower()
+    sq_numeric = sq.replace('.0', '')
     
     if not csv_path.exists():
         return f"Error: Orders file not found for user {user_id}"
 
     try:
-        # 1. Load Orders Safely
+        # --- 1. CUSTOMER RESOLUTION STEP ---
+        if not customers_path.exists():
+            return "Error: Customers file missing. Cannot resolve customer safely."
+            
+        df_cust = pd.read_csv(customers_path, encoding='utf-8-sig', dtype=str).fillna('')
+        df_cust.columns = df_cust.columns.str.strip().str.replace('\ufeff', '')
+        cust_id_col = 'combinedid' if 'combinedid' in df_cust.columns else 'id'
+        
+        # Build loose match masks
+        mask_id = df_cust[cust_id_col].str.lower() == sq
+        mask_custom = df_cust.get('customId_customId', pd.Series('')).str.lower().str.replace(r'\.0$', '', regex=True) == sq_numeric
+        mask_name = df_cust.get('name', pd.Series('')).str.lower().str.contains(sq, regex=False)
+        mask_disp = df_cust.get('displayedName', pd.Series('')).str.lower().str.contains(sq, regex=False)
+        
+        matched_custs = df_cust[mask_id | mask_custom | mask_name | mask_disp].copy()
+        
+        if matched_custs.empty:
+            return f"No customers found matching '{search_query}'. Please try a different name or ID."
+            
+        # If multiple matches, try to find a single perfect exact match
+        if len(matched_custs) > 1:
+            mask_perfect_name = df_cust.get('name', pd.Series('')).str.lower() == sq
+            mask_perfect_disp = df_cust.get('displayedName', pd.Series('')).str.lower() == sq
+            
+            perfect_matches = df_cust[mask_id | mask_custom | mask_perfect_name | mask_perfect_disp]
+            
+            if len(perfect_matches) == 1:
+                matched_custs = perfect_matches
+            else:
+                # Still multiple matches - ABORT and ask user to clarify
+                names = []
+                for _, r in matched_custs.head(5).iterrows():
+                    nm = r.get('displayedName') or r.get('name') or 'Unknown'
+                    c_id = r.get('customId_customId', '')
+                    names.append(f"- {nm} (Custom ID: {c_id})")
+                
+                msg = f"Multiple customers found matching '{search_query}'. Please refine your search to exactly one customer. Matches include:\n" + "\n".join(names)
+                if len(matched_custs) > 5:
+                    msg += f"\n...and {len(matched_custs) - 5} more."
+                return msg
+
+        # now EXACTLY ONE verified customer
+        target_customer = matched_custs.iloc[0]
+        target_uuid = str(target_customer[cust_id_col]).strip()
+        display_name = target_customer.get('displayedName') or target_customer.get('name') or "Unknown Customer"
+
+
+        # --- 2. LOAD & FILTER ORDERS ---
         df = pd.read_csv(csv_path, encoding='utf-8-sig')
         df.columns = df.columns.str.strip().str.replace('\ufeff', '')
         
-        # 2. Build Customer Matching Logic
-        target_customer_ids = [search_val, search_val_numeric]
-        
-        # Try to map a custom ID to a UUID from the customers file
-        if customers_path.exists():
-            try:
-                df_cust = pd.read_csv(customers_path, encoding='utf-8-sig', usecols=lambda c: c in ['id', 'customId_customId'])
-                if 'customId_customId' in df_cust.columns and 'id' in df_cust.columns:
-                    # Safely match custom IDs
-                    cust_mask = df_cust['customId_customId'].astype(str).str.replace(r'\.0$', '', regex=True) == search_val_numeric
-                    matched_ids = df_cust.loc[cust_mask, 'id'].dropna().tolist()
-                    target_customer_ids.extend(matched_ids)
-            except Exception as e:
-                #logger2.warning(f"Could not load customers file for custom ID mapping: {e}")
-                pass
-
-        # Create master mask for orders
-        order_mask = pd.Series(False, index=df.index)
-        
-        if 'customer_id' in df.columns:
-            order_mask = order_mask | df['customer_id'].astype(str).str.strip().isin(target_customer_ids)
+        if 'customer_id' not in df.columns:
+            return "Error: Orders file is missing the 'customer_id' column."
             
-        if 'customer_name' in df.columns:
-            order_mask = order_mask | df['customer_name'].fillna('').str.contains(search_val, case=False, regex=False)
-            
-        if 'customer_displayedName' in df.columns:
-            order_mask = order_mask | df['customer_displayedName'].fillna('').str.contains(search_val, case=False, regex=False)
-
-        customer_orders = df[order_mask].copy()
+        # Match orders strictly to the resolved UUID
+        customer_orders = df[df['customer_id'].astype(str).str.strip() == target_uuid].copy()
         
         if customer_orders.empty:
-            return f"No orders found matching customer identifier: '{customer_id}'"
+            return f"No orders found for customer: {display_name}"
 
-        # 3. Apply Status Filter
+        # --- 3. APPLY STATUS FILTER ---
         if status_filter:
             if 'orderStatus' in customer_orders.columns:
                 customer_orders = customer_orders[
                     customer_orders['orderStatus'].fillna('').str.upper() == status_filter.upper()
                 ]
             if customer_orders.empty:
-                return f"No orders found for '{customer_id}' with status '{status_filter}'"
+                return f"No orders found for '{display_name}' with status '{status_filter}'"
 
-        # 4. Clean Datetime and Setup Sorting
+        # --- 4. CLEANUP AND SORTING ---
         if 'createdAt' in customer_orders.columns:
             customer_orders['createdAt'] = pd.to_datetime(customer_orders['createdAt'], errors='coerce')
             if customer_orders['createdAt'].dt.tz is not None:
@@ -467,6 +627,8 @@ def get_orders_by_customer(
         for col in ['totalAmount', 'totalQuantity']:
             if col not in customer_orders.columns:
                 customer_orders[col] = 0.0
+            else:
+                customer_orders[col] = pd.to_numeric(customer_orders[col], errors='coerce').fillna(0.0)
 
         sort_mapping = {
             'Date': 'createdAt',
@@ -477,26 +639,11 @@ def get_orders_by_customer(
         
         customer_orders = customer_orders.sort_values(by=sort_col, ascending=is_ascending)
 
-        # 5. Generate Summary Header
+        # --- 5. GENERATE SUMMARY HEADER ---
         total_spent = customer_orders['totalAmount'].sum()
         order_count = len(customer_orders)
         aov = total_spent / order_count if order_count > 0 else 0
         
-        # Get customer names (in case the search matched multiple fuzzy names)
-        c_names = []
-        if 'customer_displayedName' in customer_orders.columns:
-            c_names = customer_orders['customer_displayedName'].dropna().unique().tolist()
-        elif 'customer_name' in customer_orders.columns:
-            c_names = customer_orders['customer_name'].dropna().unique().tolist()
-            
-        # Format the Display Name
-        if not c_names:
-            display_name = "Unknown Customer"
-        else:
-            display_name = ", ".join(str(n) for n in c_names[:3])
-            if len(c_names) > 3:
-                display_name += f" (+{len(c_names)-3} more)"
-            
         lines = []
         lines.append(f"## Customer Report: {display_name}")
         lines.append(f"- **Total Orders:** {order_count:,}")
@@ -507,7 +654,7 @@ def get_orders_by_customer(
             
         lines.append(f"\n*(Showing top {min(limit, order_count)} orders | Sorted by: {sort_by} | Order: {sort_order.upper()})*")
         
-        # 6. Build Display Table
+        # --- 6. BUILD DISPLAY TABLE ---
         headers = ["Order ID", "Date", "Status", "Payment", "Qty", "Total ($)"]
         lines.append("\n| " + " | ".join(headers) + " |")
         lines.append("|---|---|---|---|---|---|")
@@ -532,8 +679,7 @@ def get_orders_by_customer(
         return '\n'.join(lines)
 
     except Exception as e:
-        return f"Error processing orders: {str(e)}\n{traceback.format_exc()}"   
-
+        return f"Error processing orders: {str(e)}\n{traceback.format_exc()}"
 # List of tool from customer block agent
 
 @mcp.tool(name="get_stopped_ordering_report")
