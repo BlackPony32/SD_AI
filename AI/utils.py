@@ -568,7 +568,17 @@ def is_data_ready(user_folder: str, entity: str) -> bool:
     print("Data Check: All files are present and fresh!")
     return True
 
-
+from typing import Dict
+ 
+RAW_FILENAME_BY_ENTITY: Dict[str, str] = {
+    "orders": "one_file_orders.csv",
+    "order_products": "one_file_products.csv",
+    "customer": "one_file_customers.csv",
+}
+ 
+ 
+def raw_filename_for(entity: str) -> str:
+    return RAW_FILENAME_BY_ENTITY.get(entity, f"one_file_{entity}.csv")
 
 # MCP logic
 TOPIC_CONFIG = {
