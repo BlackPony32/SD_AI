@@ -859,7 +859,7 @@ class ReportRequest(BaseModel):
         description="What kind of IDs are in `ids` - selects which data-fetch strategy is used.",
     )
     report_type: "ReportType" = Field(
-        default="ReportType.FULL_REPORT",  # keep your existing default/enum here
+        default=ReportType.FULL_REPORT,  # keep your existing default/enum here
         title="Report Type",
         description="Specify which report section to generate. Defaults to the full report.",
     )
@@ -1208,7 +1208,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
     try:
         report_generator = get_report_generator(id_type)
         if id_type == AnalysisIdType.CUSTOMER:
-            print('here')
             sections, full_report = await report_generator.generate(
                 report_type, merged_orders, products_df, customer_df, uuid, start_time
             )

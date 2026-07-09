@@ -73,7 +73,7 @@ class CustomerReportGenerator(BaseReportGenerator):
 
     async def generate(self, report_type, merged_orders, products_df, customer_df, uuid, start_time):
         self.check_supported(report_type)
-        print(f"Step 4 - Before generate report (Type: {report_type.value}): {time.perf_counter() - start_time:.2f}s")
+        print(f"Step 4 - Before generate report (Type: {report_type}): {time.perf_counter() - start_time:.2f}s")
 
         if report_type.value == "full_report":
             return await self._full_report(merged_orders, products_df, customer_df, uuid, start_time)
