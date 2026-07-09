@@ -18,7 +18,7 @@ import pandas as pd
 from AI.utils import get_logger
 import json
 load_dotenv()
-app = FastAPI()
+
 
 logger2 = get_logger("logger2", "project_log_many.log", False)
 
@@ -186,6 +186,116 @@ async def post_get_exported_data_one_file(customer_ids: List[str], entities: Lis
                     raise Exception(f"Failed after retries: {e}")
                 await asyncio.sleep(5 * (2 ** attempt))
     
+async def post_group_orders(order_ids: List[str], entities: List[str] = None) -> dict:
+    """
+    Fetch "sales" export data for a set of order IDs via POST.
+ 
+    Mirrors post_get_exported_data_one_file's contract as closely as the
+    different transport allows: returns {"files": {entity_name: (entity_name, bytes)}}
+    so callers (see fetch_strategies.OrderIdFetchStrategy) can treat it the
+    same way regardless of which fetch function produced it.
+    """
+    entities = entities or ["sales"]
+ 
+    SD_API_URL = os.getenv('SD_API_URL')
+    if not SD_API_URL:
+        raise Exception("SD_API_URL environment variable is not set")
+
+    payload = {
+        "entities": entities,
+        "ids": order_ids,
+    }
+    
+    headers = {
+        "x-api-key": os.getenv('X_API_KEY'),
+        "Content-Type": "application/json",
+    }
+ 
+    async with httpx.AsyncClient() as client:
+        for attempt in range(3):
+            try:
+                response = await client.post(
+                    SD_API_URL, 
+                    json=payload, 
+                    headers=headers
+                )
+ 
+                if response.status_code == 200:
+                    data = response.json()
+                    #print(data)
+                    
+                    file_urls = data.get("fileUrls", {})
+                    
+                    # Download all files concurrently
+                    download_tasks = [
+                        download_file(client, url, entity)
+                        for entity, url in file_urls.items()
+                    ]
+                    file_contents = await asyncio.gather(*download_tasks)
+                    
+                    return {
+                        "files": dict(file_contents)
+                    }
+
+ 
+                elif response.status_code == 429:
+                    await asyncio.sleep(1 * (2 ** attempt))
+ 
+                else:
+                    raise Exception(f"HTTP Error {response.status_code}: {response.text}")
+ 
+            except Exception as e:
+                if attempt == 2:
+                    raise Exception(f"Failed after retries: {e}")
+                await asyncio.sleep(5 * (2 ** attempt))
+
+async def post_group_catalog(catalog_ids: List[str], entities: List[str] = None) -> dict:
+    """
+    Fetch "catalog" export data for a set of catalog IDs via POST.
+    """
+    entities = entities or ["catalog"]
+ 
+    SD_API_URL = os.getenv('SD_API_URL')
+    if not SD_API_URL:
+        raise Exception("SD_API_URL environment variable is not set")
+
+    payload = {
+        "entities": entities,
+        "ids": catalog_ids,
+    }
+    
+    headers = {
+        "x-api-key": os.getenv('X_API_KEY'),
+        "Content-Type": "application/json",
+    }
+ 
+    async with httpx.AsyncClient() as client:
+        for attempt in range(3):
+            try:
+                response = await client.post(
+                    SD_API_URL, 
+                    json=payload, 
+                    headers=headers
+                )
+ 
+                if response.status_code == 200:
+                    data = response.json()
+                    #print(data)
+                    
+                    return data
+
+ 
+                elif response.status_code == 429:
+                    await asyncio.sleep(1 * (2 ** attempt))
+ 
+                else:
+                    raise Exception(f"HTTP Error {response.status_code}: {response.text}")
+ 
+            except Exception as e:
+                if attempt == 2:
+                    raise Exception(f"Failed after retries: {e}")
+                await asyncio.sleep(5 * (2 ** attempt))
+
 
 async def get_exported_data_one_file(customer_ids: List[str], entities: List[str]) -> dict:
     """
@@ -230,5 +340,10 @@ async def get_exported_data_one_file(customer_ids: List[str], entities: List[str
                 await asyncio.sleep(5 * (2 ** attempt))    
 
 if __name__ == '__main__':
-    import uvicorn
-    uvicorn.run(app, port=8080, host='0.0.0.0')
+    # Example usage
+
+    async def main():
+        result = await post_group_catalog('ids', 'entities')
+        print(result)
+    
+    asyncio.run(main())
