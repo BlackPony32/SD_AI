@@ -834,6 +834,11 @@ class ReportType(str, Enum):
     PAYMENT_STATUS_ORDERS = "payment_status_report"
     FULFILLMENT_ORDERS = "fulfillment_report"
     SALES_TRENDS = "sales_trends_report"
+    REVENUE_PROFITABILITY = "revenue_profitability"
+    INVENTORY_HEALTH_FULFILLMENT_EFFICIENCY = "inventory_fulfillment"
+    CROSS_SELL_BUNDLE_ACTIONABILITY = "cross_sell_bundling"
+    BUYER_HEALTH = "buyer_health"
+    TOP_PERFORMER_DEEP_DIVE = "top_performers"
 
 class AnalysisIdType(str, Enum):
     CUSTOMER = "customer"
@@ -1054,62 +1059,55 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
 
 
         if id_type == AnalysisIdType.ORDER or id_type == AnalysisIdType.CUSTOMER:
-                if "customer" in file_paths:
-                    try:
-                        check_if_customer_id_correct = pd.read_csv(file_paths["customer"])
-                        if check_if_customer_id_correct.empty:
-                            logger2.warning(f"Customer data empty for {id_type.value} IDs: {ids}")
-                            return JSONResponse(
-                                status_code=status.HTTP_404_NOT_FOUND,
-                                content={
-                                    "Status": "Failed",
-                                    "Reason": f"Incorrect {id_type.value} IDs provided. No customer data found.",
-                                    "uuid": uuid
-                                }
-                            )
-                    except Exception as e:
-                        logger2.warning(f"Can not check if {id_type.value} ids are valid: {e}")
-
-                # Preprocess data
-                cleaned_paths: Dict[str, str] = {}
-                #orders_check_path = file_paths.get("orders") #TODO check orders and customer report_type for this commented
-
-                if strategy.cleanup_entities and all(e in file_paths for e in strategy.cleanup_entities):
-                    orders_entity, products_entity = strategy.cleanup_entities
-                    full_cleaned_orders, full_cleaned_products = await prepared_big_data(
-                        str(file_paths[orders_entity]),
-                        str(file_paths[products_entity]),
-                    )
-
-                    if full_cleaned_orders.empty:
-                        logger2.warning(
-                            f"prepared_big_data returned an empty orders frame for "
-                            f"id_type={id_type.value}, uuid={uuid}"
+            if "customer" in file_paths:
+                try:
+                    check_if_customer_id_correct = pd.read_csv(file_paths["customer"])
+                    if check_if_customer_id_correct.empty:
+                        logger2.warning(f"Customer data empty for {id_type.value} IDs: {ids}")
+                        return JSONResponse(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            content={
+                                "Status": "Failed",
+                                "Reason": f"Incorrect {id_type.value} IDs provided. No customer data found.",
+                                "uuid": uuid
+                            }
                         )
-
-                    print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
-
-                    cleaned_orders_path = os.path.join(user_folder, 'cleaned_real_big_orders.csv')
-                    cleaned_products_path = os.path.join(user_folder, 'cleaned_real_big_products.csv')
-
-                    await asyncio.gather(
-                        save_df(full_cleaned_orders, str(cleaned_orders_path)),
-                        save_df(full_cleaned_products, str(cleaned_products_path))
+                except Exception as e:
+                    logger2.warning(f"Can not check if {id_type.value} ids are valid: {e}")
+            # Preprocess data
+            cleaned_paths: Dict[str, str] = {}
+            #orders_check_path = file_paths.get("orders") #TODO check orders and customer report_type for this commented
+            if strategy.cleanup_entities and all(e in file_paths for e in strategy.cleanup_entities):
+                orders_entity, products_entity = strategy.cleanup_entities
+                full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+                    str(file_paths[orders_entity]),
+                    str(file_paths[products_entity]),
+                )
+                if full_cleaned_orders.empty:
+                    logger2.warning(
+                        f"prepared_big_data returned an empty orders frame for "
+                        f"id_type={id_type.value}, uuid={uuid}"
                     )
-
-                    cleaned_paths[orders_entity] = cleaned_orders_path
-                    cleaned_paths[products_entity] = cleaned_products_path
-                    orders_check_path = cleaned_orders_path
-                else:
-                    # NEXT STEP: no cleanup_entities configured for this strategy -
-                    # raw fetched files would be used downstream as-is. Hasn't come
-                    # up yet since both current strategies use the same
-                    # ("orders", "order_products") pair; flagging here for when it
-                    # does.
-                    logger2.info(
-                        f"No cleanup step configured/possible for id_type={id_type.value} "
-                        f"(entities={strategy.entities}); skipping prepared_big_data."
-                    )
+                print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
+                cleaned_orders_path = os.path.join(user_folder, 'cleaned_real_big_orders.csv')
+                cleaned_products_path = os.path.join(user_folder, 'cleaned_real_big_products.csv')
+                await asyncio.gather(
+                    save_df(full_cleaned_orders, str(cleaned_orders_path)),
+                    save_df(full_cleaned_products, str(cleaned_products_path))
+                )
+                cleaned_paths[orders_entity] = cleaned_orders_path
+                cleaned_paths[products_entity] = cleaned_products_path
+                orders_check_path = cleaned_orders_path
+            else:
+                # NEXT STEP: no cleanup_entities configured for this strategy -
+                # raw fetched files would be used downstream as-is. Hasn't come
+                # up yet since both current strategies use the same
+                # ("orders", "order_products") pair; flagging here for when it
+                # does.
+                logger2.info(
+                    f"No cleanup step configured/possible for id_type={id_type.value} "
+                    f"(entities={strategy.entities}); skipping prepared_big_data."
+                )
     except Exception as e:
         logger2.error(f"Data processing error: {e}")
 
@@ -1203,7 +1201,44 @@ and ask AI agent for help with platform navigation and order creation, or you ca
                         })
     else:
         # cleaning catalog case
-        pass
+        print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
+        raw_orders_path = os.path.join("data", distributor_id,"work_data_folder" ,"raw_file_orders.csv")
+        raw_products_path = os.path.join("data", distributor_id, "work_data_folder", "raw_file_order_products.csv")
+        full_cleaned_orders, full_cleaned_products = await prepared_big_data(
+                str(raw_orders_path), 
+                str(raw_products_path)
+        )
+        
+        catalog_path = os.path.join("data", distributor_id, "work_data_folder", "raw_file_catalog.csv")
+        catalog_df, catalog_path = await get_cleaned_catalog(str(catalog_path))
+
+        print(f"Step 2.1 - Catalog preprocessing completed: {time.perf_counter() - start_time:.2f}s")
+        # Save cleaned data concurrently
+        cleaned_orders_path =  os.path.join('data', distributor_id,  'cleaned_orders.csv') 
+        cleaned_products_path =  os.path.join('data', distributor_id,  'cleaned_products.csv')
+        cleaned_catalog_path = os.path.join('data', distributor_id,  'cleaned_catalog.csv')
+
+        await asyncio.gather(
+            save_df(full_cleaned_orders, str(cleaned_orders_path)),
+            save_df(full_cleaned_products, str(cleaned_products_path)),
+            save_df(catalog_df, str(cleaned_catalog_path))
+        )
+        # check if orders empty - custom output how to create a new order if there is no data to analyze
+        if full_cleaned_orders.empty:
+            logger2.info("Orders data is empty after processing (no data rows found).")
+            message = """The report cannot be generated based on empty data (No valid orders found). \n
+You can create a new order to start analyzing your data - check this guide: [How to Create and Process a New Direct Order](https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents)\n
+and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: [Schedule a Meeting](https://meetings.hubspot.com/john-vasylets/customers)\n
+"""
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={
+                    "error": "empty_data",
+                    "message": message,
+                    "distributor_id": distributor_id # Passing back the ID as requested
+                }
+            )
+    
 
     try:
         report_generator = get_report_generator(id_type)
@@ -1211,9 +1246,15 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             sections, full_report = await report_generator.generate(
                 report_type, merged_orders, products_df, customer_df, uuid, start_time
             )
-        else:
+        elif id_type == AnalysisIdType.ORDER:
             sections, full_report = await report_generator.generate(
                 report_type, cleaned_orders_path, cleaned_products_path, uuid, start_time
+            )
+            #print(sections.get(report_type, "No section generated for this report type."))
+        else:  # id_type == AnalysisIdType.CATALOG
+            selected_catalog_path = os.path.join('data', distributor_id, 'work_data_folder', 'raw_file_selected_catalog.csv')
+            sections, full_report = await report_generator.generate(
+                report_type, selected_catalog_path, cleaned_orders_path, cleaned_products_path, cleaned_catalog_path, uuid, start_time
             )
             #print(sections.get(report_type, "No section generated for this report type."))
         return JSONResponse(
@@ -1284,7 +1325,7 @@ async def create_mcp_reports(request: MCPRequest = Body(...)):
 
 
         should_download_files = is_data_ready(distributor_id, entity)
-        print(should_download_files)
+        #print(should_download_files)
 
         if not should_download_files: #if not should_download_files:
             try:
