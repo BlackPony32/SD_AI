@@ -403,9 +403,9 @@ def _top_customers_report(orders_path, customers_path, products_path) -> list:
             return ["Can not generate report: there is not enough data."]
              
         df_products_linked = df_products.merge(
-            df_orders_merged[['customer_id', 'CustomerName']], 
+            df_orders_merged[['id', 'CustomerName']],   # 'id' = order's own PK
             left_on='orderId', 
-            right_on='customer_id', 
+            right_on='id', 
             how='left'
         )
 
@@ -2373,10 +2373,10 @@ async def main():
         products_path="data\\FULL_DIST_TEST\\cleaned_products.csv",
         customers_path="data\\FULL_DIST_TEST\\cleaned_customers.csv",
         catalog_path="data\\FULL_DIST_TEST\\cleaned_catalog.csv",
-        agent_type="orders_agent",
-        report_type="discount_report"
+        agent_type="customers_agent",
+        report_type="refined_opportunity_report"
     )
-    print(report.get("sections", "No full report generated.").get("discount_report", "Report section not found."))
+    print(report.get("sections", "No full report generated.").get("refined_opportunity_report", "Report section not found."))
 
 
 if __name__ == "__main__":
