@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-
+from AI.utils import is_data_ready
 class AnalysisIdType(str, Enum):
     CUSTOMER = "customer"
     ORDER = "order"
@@ -173,27 +173,37 @@ class CatalogIdFetchStrategy(BaseDataFetchStrategy):
         from AI.MCP_tools.get_SD_data import get_distributor_data, handle_distributor_data
         
         catalog_data = await post_group_catalog(ids, ["catalog"])
-        
+        should_download_files = is_data_ready(distributor_id, "catalog")
 
         try:
-            # --- STEP 1: FETCH DATA ---
-            timeout_config = httpx.Timeout(5.0, read=120.0)
-            async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
-                fetch_tasks = [
-                    get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
-                    get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
-                ]
-                all_orders_data, all_products_data = await asyncio.gather(*fetch_tasks)
+            if not should_download_files:
+                # --- STEP 1: FETCH DATA ---
+                timeout_config = httpx.Timeout(5.0, read=120.0)
+                async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
+                    fetch_tasks = [
+                        get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
+                        get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client),
+                    ]
+                    all_orders_data, all_products_data, all_catalog_data = await asyncio.gather(*fetch_tasks)
 
-            # --- STEP 2: DOWNLOAD FILES ---
-            print(catalog_data)
-            async with aiohttp.ClientSession() as download_session:
-                handle_tasks = [
-                    handle_distributor_data(all_orders_data, "orders", distributor_id, download_session),
-                    handle_distributor_data(all_products_data, "order_products", distributor_id, download_session),
-                    handle_distributor_data(catalog_data, "catalog", distributor_id, download_session),
-                ]
-                await asyncio.gather(*handle_tasks)
+                # --- STEP 2: DOWNLOAD FILES ---
+                #print(catalog_data)
+                async with aiohttp.ClientSession() as download_session:
+                    handle_tasks = [
+                        handle_distributor_data(all_orders_data, "orders", distributor_id, download_session),
+                        handle_distributor_data(all_products_data, "order_products", distributor_id, download_session),
+                        handle_distributor_data(all_catalog_data, "catalog", distributor_id, download_session),
+                        handle_distributor_data(catalog_data, "selected_catalog", distributor_id, download_session),
+                    ]
+                    await asyncio.gather(*handle_tasks)
+            else:
+                #case when full data is OK but need new catalog analysis:
+                async with aiohttp.ClientSession() as download_session:
+                    handle_tasks = [
+                        handle_distributor_data(catalog_data, "selected_catalog", distributor_id, download_session)
+                    ]
+                    await asyncio.gather(*handle_tasks)
 
         except Exception as e:
             error_msg = str(e)
