@@ -88,7 +88,7 @@ CUSTOMER_TOOLS_LIST = [
 
 CATALOG_TOOLS_LIST = [
     "get_top_n_products",
-    "get_product_catalog",
+    "search_product_catalog",
     "get_product_details",
     "get_product_price",
     "get_catalog_main_info",

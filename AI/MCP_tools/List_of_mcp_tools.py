@@ -2598,97 +2598,327 @@ def get_top_n_products(
     except Exception as e:
         return f"Error processing products report: {str(e)}\n{traceback.format_exc()}"
 
-
-@mcp.tool(name="get_product_catalog")
-@log_tool_usage
-def get_product_catalog(user_id: str) -> str:
+def _narrow(combos, column, value, label, filters, notes, sku_mode=False):
     """
-    Returns lists of unique product attributes with detailed variants.
-    Reads strictly from the active catalog file and correctly maps parent 
-    attributes (manufacturer, category, name) down to child variants.
+    Apply one filter step, but skip it (with an explanatory note) if a prior
+    filter already narrowed the working set to zero rows - avoids firing a
+    misleading "no match found for X" against results that were already empty
+    for an unrelated reason.
+    """
+    if combos.empty:
+        notes.append(
+            f"Skipped {label} filter ('{value}') because earlier filters already "
+            f"narrowed results to zero matches."
+        )
+        return combos
+    return apply_filter(combos, column, value, label, filters, notes, sku_mode=sku_mode)
+
+def fuzzy_blob_search(
+    df: pd.DataFrame,
+    query: str,
+    columns=("manufacturerName", "productCategoryName", "name", "sku"),
+    score_cutoff: int = 75,
+    limit: int = 15,
+):
+    """
+    Free-text search across a combined text blob built from `columns`, joined
+    per row. Splits the query into individual words and scores each row by the
+    average of each query word's best per-token match anywhere in that row's
+    combined text - so word order doesn't matter and the query doesn't need to
+    map cleanly onto a single field.
+ 
+    Returns (matched_df, notes):
+      - matched_df: rows with a "match_score" column, sorted descending (may
+        be more than one row - this is a *search*, not a single resolved
+        value, so ties and near-ties are all surfaced rather than forced to
+        pick one).
+      - notes: a one-line summary of what matched, or why nothing did.
+    """
+    if df.empty or not query:
+        return df.iloc[0:0], []
+ 
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return df.iloc[0:0], []
+ 
+    working = df.copy()
+    present_cols = [c for c in columns if c in working.columns]
+    working["_blob"] = working[present_cols].fillna("").astype(str).agg(" ".join, axis=1)
+    working["match_score"] = working["_blob"].apply(
+        lambda blob: _token_overlap_score(query_tokens, _tokenize(blob))
+    )
+    working = working.drop(columns=["_blob"])
+ 
+    matched = working[working["match_score"] >= score_cutoff].sort_values(
+        "match_score", ascending=False
+    ).head(limit)
+ 
+    if matched.empty:
+        return df.iloc[0:0], [
+            f"No catalog entries matched free-text search '{query}' "
+            f"(searched name/sku/category/manufacturer combined, per-word fuzzy matching)."
+        ]
+ 
+    top_score = matched["match_score"].iloc[0]
+    note = (
+        f"Free-text search '{query}' matched {len(matched)} catalog entrie(s) "
+        f"(best match {top_score:.0f}%)."
+    )
+    return matched, [note]
+ 
+def resolve_value(
+    user_input: str,
+    choices: list,
+    score_cutoff: int = 80,
+    ambiguity_gap: int = 5,
+):
+    """
+    Try to resolve `user_input` to the closest value in `choices`.
+ 
+    Returns a tuple: (resolved_value, note, ambiguous_candidates)
+      - resolved_value: the best matching choice, or None if nothing cleared the cutoff
+                         or the match was ambiguous.
+      - note: human-readable string describing the substitution, or None if the
+              match was exact (case-insensitive) and needs no explanation.
+      - ambiguous_candidates: list of near-tied candidate values (empty if not ambiguous).
+    """
+    if not choices:
+        return None, None, []
+ 
+    matches = process.extract(
+        user_input, choices, scorer=fuzz.WRatio, limit=3, score_cutoff=score_cutoff
+    )
+    if not matches:
+        return None, None, []
+ 
+    top_value, top_score, _ = matches[0]
+    close = [m for m in matches if top_score - m[1] <= ambiguity_gap]
+ 
+    if len(close) > 1:
+        # Too close to call - don't guess, ask instead.
+        return None, None, [m[0] for m in close]
+ 
+    note = None
+    if top_value.strip().lower() != user_input.strip().lower():
+        note = f"No exact match for '{user_input}' — using closest match '{top_value}' ({top_score:.0f}% match)."
+ 
+    return top_value, note, []
+ 
+def _tokenize(text: str) -> list:
+    return [t.strip(",;:") for t in str(text).lower().split() if t.strip(",;:")]
+ 
+ 
+def _token_overlap_score(query_tokens: list, row_tokens: list) -> float:
+    """ 
+    Returns the mean of per-token best scores (0 if row has no tokens).
+    """
+    if not row_tokens:
+        return 0.0
+    scores = []
+    for qt in query_tokens:
+        match = process.extractOne(qt, row_tokens, scorer=fuzz.ratio)
+        scores.append(match[1] if match else 0.0)
+    return sum(scores) / len(scores)
+ 
+def apply_filter(
+    df: pd.DataFrame,
+    column: str,
+    user_value: str,
+    label: str,
+    filters: list,
+    notes: list,
+    sku_mode: bool = False,
+) -> pd.DataFrame:
+    """
+    Filter `df` on `column` matching `user_value`.
+    Tries exact/substring match first; falls back to fuzzy matching against the
+    column's unique values only if the substring match returns nothing.
+ 
+    Note: whether a filter argument was PROVIDED is tracked separately by the
+    caller. This function only determines whether the provided value resolved
+    to anything - it must not be used to infer "no filter was passed".
+    """
+    if column not in df.columns:
+        notes.append(f"Column '{column}' not found in data - skipping {label} filter.")
+        return df
+ 
+    # 1. Exact / substring match first (fast, 100% precise when it hits)
+    exact = df[df[column].fillna("").astype(str).str.contains(user_value, case=False, na=False)]
+    if not exact.empty:
+        filters.append(f"{label}='{user_value}'")
+        return exact
+ 
+    # 2. Fuzzy fallback - only against unique values, not every row
+    cutoff = 92 if sku_mode else 80
+    unique_values = df[column].dropna().astype(str).unique().tolist()
+    resolved, note, ambiguous = resolve_value(user_value, unique_values, score_cutoff=cutoff)
+ 
+    if ambiguous:
+        candidates = ", ".join(f"'{c}'" for c in ambiguous)
+        notes.append(
+            f"'{user_value}' matched multiple {label} values ({candidates}) — "
+            f"please specify which one you meant."
+        )
+        return df.iloc[0:0]  # empty on purpose: force clarification instead of guessing
+ 
+    if resolved is None:
+        # Filter WAS provided, it just didn't match anything - say so explicitly
+        # rather than leaving both `filters` and `notes` empty, which would look
+        # identical to "no filter was ever passed".
+        notes.append(f"No match found for {label}='{user_value}' (checked exact and fuzzy match).")
+        return df.iloc[0:0]
+ 
+    if note:
+        notes.append(note)
+    filters.append(f"{label}='{resolved}'")
+    return df[df[column].fillna("").astype(str).str.contains(resolved, case=False, na=False)]
+
+@mcp.tool(name="search_product_catalog")
+@log_tool_usage
+def search_product_catalog(
+    user_id: str,
+    manufacturer: Optional[str] = None,
+    category: Optional[str] = None,
+    product_name: Optional[str] = None,
+    sku: Optional[str] = None,
+    query: Optional[str] = None,
+) -> str:
+    """
+    Returns lists of unique product attributes with detailed variants from the
+    active catalog. Reads strictly from the catalog file and correctly maps
+    parent attributes (manufacturer, category, name) down to child variants.
+ 
+    Use this to browse "what's in the catalog", to confirm the exact spelling
+    of a name/sku/category/manufacturer, or to narrow down candidates before
+    calling get_product_details.
+ 
+    Args:
+        user_id (str): The user's ID.
+        manufacturer (str): Narrow to this manufacturer (partial match, fuzzy fallback).
+        category (str): Narrow to this category (partial match, fuzzy fallback).
+        product_name (str): Narrow to this product name (partial match, fuzzy fallback).
+        sku (str): Narrow to this SKU (near-exact only; strict fuzzy cutoff, since
+                   near-miss SKUs are usually different products, not typos).
+        query (str): Free-text search fallback for when you are NOT sure which
+                     field a term belongs to, or the term seems to combine more
+                     than one attribute (e.g. a product name plus a variant/SKU
+                     fragment, like "cola hanukkah"). Searches name, sku,
+                     category, and manufacturer together and does not require
+                     the words to be in field order or even in the right field -
+                     use this instead of guessing which structured parameter to
+                     force the phrase into. Can be combined with the structured
+                     filters above (applied as an additional AND narrowing step),
+                     but is most useful on its own.
     """
     catalog_path = Path("data") / str(user_id) / "cleaned_catalog.csv"
-    
+ 
     if not catalog_path.exists():
         return f"Error: Catalog file not found for user {user_id}."
-    
+ 
     try:
         # 1. Load data safely
-        df_catalog = pd.read_csv(catalog_path, encoding='utf-8-sig')
-        df_catalog.columns = df_catalog.columns.str.strip().str.replace('\ufeff', '')
-        
+        df_catalog = pd.read_csv(catalog_path, encoding="utf-8-sig")
+        df_catalog.columns = df_catalog.columns.str.strip().str.replace("\ufeff", "")
+ 
         # Standardize column names
         rename_map = {
-            'manufacturer_name': 'manufacturerName',
-            'productCategory_name': 'productCategoryName'
+            "manufacturer_name": "manufacturerName",
+            "productCategory_name": "productCategoryName",
         }
         df = df_catalog.rename(columns=rename_map)
-
+ 
         # Ensure required columns exist
-        for col in ['id', 'parentProductId', 'manufacturerName', 'productCategoryName', 'name', 'sku']:
+        for col in ["id", "parentProductId", "manufacturerName", "productCategoryName", "name", "sku"]:
             if col not in df.columns:
                 df[col] = None
-                
+ 
         # 2. Build Parent Inheritance Mapping
-        # Create a dictionary of all items to look up parent attributes
-        parent_map = df.set_index('id')[['manufacturerName', 'productCategoryName', 'name']].to_dict('index')
-
+        parent_map = df.set_index("id")[["manufacturerName", "productCategoryName", "name"]].to_dict("index")
+ 
         def get_inherited_value(row, col_name):
             val = row[col_name]
-            # If the value is missing, check if it has a parent
-            if pd.isna(val) or str(val).strip() == '':
-                pid = row['parentProductId']
+            if pd.isna(val) or str(val).strip() == "":
+                pid = row["parentProductId"]
                 if pd.notna(pid) and pid in parent_map:
                     parent_val = parent_map[pid].get(col_name)
-                    if pd.notna(parent_val) and str(parent_val).strip() != '':
+                    if pd.notna(parent_val) and str(parent_val).strip() != "":
                         return parent_val
             return val
-
-        # Apply inheritance for missing values
-        df['manufacturerName'] = df.apply(lambda r: get_inherited_value(r, 'manufacturerName'), axis=1)
-        df['productCategoryName'] = df.apply(lambda r: get_inherited_value(r, 'productCategoryName'), axis=1)
-        df['name'] = df.apply(lambda r: get_inherited_value(r, 'name'), axis=1)
-
+ 
+        df["manufacturerName"] = df.apply(lambda r: get_inherited_value(r, "manufacturerName"), axis=1)
+        df["productCategoryName"] = df.apply(lambda r: get_inherited_value(r, "productCategoryName"), axis=1)
+        df["name"] = df.apply(lambda r: get_inherited_value(r, "name"), axis=1)
+ 
         # 3. Clean up NaNs
-        df[['manufacturerName', 'productCategoryName', 'name', 'sku']] = df[['manufacturerName', 'productCategoryName', 'name', 'sku']].fillna("Unknown")
-        
-        # 4. Create the product variants list
-        detailed_variants = []
-        unique_combinations = df[['manufacturerName', 'productCategoryName', 'name', 'sku']].drop_duplicates()
-        
-        for _, row in unique_combinations.iterrows():
-            # Skip rows that are completely empty/invalid
-            if row['name'] == "Unknown" and row['sku'] == "Unknown":
-                continue
-                
-            # Formatting as: "manufacturerName: ... productCategoryName: ... name: ... sku: ..."
-            variant_str = (
-                f"manufacturerName: {row['manufacturerName']}, "
-                f"productCategoryName: {row['productCategoryName']}, "
-                f"name: {row['name']}, "
-                f"sku: {row['sku']};"
-            )
-            detailed_variants.append(variant_str)
-
-        # 5. Build clean attribute lists (filtering out the "Unknown" placeholders)
-        mfg_list = sorted([m for m in df['manufacturerName'].astype(str).unique() if m != "Unknown"])
-        cat_list = sorted([c for c in df['productCategoryName'].astype(str).unique() if c != "Unknown"])
-        name_list = sorted([n for n in df['name'].astype(str).unique() if n != "Unknown"])
-        sku_list = sorted([s for s in df['sku'].astype(str).unique() if s != "Unknown"])
-
-        # 6. Build the catalog dictionary
-        catalog = {
-            "all_product_variants": sorted(detailed_variants),
-            "all_product_names": name_list,
-            "all_skus": sku_list,
-            "all_categories": cat_list,
-            "all_manufacturers": mfg_list
-        }
-        
-        return json.dumps(catalog, indent=2)
-        
-    except Exception as e: 
+        df[["manufacturerName", "productCategoryName", "name", "sku"]] = df[
+            ["manufacturerName", "productCategoryName", "name", "sku"]
+        ].fillna("Unknown")
+ 
+    except Exception as e:
         return f"Error reading catalog data: {str(e)}\n{traceback.format_exc()}"
+ 
+    # 4. Build the browsable unique-combination table (post-inheritance)
+    combos = df[["manufacturerName", "productCategoryName", "name", "sku"]].drop_duplicates()
+    combos = combos[~((combos["name"] == "Unknown") & (combos["sku"] == "Unknown"))]
+ 
+    # 5. Free-text search first (if given) - broad recall across all fields combined
+    filters: list = []
+    notes: list = []
+ 
+    if query:
+        combos, query_notes = fuzzy_blob_search(combos, query)
+        notes.extend(query_notes)
+        if query_notes:
+            filters.append(f"Query='{query}'")
+ 
+    # 6. Apply structured narrowing filters on top (exact -> fuzzy fallback,
+    if manufacturer:
+        combos = _narrow(combos, "manufacturerName", manufacturer, "Manufacturer", filters, notes)
+    if category:
+        combos = _narrow(combos, "productCategoryName", category, "Category", filters, notes)
+    if product_name:
+        combos = _narrow(combos, "name", product_name, "Name", filters, notes)
+    if sku:
+        combos = _narrow(combos, "sku", sku, "SKU", filters, notes, sku_mode=True)
+ 
+    # 7. Build clean attribute lists from the (possibly narrowed) combos
+    has_scores = "match_score" in combos.columns
+ 
+    def _variant_line(row):
+        base = (
+            f"manufacturerName: {row.manufacturerName}, "
+            f"productCategoryName: {row.productCategoryName}, "
+            f"name: {row.name}, "
+            f"sku: {row.sku};"
+        )
+        if has_scores:
+            base = f"[match {row.match_score:.0f}%] " + base
+        return base
+ 
+    if has_scores:
+        # Preserve score-descending order (combos was already sorted by scorein fuzzy_blob_search) 
+        detailed_variants = [_variant_line(row) for row in combos.itertuples()]
+    else:
+        detailed_variants = sorted(_variant_line(row) for row in combos.itertuples())
+ 
+    mfg_list = sorted(m for m in combos["manufacturerName"].astype(str).unique() if m != "Unknown")
+    cat_list = sorted(c for c in combos["productCategoryName"].astype(str).unique() if c != "Unknown")
+    name_list = sorted(n for n in combos["name"].astype(str).unique() if n != "Unknown")
+    sku_list = sorted(s for s in combos["sku"].astype(str).unique() if s != "Unknown")
+ 
+    # 8. Build the response. filters/notes are always present (even when empty)
+    catalog = {
+        "filters_applied": filters,
+        "notes": notes,
+        "total_variants_matched": len(combos),
+        "all_product_variants": detailed_variants,
+        "all_product_names": name_list,
+        "all_skus": sku_list,
+        "all_categories": cat_list,
+        "all_manufacturers": mfg_list,
+    }
+ 
+    return json.dumps(catalog, indent=2)
 
 
 def _generate_product_report(df_to_report: pd.DataFrame, filters: list, period_msg: str, total_stock: int = 0, prices: list = None) -> str:
@@ -2792,28 +3022,124 @@ def _generate_product_report(df_to_report: pd.DataFrame, filters: list, period_m
 
     return '\n'.join(lines)
 
+def resolve_value(
+    user_input: str,
+    choices: list,
+    score_cutoff: int = 80,
+    ambiguity_gap: int = 5,
+):
+    """
+    Try to resolve `user_input` to the closest value in `choices`.
+
+    Returns a tuple: (resolved_value, note, ambiguous_candidates)
+      - resolved_value: the best matching choice, or None if nothing cleared the cutoff
+                         or the match was ambiguous.
+      - note: human-readable string describing the substitution, or None if the
+              match was exact (case-insensitive) and needs no explanation.
+      - ambiguous_candidates: list of near-tied candidate values (empty if not ambiguous).
+    """
+    if not choices:
+        return None, None, []
+
+    matches = process.extract(
+        user_input, choices, scorer=fuzz.WRatio, limit=3, score_cutoff=score_cutoff
+    )
+    if not matches:
+        return None, None, []
+
+    top_value, top_score, _ = matches[0]
+    close = [m for m in matches if top_score - m[1] <= ambiguity_gap]
+
+    if len(close) > 1:
+        # Too close to call - don't guess, ask instead.
+        return None, None, [m[0] for m in close]
+
+    note = None
+    if top_value.strip().lower() != user_input.strip().lower():
+        note = f"No exact match for '{user_input}' — using closest match '{top_value}' ({top_score:.0f}% match)."
+
+    return top_value, note, []
+
+
+def apply_filter(
+    df: pd.DataFrame,
+    column: str,
+    user_value: str,
+    label: str,
+    filters: list,
+    notes: list,
+    sku_mode: bool = False,
+) -> pd.DataFrame:
+    """
+    Filter `df` on `column` matching `user_value`.
+    Tries exact/substring match first; falls back to fuzzy matching against the
+    column's unique values only if the substring match returns nothing.
+
+    Note: whether a filter argument was PROVIDED is tracked separately by the
+    caller (`provided_filters` in get_product_details). This function only
+    determines whether the provided value resolved to anything - it must not
+    be used to infer "no filter was passed".
+    """
+    if column not in df.columns:
+        notes.append(f"Column '{column}' not found in data - skipping {label} filter.")
+        return df
+
+    # 1. Exact / substring match first (fast, 100% precise when it hits)
+    exact = df[df[column].fillna("").str.contains(user_value, case=False, na=False)]
+    if not exact.empty:
+        filters.append(f"{label}='{user_value}'")
+        return exact
+
+    # 2. Fuzzy fallback - only against unique values, not every row
+    cutoff = 92 if sku_mode else 80
+    unique_values = df[column].dropna().unique().tolist()
+    resolved, note, ambiguous = resolve_value(user_value, unique_values, score_cutoff=cutoff)
+
+    if ambiguous:
+        candidates = ", ".join(f"'{c}'" for c in ambiguous)
+        notes.append(
+            f"'{user_value}' matched multiple {label} values ({candidates}) — "
+            f"please specify which one you meant."
+        )
+        return df.iloc[0:0]  # empty on purpose: force clarification instead of guessing
+
+    if resolved is None:
+        notes.append(f"No match found for {label}='{user_value}' (checked exact and fuzzy match).")
+        return df.iloc[0:0]
+
+    if note:
+        notes.append(note)
+    filters.append(f"{label}='{resolved}'")
+    return df[df[column].fillna("").str.contains(resolved, case=False, na=False)]
+
 
 @mcp.tool(name="get_product_details")
 @log_tool_usage
 def get_product_details(
-    user_id: str, 
-    product_name: Optional[str] = None, 
-    sku: Optional[str] = None, 
-    category: Optional[str] = None, 
+    user_id: str,
+    product_name: Optional[str] = None,
+    sku: Optional[str] = None,
+    category: Optional[str] = None,
     manufacturer: Optional[str] = None,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
 ) -> str:
     """
-    Provides a detailed report for specific products, categories, or manufacturers, 
+    Provides a detailed report for specific products, categories, or manufacturers,
     including sales metrics, stock counts, and a list of top customers who purchased them.
+
+    Uses exact/substring matching first. If that finds nothing, falls back to fuzzy
+    matching (typos, plural/singular, minor wording differences) against the known
+    catalog values, and reports when a substitution or ambiguity was involved instead
+    of silently guessing.
 
     Args:
         user_id (str): The user's ID.
-        product_name (str): Filter by product name (partial match).
-        sku (str): Filter by SKU.
-        category (str): Filter by category.
-        manufacturer (str): Filter by manufacturer.
+        product_name (str): Filter by product name (partial match, with fuzzy fallback).
+        sku (str): Filter by SKU (near-exact only; fuzzy fallback uses a strict cutoff
+                   since near-miss SKUs are usually different products, not typos).
+        category (str): Filter by category (partial match, with fuzzy fallback).
+        manufacturer (str): Filter by manufacturer (partial match, with fuzzy fallback).
         start_date (str): 'MM/DD/YYYY'.
         end_date (str): 'MM/DD/YYYY'.
     """
@@ -2821,41 +3147,41 @@ def get_product_details(
     products_path = base_path / "cleaned_products.csv"
     orders_path = base_path / "cleaned_orders.csv"
     catalog_path = base_path / "cleaned_catalog.csv"
-    
+
     if not products_path.exists():
         return f"Error: Products file not found for user {user_id}."
-        
+
     try:
-        df_products = pd.read_csv(products_path, encoding='utf-8-sig')
-        df_products.columns = df_products.columns.str.strip().str.replace('\ufeff', '')
-        
-        if 'createdAt' not in df_products.columns:
-             return "Error: Required column 'createdAt' missing from products data."
-             
+        df_products = pd.read_csv(products_path, encoding="utf-8-sig")
+        df_products.columns = df_products.columns.str.strip().str.replace("\ufeff", "")
+
+        if "createdAt" not in df_products.columns:
+            return "Error: Required column 'createdAt' missing from products data."
+
         # 1. Clean Dates & Timezones safely
-        df_products['createdAt'] = pd.to_datetime(df_products['createdAt'], errors='coerce')
-        if df_products['createdAt'].dt.tz is not None:
-             df_products['createdAt'] = df_products['createdAt'].dt.tz_localize(None)
-        df_products = df_products.dropna(subset=['createdAt'])
-        
+        df_products["createdAt"] = pd.to_datetime(df_products["createdAt"], errors="coerce")
+        if df_products["createdAt"].dt.tz is not None:
+            df_products["createdAt"] = df_products["createdAt"].dt.tz_localize(None)
+        df_products = df_products.dropna(subset=["createdAt"])
+
     except Exception as e:
         return f"Error reading file: {str(e)}\n{traceback.format_exc()}"
 
     # 2. Time Filtering (MM/DD/YYYY)
     period_msg = "All Time"
-    
+
     if start_date:
         try:
             s_dt = pd.to_datetime(start_date)
-            df_products = df_products[df_products['createdAt'] >= s_dt]
+            df_products = df_products[df_products["createdAt"] >= s_dt]
             period_msg = f"From {start_date}"
         except Exception:
             return "Error: Invalid start_date format. Use MM/DD/YYYY."
-            
+
     if end_date:
         try:
             e_dt = pd.to_datetime(end_date).replace(hour=23, minute=59, second=59)
-            df_products = df_products[df_products['createdAt'] <= e_dt]
+            df_products = df_products[df_products["createdAt"] <= e_dt]
             if start_date:
                 period_msg += f" To {end_date}"
             else:
@@ -2866,66 +3192,130 @@ def get_product_details(
     if df_products.empty:
         return f"No sales data found for the period: {period_msg}"
 
-    # 3. Attribute Filtering
-    filters = []
-    filtered_df = df_products.copy()
-
-    if product_name and 'name' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['name'].fillna('').str.contains(product_name, case=False, na=False)]
-        filters.append(f"Name='{product_name}'")
-        
-    if sku and 'sku' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['sku'].fillna('').str.contains(sku, case=False, na=False)]
-        filters.append(f"SKU='{sku}'")
-        
-    if category and 'productCategoryName' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['productCategoryName'].fillna('').str.contains(category, case=False, na=False)]
-        filters.append(f"Category='{category}'")
-        
-    if manufacturer and 'manufacturerName' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['manufacturerName'].fillna('').str.contains(manufacturer, case=False, na=False)]
-        filters.append(f"Brand='{manufacturer}'")
-
-    if not filters:
+    # 3. Attribute Filtering (exact match first, fuzzy fallback second)
+    provided_filters = {
+        "product_name": product_name,
+        "sku": sku,
+        "category": category,
+        "manufacturer": manufacturer,
+    }
+    if not any(provided_filters.values()):
         return "Error: Please provide at least one filter (name, sku, category, or manufacturer)."
 
-    if filtered_df.empty:
-        return f"No products found matching: {', '.join(filters)} ({period_msg})"
+    filters: list = []
+    notes: list = []
+    filtered_df = df_products.copy()
 
-    # 4. Extract Real Catalog Data (Stock & Pricing)
+    if product_name:
+        filtered_df = apply_filter(
+            filtered_df, "name", product_name, "Name", filters, notes
+        )
+
+    if sku:
+        filtered_df = apply_filter(
+            filtered_df, "sku", sku, "SKU", filters, notes, sku_mode=True
+        )
+
+    if category:
+        filtered_df = apply_filter(
+            filtered_df, "productCategoryName", category, "Category", filters, notes
+        )
+
+    if manufacturer:
+        filtered_df = apply_filter(
+            filtered_df, "manufacturerName", manufacturer, "Brand", filters, notes
+        )
+
+    if filtered_df.empty:
+        if notes:
+            return "\n".join(notes)
+        return f"No products found matching the given filters ({period_msg})"
+
+
     total_stock = 0
     prices = []
+    df_cat = pd.DataFrame()
+
     if catalog_path.exists():
         try:
-            df_cat = pd.read_csv(catalog_path, encoding='utf-8-sig')
-            df_cat.columns = df_cat.columns.str.strip().str.replace('\ufeff', '')
-            
-            # Find unique product IDs matching our current filter
-            matched_pids = filtered_df['productId'].dropna().unique()
-            matched_cat = df_cat[df_cat['id'].isin(matched_pids)]
-            
-            # Sum up all inventory for these variants
-            total_stock = pd.to_numeric(matched_cat.get('inventory_onHand', 0), errors='coerce').fillna(0).sum()
-            
-            # Get unique wholesale prices for these variants
-            prices = pd.to_numeric(matched_cat.get('wholesalePrice', 0), errors='coerce').dropna().unique().tolist()
+            df_cat = pd.read_csv(catalog_path, encoding="utf-8-sig")
+            df_cat.columns = df_cat.columns.str.strip().str.replace("\ufeff", "")
         except Exception:
-            pass # Fails gracefully if catalog is malformed, leaving stock at 0
+            df_cat = pd.DataFrame()  # fails gracefully; no active-catalog filtering applied below
 
-    # 5. Merge Orders data to get Customer Names
+    if not df_cat.empty and "productId" in filtered_df.columns:
+        active_ids = set(df_cat["id"].dropna())
+
+        has_pid = filtered_df["productId"].notna()
+        is_active = filtered_df["productId"].isin(active_ids)
+
+        # Only drop rows where we KNOW the product is inactive (has a productId that isn't in the current catalog).
+        inactive_mask = has_pid & ~is_active
+        dropped = filtered_df[inactive_mask]
+
+        if not dropped.empty:
+            dropped_names = dropped["name"].dropna().unique().tolist()[:5]
+            dropped_revenue = pd.to_numeric(dropped.get("totalAmount", 0), errors="coerce").fillna(0).sum()
+            dropped_qty = pd.to_numeric(dropped.get("quantity", 0), errors="coerce").fillna(0).sum()
+            names_preview = ", ".join(f"'{n}'" for n in dropped_names)
+            notes.append(
+                f"Excluded {len(dropped)} order line(s) (${dropped_revenue:,.2f}, {int(dropped_qty)} units) "
+                f"for product(s) no longer in the active catalog: {names_preview}."
+            )
+
+        filtered_df = filtered_df[~inactive_mask]
+
+    if filtered_df.empty:
+        if notes:
+            return "\n".join(notes)
+        return f"No products found matching the given filters ({period_msg})"
+
+    # 5. Extract Real Catalog Data (Stock & Pricing)
+    if not df_cat.empty and "productId" in filtered_df.columns:
+        try:
+            matched_pids = filtered_df["productId"].dropna().unique()
+            matched_cat = df_cat[df_cat["id"].isin(matched_pids)]
+
+            total_stock = pd.to_numeric(
+                matched_cat.get("inventory_onHand", 0), errors="coerce"
+            ).fillna(0).sum()
+
+            prices = (
+                pd.to_numeric(matched_cat.get("wholesalePrice", 0), errors="coerce")
+                .dropna()
+                .unique()
+                .tolist()
+            )
+        except Exception:
+            pass  # Fails gracefully if catalog is malformed, leaving stock at 0
+
+    # 6. Merge Orders data to get Customer Names
     if orders_path.exists():
         try:
-            df_orders = pd.read_csv(orders_path, encoding='utf-8-sig', usecols=lambda c: c in ['id', 'customer_name', 'customer_displayedName'])
-            df_orders.columns = df_orders.columns.str.strip().str.replace('\ufeff', '')
-            filtered_df = pd.merge(filtered_df, df_orders, left_on='orderId', right_on='id', how='left')
-        except Exception as e:
-            pass # Fail gracefully if orders can't be loaded, report will just skip the customer section
+            df_orders = pd.read_csv(
+                orders_path,
+                encoding="utf-8-sig",
+                usecols=lambda c: c in ["id", "customer_name", "customer_displayedName"],
+            )
+            df_orders.columns = df_orders.columns.str.strip().str.replace("\ufeff", "")
+            filtered_df = pd.merge(
+                filtered_df, df_orders, left_on="orderId", right_on="id", how="left"
+            )
+        except Exception:
+            pass  # Fail gracefully if orders can't be loaded
 
-    # 6. Generate Report
+    # 7. Generate Report
     try:
-        return _generate_product_report(filtered_df, filters, period_msg, total_stock, prices)
+        report = _generate_product_report(filtered_df, filters, period_msg, total_stock, prices)
     except Exception as e:
-        return f"Error generating report: {str(e)}\n{traceback.format_exc()}"    
+        return f"Error generating report: {str(e)}\n{traceback.format_exc()}"
+
+    # 8. Prepend any fuzzy-match / ambiguity / inactive-product notes so nothing is silent
+    if notes:
+        note_block = "\n".join(f"⚠ {n}" for n in notes)
+        return f"{note_block}\n\n{report}"
+
+    return report  
 
 @mcp.tool(name="get_catalog_main_info")
 @log_tool_usage
