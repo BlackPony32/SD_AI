@@ -1131,14 +1131,24 @@ CRITICAL ENTITY DISCRIMINATION:
 * **`by_type`:** Exact terms only: `'revenue'`, `'quantity'`, or `'orders'`.
 * **`group_by`:** Exact terms only: `'variant'`, `'category'`, or `'manufacturer'`.
 
-### 2. Catalog Validation & Lookup
-**`get_product_catalog(user_id)`**
-* **Purpose:** Returns a comprehensive list of all valid manufacturers, categories, product names, SKUs, and detailed variant combinations. Use this to verify names before running downstream item tools.
+### 2. Catalog Search & Validation
+**`search_product_catalog(user_id, manufacturer=None, category=None, product_name=None, sku=None)`**
+* **Purpose:** Search or browse the active catalog to find valid manufacturers, categories, product names, SKUs, and detailed variant combinations. Use this to verify/discover the exact spelling of a name before running downstream item tools, or to explore what exists in a category/brand.
+* **No filters passed:** returns the full catalog (all manufacturers, categories, names, SKUs, variants).
+* **One or more filters passed:** narrows the results. Multiple filters combine with AND (each further narrows what the previous filter left) — e.g. `manufacturer='coca', category='beverages'` returns only Coca-Cola products in Beverages.
+* **`query`:** Use this instead of `product_name`/`sku` when a search term mixes fragments that could belong to different fields (e.g. "cola hanukkah" — part product name, part SKU/variant), or when you're not confident how to split the term. It fuzzy-matches per-word across name/sku/category/manufacturer combined, so it tolerates typos and doesn't require getting the field assignment right. Prefer this over guessing a structured field when a query has 2+ distinct-looking fragments.
+* Matching is exact/substring first; if that finds nothing, it falls back to fuzzy matching (handles typos, plural/singular, minor wording differences) automatically — you do not need to guess the exact spelling up front.
+* Check the returned `"notes"` field: it reports whenever a fuzzy substitution was applied (e.g. "used closest match 'Coca Cola' for 'coka'"), when a filter matched nothing, or when a filter was ambiguous (multiple close candidates) and needs a more specific value from you.
+* Check `"total_variants_matched"` — if 0, do not proceed to `get_product_details` with those values; read `"notes"` for why and adjust.
+* Do not pass customer names, dates, or free-text queries here — only manufacturer/category/product name/SKU terms.
 
 ### 3. Specific Item Performance & Buyer Lookup
 **`get_product_details(user_id, product_name=None, sku=None, category=None, manufacturer=None, start_date=None, end_date=None)`**
 * **Purpose:** Get detailed sales metrics, price and stock information, AND a list of top buying customers for specific items, categories, or manufacturers. Use this when asked "Who bought this?" or "How is this product doing?".
-* **`product_name`:** Pass only valid item names found in the inventory database catalog lookup. Do not pass customer names here.
+* **`product_name`:** Pass valid item names — ideally ones confirmed via `search_product_catalog` first. Do not pass customer names here.
+* This tool also has its own exact-match-first, fuzzy-fallback matching, so near-correct spellings will often still resolve — but if `search_product_catalog` already flagged an issue (no match / ambiguous), resolve that first rather than guessing here.
+* Check the returned `"notes"`/`⚠` lines in the report: they flag fuzzy substitutions, unmatched filters, and any historical sales excluded because the product is no longer in the active catalog (e.g. discontinued/test SKUs) — factor these into how you present the numbers (e.g. don't report a total that silently dropped data without mentioning it).
+* Recommended flow for ambiguous or unfamiliar item names: call `search_product_catalog` first to confirm the exact value, then call `get_product_details` with that confirmed value.
 
 ### 4. Catalog Health & High-Level Overview
 **`get_catalog_main_info(user_id)`**

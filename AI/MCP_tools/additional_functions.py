@@ -274,8 +274,7 @@ def _opportunity_report(orders_path, customers_path, products_path) -> list:
         
         valid_opps = []
         
-        order_cust_map = df_orders_merged.set_index('customer_id')['CustomerName'].to_dict()
-        
+        order_cust_map = df_orders_merged.set_index('id')['CustomerName'].to_dict()
         # Cache customer inventories
         cust_inv = {}
         for oid, items in basket.items():
@@ -1710,7 +1709,7 @@ def format_customer_insights_md(data: dict) -> str:
     md += f"- **Total Paid Orders:** {m['total_orders']:,} orders\n"
     md += f"- **Average Purchase Size:** {m['avg_units_per_order']:,.1f} units per order\n"
     md += f"- **Average Spend Per Order:** ${m['avg_spend_per_order']:,.2f}\n"
-    md += "> *Logic Note: Strictly filtered to PAID/PARTIALLY_PAID orders.*\n\n"
+    md += "> *Logic Note: Strictly filtered to PAID/PARTIALLY PAID orders.*\n\n"
     
     md += "#### Dynamic Order Size Distribution\n"
     md += "| Purchase Size Bracket | Total Orders | % of Total Orders |\n|---|---|---|\n"
@@ -2374,9 +2373,9 @@ async def main():
         customers_path="data\\FULL_DIST_TEST\\cleaned_customers.csv",
         catalog_path="data\\FULL_DIST_TEST\\cleaned_catalog.csv",
         agent_type="customers_agent",
-        report_type="refined_opportunity_report"
+        report_type="visits_report"
     )
-    print(report.get("sections", "No full report generated.").get("refined_opportunity_report", "Report section not found."))
+    print(report.get("sections", "No full report generated.").get("visits_report", "Report section not found."))
 
 
 if __name__ == "__main__":
