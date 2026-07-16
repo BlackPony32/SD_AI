@@ -853,7 +853,7 @@ async def main_batch_orders_process(
 
     except Exception as e:
         # Global fallback for unexpected errors (e.g., missing files, memory issues, dict errors)
-        logger2.error(f"Critical error in main_batch_process for UUID {uuid}: {str(e)}", exc_info=True)
+        logger2.error(f"Critical error in main_batch_orders_process for UUID {uuid}: {str(e)}", exc_info=True)
         
         user_friendly_error = (
             "We encountered an unexpected error while generating your complete report. "
