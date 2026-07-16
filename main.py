@@ -1200,7 +1200,7 @@ and ask AI agent for help with platform navigation and order creation, or you ca
                             "uuid": uuid
                         })
     else:
-        # cleaning catalog case
+        # cleaning catalog case #TODO
         print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
         raw_orders_path = os.path.join("data", distributor_id,"work_data_folder" ,"raw_file_orders.csv")
         raw_products_path = os.path.join("data", distributor_id, "work_data_folder", "raw_file_order_products.csv")

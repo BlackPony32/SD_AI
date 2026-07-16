@@ -1,0 +1,66 @@
+2026-07-15 20:22:16,028 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'orders' took 6.59s
+2026-07-15 20:22:16,029 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'catalog' took 6.59s
+2026-07-15 20:22:16,068 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'customers' took 6.63s
+2026-07-15 20:22:20,606 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'order_products' took 11.17s
+2026-07-15 20:22:21,436 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_catalog.csv
+2026-07-15 20:22:21,436 - INFO - Successfully saved 1 file(s) for catalog.
+2026-07-15 20:22:21,496 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_orders.csv
+2026-07-15 20:22:21,496 - INFO - Successfully saved 1 file(s) for orders.
+2026-07-15 20:22:21,585 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_customers.csv
+2026-07-15 20:22:21,585 - INFO - Successfully saved 1 file(s) for customers.
+2026-07-15 20:22:22,051 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_order_products.csv
+2026-07-15 20:22:22,051 - INFO - Successfully saved 1 file(s) for order_products.
+2026-07-15 20:22:22,061 - INFO - Loaded orders CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_orders.csv
+2026-07-15 20:22:22,201 - INFO - Loaded products CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_order_products.csv
+2026-07-15 20:22:22,344 - INFO - Dates processed successfully
+2026-07-15 20:22:22,345 - INFO - Statuses standardized successfully
+2026-07-15 20:22:22,346 - INFO - Filtered orders, remaining: 843
+2026-07-15 20:22:22,347 - INFO - Financial columns cleaned successfully
+2026-07-15 20:22:22,351 - INFO - SKUs and quantities cleaned successfully
+2026-07-15 20:22:22,352 - INFO - Prices cleaned successfully
+2026-07-15 20:22:22,368 - INFO - Loaded customers CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_customers.csv
+2026-07-15 20:22:22,798 - INFO - Starting batch process: data\97035e9e-6063-4f8a-8913-225b7a1febf8\cleaned_orders.csv, data\97035e9e-6063-4f8a-8913-225b7a1febf8\cleaned_products.csv, data\97035e9e-6063-4f8a-8913-225b7a1febf8\cleaned_customers.csv, data\97035e9e-6063-4f8a-8913-225b7a1febf8\cleaned_catalog.csv, 97035e9e-6063-4f8a-8913-225b7a1febf8, orders_agent, None
+2026-07-15 20:22:22,798 - INFO - Starting 7 topics...
+2026-07-15 20:22:25,746 - INFO - Tool 'mcp_get_prepared_statistics' called 
+2026-07-15 20:22:25,746 - INFO - Successfully read statistics from data/97035e9e-6063-4f8a-8913-225b7a1febf8/full_report_test.md
+2026-07-16 12:08:03,164 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'orders' took 2.83s
+2026-07-16 12:08:03,891 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'catalog' took 3.55s
+2026-07-16 12:08:08,137 - INFO - API Fetch 97035e9e-6063-4f8a-8913-225b7a1febf8 OK: 'order_products' took 7.80s
+2026-07-16 12:08:08,406 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_selected_catalog.csv
+2026-07-16 12:08:08,406 - INFO - Successfully saved 1 file(s) for selected_catalog.
+2026-07-16 12:08:08,925 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_catalog.csv
+2026-07-16 12:08:08,925 - INFO - Successfully saved 1 file(s) for catalog.
+2026-07-16 12:08:08,984 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_orders.csv
+2026-07-16 12:08:08,985 - INFO - Successfully saved 1 file(s) for orders.
+2026-07-16 12:08:09,459 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_order_products.csv
+2026-07-16 12:08:09,460 - INFO - Successfully saved 1 file(s) for order_products.
+2026-07-16 12:08:09,471 - INFO - Loaded orders CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_orders.csv
+2026-07-16 12:08:09,651 - INFO - Loaded products CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_order_products.csv
+2026-07-16 12:08:09,799 - INFO - Dates processed successfully
+2026-07-16 12:08:09,800 - INFO - Statuses standardized successfully
+2026-07-16 12:08:09,801 - INFO - Filtered orders, remaining: 847
+2026-07-16 12:08:09,802 - INFO - Financial columns cleaned successfully
+2026-07-16 12:08:09,805 - INFO - SKUs and quantities cleaned successfully
+2026-07-16 12:08:09,806 - INFO - Prices cleaned successfully
+2026-07-16 12:08:10,189 - INFO - [Revenue & Profitability Report] Generated OK — 1 product(s), 68 order line(s), net billed=460.10
+2026-07-16 12:08:33,555 - INFO - [Revenue & Profitability Report] Generated OK — 1 product(s), 68 order line(s), net billed=460.10
+2026-07-16 12:08:33,589 - INFO - [Top Performer Deep Dive] Generated OK — winner='kiwi (3)' out of 1 candidate(s), net collected=320.10
+2026-07-16 12:08:33,592 - INFO - [Buyer Health] Generated OK — 7 customer(s), 0 at risk, outstanding=140.00
+2026-07-16 12:08:33,612 - INFO - [Inventory Health & Fulfillment Efficiency] Generated OK — 1 product(s), 68 relevant orders, 67 open backlog order(s)
+2026-07-16 12:08:33,657 - INFO - [Cross-Sell & Bundle Actionability] Generated OK — 1 selected product(s), 68 focal orders, 500 candidate(s) found, 1538 active product(s) in full catalog, 1 excluded as inactive
+2026-07-16 12:09:27,069 - INFO - Successfully saved: data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_selected_catalog.csv
+2026-07-16 12:09:27,070 - INFO - Successfully saved 1 file(s) for selected_catalog.
+2026-07-16 12:09:27,078 - INFO - Loaded orders CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_orders.csv
+2026-07-16 12:09:27,227 - INFO - Loaded products CSV from data\97035e9e-6063-4f8a-8913-225b7a1febf8\work_data_folder\raw_file_order_products.csv
+2026-07-16 12:09:27,377 - INFO - Dates processed successfully
+2026-07-16 12:09:27,378 - INFO - Statuses standardized successfully
+2026-07-16 12:09:27,379 - INFO - Filtered orders, remaining: 847
+2026-07-16 12:09:27,380 - INFO - Financial columns cleaned successfully
+2026-07-16 12:09:27,383 - INFO - SKUs and quantities cleaned successfully
+2026-07-16 12:09:27,383 - INFO - Prices cleaned successfully
+2026-07-16 12:09:27,755 - INFO - [Revenue & Profitability Report] Generated OK — 1 product(s), 68 order line(s), net billed=460.10
+2026-07-16 12:09:30,811 - INFO - [Revenue & Profitability Report] Generated OK — 1 product(s), 68 order line(s), net billed=460.10
+2026-07-16 12:09:30,822 - INFO - [Inventory Health & Fulfillment Efficiency] Generated OK — 1 product(s), 68 relevant orders, 67 open backlog order(s)
+2026-07-16 12:09:30,847 - INFO - [Buyer Health] Generated OK — 7 customer(s), 0 at risk, outstanding=140.00
+2026-07-16 12:09:30,856 - INFO - [Top Performer Deep Dive] Generated OK — winner='kiwi (3)' out of 1 candidate(s), net collected=320.10
+2026-07-16 12:09:30,906 - INFO - [Cross-Sell & Bundle Actionability] Generated OK — 1 selected product(s), 68 focal orders, 500 candidate(s) found, 1538 active product(s) in full catalog, 1 excluded as inactive

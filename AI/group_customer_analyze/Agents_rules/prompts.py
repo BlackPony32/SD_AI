@@ -1132,7 +1132,7 @@ CRITICAL ENTITY DISCRIMINATION:
 * **`group_by`:** Exact terms only: `'variant'`, `'category'`, or `'manufacturer'`.
 
 ### 2. Catalog Search & Validation
-**`search_product_catalog(user_id, manufacturer=None, category=None, product_name=None, sku=None)`**
+**`search_product_catalog(user_id,query=None, manufacturer=None, category=None, product_name=None, sku=None)`**
 * **Purpose:** Search or browse the active catalog to find valid manufacturers, categories, product names, SKUs, and detailed variant combinations. Use this to verify/discover the exact spelling of a name before running downstream item tools, or to explore what exists in a category/brand.
 * **No filters passed:** returns the full catalog (all manufacturers, categories, names, SKUs, variants).
 * **One or more filters passed:** narrows the results. Multiple filters combine with AND (each further narrows what the previous filter left) — e.g. `manufacturer='coca', category='beverages'` returns only Coca-Cola products in Beverages.
@@ -1140,7 +1140,6 @@ CRITICAL ENTITY DISCRIMINATION:
 * Matching is exact/substring first; if that finds nothing, it falls back to fuzzy matching (handles typos, plural/singular, minor wording differences) automatically — you do not need to guess the exact spelling up front.
 * Check the returned `"notes"` field: it reports whenever a fuzzy substitution was applied (e.g. "used closest match 'Coca Cola' for 'coka'"), when a filter matched nothing, or when a filter was ambiguous (multiple close candidates) and needs a more specific value from you.
 * Check `"total_variants_matched"` — if 0, do not proceed to `get_product_details` with those values; read `"notes"` for why and adjust.
-* Do not pass customer names, dates, or free-text queries here — only manufacturer/category/product name/SKU terms.
 
 ### 3. Specific Item Performance & Buyer Lookup
 **`get_product_details(user_id, product_name=None, sku=None, category=None, manufacturer=None, start_date=None, end_date=None)`**
