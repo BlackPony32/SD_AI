@@ -224,37 +224,17 @@ class SalesReportGenerator(BaseReportGenerator):
     async def _sectioned_topic(self, report_type, cleaned_orders_path, cleaned_products_path, uuid, start_time):
         topic = report_type.value
         try:
-            statistics_of_topic = await group_orders_statistics(
+            full_report, sections = await main_batch_orders_process(
                 orders_path=cleaned_orders_path,
                 products_path=cleaned_products_path,
-                agent_type="orders_agent",
-                report_type=topic
+                uuid=uuid,
+                agent="orders_agent",
+                specific_topic=topic
             )
-            parsed_statistics = statistics_of_topic.get("sections", {}).get(report_type, "Report section not found.")
-
-            agent = await create_agent_sectioned(uuid, topic, parsed_statistics)
-            runner = await Runner.run(agent, input="Based on the data return response")
-            answer = runner.final_output
-
-            sectioned_answer = await combine_sections(topic, parsed_statistics, answer)
-
-            calculate_cost(runner, model="gpt-5.4-mini")
-
-            full_report = await group_orders_statistics(
-                orders_path=cleaned_orders_path,
-                products_path=cleaned_products_path,
-                agent_type="orders_agent",
-                report_type="full_report"
-            )
-
-            async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
-                await f.write(full_report.get('full_report'))
-
-            print("Step 5 - after generate report:", time.perf_counter() - start_time)
-            return sectioned_answer, full_report.get('full_report')
+            return sections, full_report
 
         except Exception as e:
-            logger2.warning(f"The problem of displaying of statistics in the {topic} block: {e}")
+            logger2.warning(f"The problem of displaying of statistics in the 'full_report' block: {e}")
             try:
                 raw_stats = await group_orders_statistics(
                     orders_path=cleaned_orders_path,
@@ -262,13 +242,9 @@ class SalesReportGenerator(BaseReportGenerator):
                     agent_type="orders_agent",
                     report_type="full_report"
                 )
-                parsed_section = raw_stats.get("sections", {}).get(report_type, "Report section not found.")
-                sectioned_report = {topic: parsed_section}
-                full_report = raw_stats.get('full_report', "Full report not found.")
-
-                return sectioned_report, full_report 
+                return raw_stats.get('sections'), raw_stats.get('full_report')
             except Exception as e2:
-                logger2.warning(f"The problem of displaying an alternative version of statistics in the {topic} block: {e2}")
+                logger2.warning(f"The problem of displaying an alternative version of statistics in the 'full_report' block: {e2}")
                 raise
 
 
@@ -317,57 +293,31 @@ class CatalogReportGenerator(BaseReportGenerator):
     async def _sectioned_topic(self, report_type, catalog_path, orders_path, products_path, full_catalog_path, uuid, start_time):
         topic = report_type.value
         try:
-            statistics_of_topic = await group_catalog_statistics(
-                orders_path=orders_path,
-                products_path=products_path,
-                catalog_path=catalog_path,
-                full_catalog_path=full_catalog_path,
-                agent_type="catalog_agent",
-                report_type=topic
-            )
-            parsed_statistics = statistics_of_topic.get("sections", {}).get(report_type, "Report section not found.")
-
-            agent = await create_agent_sectioned(uuid, topic, parsed_statistics)
-            runner = await Runner.run(agent, input="Based on the data return response")
-            answer = runner.final_output
-
-            sectioned_answer = await combine_sections(topic, parsed_statistics, answer)
-
-            calculate_cost(runner, model="gpt-5.4-mini")
-
-            full_report = await group_catalog_statistics(
-                orders_path=orders_path,
-                products_path=products_path,
-                catalog_path=catalog_path,
-                full_catalog_path=full_catalog_path,
-                agent_type="catalog_agent",
-                report_type="full_report"
-            )
-
-            async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
-                await f.write(full_report.get('full_report'))
-
-            print("Step 5 - after generate report:", time.perf_counter() - start_time)
-            return sectioned_answer, full_report.get('full_report')
+            full_report, sections = await main_batch_catalog_process(
+                    catalog_path,
+                    orders_path, 
+                    products_path, 
+                    full_catalog_path,
+                    uuid, 
+                    'catalog_agent', 
+                    specific_topic=topic
+                )
+            return sections, full_report
 
         except Exception as e:
-            logger2.warning(f"The problem of displaying of statistics in the {topic} block: {e}")
+            logger2.warning(f"The problem of displaying of statistics in the 'full_report' block: {e}")
             try:
                 raw_stats = await group_catalog_statistics(
+                    catalog_path=catalog_path,
                     orders_path=orders_path,
                     products_path=products_path,
-                    catalog_path=catalog_path,
                     full_catalog_path=full_catalog_path,
                     agent_type="catalog_agent",
-                    report_type=topic
+                    report_type="full_report"
                 )
-                parsed_section = raw_stats.get("sections", {}).get(report_type, "Report section not found.")
-                sectioned_report = {topic: parsed_section}
-                full_report = raw_stats.get('full_report', "Full report not found.")
-
-                return sectioned_report, full_report 
+                return raw_stats.get('sections'), raw_stats.get('full_report')
             except Exception as e2:
-                logger2.warning(f"The problem of displaying an alternative version of statistics in the {topic} block: {e2}")
+                logger2.warning(f"The problem of displaying an alternative version of statistics in the 'full_report' block: {e2}")
                 raise
 
 _REPORT_GENERATOR_REGISTRY: Dict[AnalysisIdType, Type[BaseReportGenerator]] = {
