@@ -1,6 +1,7 @@
 .env
 data
 project_log.log
+project_log_many.log
 __pycache__
 db
 SD
