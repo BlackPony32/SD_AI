@@ -270,7 +270,7 @@ def _calculate_sales_performance(orders: pd.DataFrame) -> list:
             )
 
         lines_all = [
-            "## Sales Performance Overview - All Customers",
+            "## Sales Performance Overview",
             f"- **Total Revenue:** {usd(total_revenue_all)}",
             f"- **Average Order Value:** {usd(avg_order_value_all)}",
             f"- **Standard Deviation of Order Value:** {usd(std_order_value)}",
@@ -281,7 +281,7 @@ def _calculate_sales_performance(orders: pd.DataFrame) -> list:
         return lines_all
     except Exception as e:
         logger2.warning(f"Error in calculation of Sales Performance: {e}")
-        return ["## Sales Performance Overview - All Customers", f"Error generating section: {e}"]
+        return ["## Sales Performance Overview", f"Error generating section: {e}"]
 
 def _calculate_top_worst_products(orders: pd.DataFrame, products: pd.DataFrame) -> list:
     """Calculates overall top/worst selling products."""
@@ -891,7 +891,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
 
         # Generate report for all customers
         lines_all = [
-            "## Sales Performance Overview - All Customers",
+            "## Sales Performance Overview",
             f"- **Total Revenue:** {usd(total_revenue_all)}",
             f"- **Average Order Value:** {usd(avg_order_value_all)}",
             f"- **Standard Deviation of Order Value:** {usd(std_order_value)}",  # Added metric
