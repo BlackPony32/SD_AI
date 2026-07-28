@@ -4895,6 +4895,353 @@ def get_sales_prospecting_report(
     except Exception as e:
         return f"Error generating prospecting report: {str(e)}\n{traceback.format_exc()}"
 
+
+
+def _mode_or_none(series: pd.Series):
+    """Most frequent non-null value in a Series, or None if there isn't one."""
+    counts = series.dropna().value_counts()
+    return counts.index[0] if not counts.empty else None
+
+
+def _resolve_date_window(start_date, end_date, lookback_days, reference_date, notes):
+    """
+    reference_date = latest activity actually present in the data - used as
+    "today" for lookback_days. Returns (start_dt, end_dt, period_msg); both
+    None means All Time.
+    """
+    if (start_date or end_date) and lookback_days:
+        notes.append(
+            "Both an explicit date range and lookback_days were provided — "
+            "using the explicit start_date/end_date and ignoring lookback_days."
+        )
+        lookback_days = None
+
+    if lookback_days:
+        end_dt = reference_date
+        start_dt = end_dt - pd.Timedelta(days=lookback_days)
+        period_msg = (
+            f"Last {lookback_days} days ({start_dt.date()} to {end_dt.date()}, anchored to "
+            f"the most recent activity in your data: {reference_date.date()})"
+        )
+        return start_dt, end_dt, period_msg
+
+    start_dt = end_dt = None
+    period_msg = "All Time"
+
+    if start_date:
+        start_dt = pd.to_datetime(start_date)
+        period_msg = f"From {start_date}"
+    if end_date:
+        end_dt = pd.to_datetime(end_date).replace(hour=23, minute=59, second=59)
+        period_msg = f"{period_msg} To {end_date}" if start_date else f"Up to {end_date}"
+
+    return start_dt, end_dt, period_msg
+
+
+@mcp.tool(name="get_cross_sell_prospects")
+@log_tool_usage
+def get_cross_sell_prospects(
+    user_id: str,
+    product_name: Optional[str] = None,
+    sku: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    lookback_days: Optional[int] = None,
+    top_n: int = 25,
+    min_category_orders: int = 1,
+    lapsed_threshold_days: int = 60,
+) -> str:
+    """
+    Finds who to offer a given product to, segmented by purchase history:
+
+    - All Time: "New Prospects" (never bought it) and "Previous Buyers"
+      (bought it before) - both shown, nobody excluded.
+    - A specific period (start_date/end_date or lookback_days): anyone who
+      bought the product DURING that period is excluded (they just got it).
+      The rest are split into "New Prospects" (never bought it, ever) and
+      "Reorder Candidates" (bought it before, just not in this period - a
+      win-back/repeat-purchase target).
+
+    Every customer shown also gets a lifecycle tag - "New Customer", "Active",
+    or "Lapsed (Nd)" - based on their overall order history across ALL
+    products, so you can tell a brand-new lead apart from a long-time
+    customer who's gone quiet on everything.
+
+    Args:
+        user_id (str): The user's ID.
+        product_name (str): Product to analyze (partial match, fuzzy fallback).
+        sku (str): Alternative/additional way to pin down the exact product
+                   (near-exact match only). At least one of product_name or
+                   sku must be provided.
+        start_date (str): 'MM/DD/YYYY'. Ignored if lookback_days is given.
+        end_date (str): 'MM/DD/YYYY'. Ignored if lookback_days is given.
+        lookback_days (int): Shortcut for "last N days" (e.g. 30, 60). Anchored
+                              to the most recent activity in the data, not the
+                              real calendar date (see module docstring).
+        top_n (int): Number of customers to return PER section (default 25).
+        min_category_orders (int): Minimum category orders for the New
+                                    Prospects section, to filter out one-off
+                                    noise (default 1 = no filtering).
+        lapsed_threshold_days (int): Days with no purchases of anything before
+                                      a customer is tagged "Lapsed" instead of
+                                      "Active" (default 60).
+    """
+    if not product_name and not sku:
+        return "Error: Please provide product_name and/or sku to identify the product."
+    if top_n <= 0:
+        top_n = 25
+
+    base_path = Path("data") / str(user_id)
+    products_path = base_path / "cleaned_products.csv"
+    orders_path = base_path / "cleaned_orders.csv"
+    catalog_path = base_path / "cleaned_catalog.csv"
+
+    if not products_path.exists():
+        return f"Error: Products file not found for user {user_id}."
+    if not orders_path.exists():
+        return f"Error: Orders file not found for user {user_id} (needed to identify customers)."
+
+    notes: list = []
+    filters: list = []
+
+    # 1. Load & clean products
+    try:
+        df_products = pd.read_csv(products_path, encoding="utf-8-sig")
+        df_products.columns = df_products.columns.str.strip().str.replace("\ufeff", "")
+        df_products["createdAt"] = pd.to_datetime(df_products["createdAt"], errors="coerce")
+        if df_products["createdAt"].dt.tz is not None:
+            df_products["createdAt"] = df_products["createdAt"].dt.tz_localize(None)
+        df_products = df_products.dropna(subset=["createdAt"])
+    except Exception as e:
+        return f"Error reading products file: {str(e)}\n{traceback.format_exc()}"
+
+    # 2. Load just enough of orders to attribute line items to customers
+    try:
+        df_orders = pd.read_csv(
+            orders_path, encoding="utf-8-sig",
+            usecols=lambda c: c in ["id", "customer_id", "customer_name", "customer_displayedName"],
+        )
+        df_orders.columns = df_orders.columns.str.strip().str.replace("\ufeff", "")
+    except Exception as e:
+        return f"Error reading orders file: {str(e)}\n{traceback.format_exc()}"
+
+    df_all = pd.merge(
+        df_products, df_orders, left_on="orderId", right_on="id", how="left", suffixes=("", "_order")
+    )
+    if "customer_id" not in df_all.columns:
+        return "Error: Could not attribute order lines to customers (missing customer_id after merge)."
+
+    reference_date = df_all["createdAt"].max()
+
+    # 3. Resolve the target product across ALL history
+    matched_all = apply_filter(df_all, "name", product_name, "Name", filters, notes) if product_name else df_all
+    if sku:
+        matched_all = apply_filter(matched_all, "sku", sku, "SKU", filters, notes, sku_mode=True)
+
+    if matched_all.empty:
+        if notes:
+            return "\n".join(notes)
+        return "No product found matching the given name/SKU."
+
+    resolved_names = matched_all["name"].dropna().unique().tolist()
+    category_name = _mode_or_none(matched_all["productCategoryName"])
+    manufacturer_name = _mode_or_none(matched_all["manufacturerName"])
+    product_ids = set(matched_all["productId"].dropna().unique())
+
+    unattributed_target = int(matched_all["customer_id"].isna().sum())
+    if unattributed_target:
+        notes.append(
+            f"{unattributed_target} historical order line(s) for this product couldn't be "
+            f"attributed to a customer (missing/unresolved order record) and were ignored "
+            f"when checking purchase history."
+        )
+    matched_all = matched_all[matched_all["customer_id"].notna()]
+    buyer_ids_all = set(matched_all["customer_id"].unique())
+
+    # 4. Sanity-check the product: is it still active / in stock?
+    total_stock = None
+    if catalog_path.exists():
+        try:
+            df_cat = pd.read_csv(catalog_path, encoding="utf-8-sig")
+            df_cat.columns = df_cat.columns.str.strip().str.replace("\ufeff", "")
+            cat_match = df_cat[df_cat["id"].isin(product_ids)]
+            if product_ids and cat_match.empty:
+                notes.append(
+                    f"'{', '.join(resolved_names[:3])}' does not appear in the active catalog "
+                    f"(may be discontinued) — consider whether it should still be recommended."
+                )
+            elif not cat_match.empty:
+                total_stock = pd.to_numeric(
+                    cat_match.get("inventory_onHand", 0), errors="coerce"
+                ).fillna(0).sum()
+                if total_stock <= 0:
+                    notes.append(
+                        f"Current on-hand stock for this product is {int(total_stock)} — "
+                        f"check availability before running outreach."
+                    )
+        except Exception:
+            pass
+
+    # 5. Resolve the analysis window (anchored to data's own latest activity)
+    start_dt, end_dt, period_msg = _resolve_date_window(start_date, end_date, lookback_days, reference_date, notes)
+    is_windowed = start_dt is not None or end_dt is not None
+
+    # 6. Who bought the target product DURING the window vs before it
+    matched_window = matched_all
+    if start_dt is not None:
+        matched_window = matched_window[matched_window["createdAt"] >= start_dt]
+    if end_dt is not None:
+        matched_window = matched_window[matched_window["createdAt"] <= end_dt]
+    in_period_buyer_ids = set(matched_window["customer_id"].unique())
+    prior_buyer_ids = buyer_ids_all - in_period_buyer_ids  # only meaningful when windowed
+
+    if is_windowed and in_period_buyer_ids:
+        notes.append(
+            f"{len(in_period_buyer_ids)} customer(s) already bought this product during "
+            f"{period_msg} and were excluded from the lists below (they just bought it)."
+        )
+
+    # 7. Lifecycle tag - based on ALL products, all time
+    lifetime_orders = df_all.groupby("customer_id")["orderId"].nunique()
+    last_order_overall = df_all.groupby("customer_id")["createdAt"].max()
+
+    def lifecycle_tag(cid):
+        total = lifetime_orders.get(cid, 0)
+        last = last_order_overall.get(cid)
+        if total <= 1:
+            return "New Customer"
+        if pd.notna(last):
+            days_inactive = (reference_date - last).days
+            if days_inactive > lapsed_threshold_days:
+                return f"Lapsed ({days_inactive}d)"
+        return "Active"
+
+    name_cols = [c for c in ["customer_displayedName", "customer_name"] if c in df_all.columns]
+    names_df = (
+        df_all.drop_duplicates("customer_id").set_index("customer_id")[name_cols] if name_cols else None
+    )
+
+    def display_name(cid):
+        if names_df is None or cid not in names_df.index:
+            return cid
+        row = names_df.loc[cid]
+        for col in name_cols:
+            val = row[col] if len(name_cols) > 1 else row
+            if pd.notna(val) and str(val).strip():
+                return val
+        return cid
+
+    # 8. Bucket 1 - New Prospects: never bought this product, ever
+    df_window_pool = df_all
+    if start_dt is not None:
+        df_window_pool = df_window_pool[df_window_pool["createdAt"] >= start_dt]
+    if end_dt is not None:
+        df_window_pool = df_window_pool[df_window_pool["createdAt"] <= end_dt]
+
+    pool = df_window_pool[
+        (df_window_pool["productCategoryName"] == category_name)
+        | (df_window_pool["manufacturerName"] == manufacturer_name)
+    ]
+    pool = pool[~pool["customer_id"].isin(buyer_ids_all) & pool["customer_id"].notna()]
+
+    new_prospects = pd.DataFrame()
+    fallback_used = False
+    if not pool.empty:
+        grouped = pool.groupby("customer_id").agg(
+            spend=("totalAmount", "sum"), orders=("orderId", "nunique")
+        ).reset_index()
+        grouped = grouped[grouped["orders"] >= min_category_orders]
+        new_prospects = grouped
+
+    if new_prospects.empty:
+        fallback_used = True
+        fallback_pool = df_window_pool[
+            ~df_window_pool["customer_id"].isin(buyer_ids_all) & df_window_pool["customer_id"].notna()
+        ]
+        if not fallback_pool.empty:
+            new_prospects = fallback_pool.groupby("customer_id").agg(
+                spend=("totalAmount", "sum"), orders=("orderId", "nunique")
+            ).reset_index()
+            notes.append(
+                f"No customers found with '{category_name}'/'{manufacturer_name}' affinity during "
+                f"{period_msg} — New Prospects below are ranked by overall spend instead."
+            )
+
+    if not new_prospects.empty:
+        new_prospects["display_name"] = new_prospects["customer_id"].apply(display_name)
+        new_prospects["lifecycle"] = new_prospects["customer_id"].apply(lifecycle_tag)
+        new_prospects = new_prospects.sort_values(["spend", "orders"], ascending=[False, False])
+
+    # 9. Bucket 2 - Previous Buyers (All Time) / Reorder Candidates (windowed)
+    reorder_candidates = pd.DataFrame()
+    if is_windowed and prior_buyer_ids:
+        prior_df = matched_all[matched_all["customer_id"].isin(prior_buyer_ids)]
+    elif not is_windowed and buyer_ids_all:
+        prior_df = matched_all
+    else:
+        prior_df = None
+
+    if prior_df is not None and not prior_df.empty:
+        reorder_candidates = prior_df.groupby("customer_id").agg(
+            product_spend=("totalAmount", "sum"),
+            product_orders=("orderId", "nunique"),
+            last_target_purchase=("createdAt", "max"),
+        ).reset_index()
+        reorder_candidates["display_name"] = reorder_candidates["customer_id"].apply(display_name)
+        reorder_candidates["lifecycle"] = reorder_candidates["customer_id"].apply(lifecycle_tag)
+        reorder_candidates = reorder_candidates.sort_values("product_spend", ascending=False)
+
+    if new_prospects.empty and reorder_candidates.empty:
+        if notes:
+            return "\n".join(notes)
+        return f"No prospective customers found for the given product and period ({period_msg})."
+
+    # 10. Build the report
+    lines = []
+    title = resolved_names[0] if resolved_names else (product_name or sku)
+    lines.append(f"=== Cross-Sell / Reorder Prospects: {title} ===")
+    lines.append(f"Category: {category_name or 'Unknown'} | Manufacturer: {manufacturer_name or 'Unknown'}")
+    if total_stock is not None:
+        lines.append(f"Current stock on hand: {int(total_stock)} units")
+    lines.append(f"Period analyzed: {period_msg}")
+    lines.append("")
+
+    ranking_basis = "overall spend (fallback)" if fallback_used else f"{category_name} category/brand affinity + spend"
+    lines.append(f"--- New Prospects ({ranking_basis}) ---")
+    if new_prospects.empty:
+        lines.append("(none found)")
+    else:
+        for rank, row in enumerate(new_prospects.head(top_n).itertuples(), start=1):
+            lines.append(
+                f"{rank}. {row.display_name} — ${row.spend:,.2f} across {row.orders} order(s) | "
+                f"Customer status: {row.lifecycle}"
+            )
+    lines.append("")
+
+    section_label = (
+        "Reorder Candidates (bought before, not during this period)" if is_windowed else "Previous Buyers (all time)"
+    )
+    lines.append(f"--- {section_label} ---")
+    if reorder_candidates.empty:
+        lines.append("(none found)")
+    else:
+        for rank, row in enumerate(reorder_candidates.head(top_n).itertuples(), start=1):
+            last_dt = (
+                row.last_target_purchase.strftime("%Y-%m-%d") if pd.notna(row.last_target_purchase) else "Unknown"
+            )
+            lines.append(
+                f"{rank}. {row.display_name} — ${row.product_spend:,.2f} lifetime on this product across "
+                f"{row.product_orders} order(s) | Last bought: {last_dt} | Customer status: {row.lifecycle}"
+            )
+
+    report = "\n".join(lines)
+
+    if notes:
+        note_block = "\n".join(f"⚠ {n}" for n in notes)
+        return f"{note_block}\n\n{report}"
+
+    return report
+
 # FAQ Tool
 
 @mcp.tool(name="look_up_faq")
