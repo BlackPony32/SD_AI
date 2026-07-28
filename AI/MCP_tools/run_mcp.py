@@ -97,7 +97,8 @@ CATALOG_TOOLS_LIST = [
     "get_top_products_customer_insights",
     "get_cross_sell_bundle_report",
     "get_time_based_product_report",
-    "get_sales_prospecting_report"
+    "get_sales_prospecting_report",
+    "get_cross_sell_prospects"
 ]
 
 FAQ_TOOLS_LIST = [
@@ -429,7 +430,7 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                 # --- Handle Text Generation ---
                 if event_type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     delta = event.data.delta or ""
-                    
+                    #print(delta, end="", flush=True)  # Optional: For debugging in console
                     if capturing_json:
                         # Once triggered, NEVER stream to frontend. Quarantine everything.
                         json_buffer += delta
