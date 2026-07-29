@@ -5,7 +5,6 @@ import asyncio
 import aiofiles
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.concurrency import run_in_threadpool
-from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from pathlib import Path
 import time
@@ -66,7 +65,7 @@ async def read_file_async(file_path: str) -> str:
 # New Activities AI block
 from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_activities_single
-llm_model = OpenAIResponsesModel(model='gpt-4.1-mini', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
 async def create_agent_activities_single(USER_ID, notes, tasks, activities) -> Agent:
     """Initializes a new Orders agent and session."""

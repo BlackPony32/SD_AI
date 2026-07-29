@@ -5,7 +5,7 @@ import aiofiles
 import os
 
 from pathlib import Path
-from typing import List, AsyncGenerator, Tuple, Any
+from typing import List, AsyncGenerator, Tuple, Any, Optional
 
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report, prompt_agent_create_sectioned, prompt_for_state_agent
 import pandas as pd
@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger2 = get_logger("logger2", "project_log_many.log", False)
-llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
 import numpy as np
 import faiss
@@ -503,7 +503,6 @@ def get_order_details(user_id: str, order_identifier: str) -> str:
     """
     Gets complete information about an order.
     
-    CRITICAL: This tool performs a 'Smart Search'. You can pass:
     1. The internal 'customId' (e.g., 771657) - PREFERRED.
     2. The system UUID (e.g., 'ab16c21f-e705...')
     3. The Shopify Order ID.
@@ -927,21 +926,31 @@ def get_orders_by_customer(
     except Exception as e:
         return f"Error processing orders: {e}"
 
+from AI.MCP_tools.faq_file_search import init_and_load_md, search_md_db, format_search_results
+
 @function_tool
-def look_up_faq(question: str) -> str:
+def look_up_faq(query: Optional[str]) -> str:
     """
-    Searches the FAQ (Frequently Asked Questions) text file 
+    Searches the FAQ (Frequently Asked Questions) database 
     to find answers to user questions about policies or features.
 
     Args:
-        question: The specific question or topic the user is asking about.
+        query: The specific question or topic the user is asking about.
     """
-    logger2.info(f"Tool 'look_up_faq' called for: {question}")
+    # 1. Provide a fallback if query is None
+    if not query:
+        return "No query provided. Please ask a specific question."
+
+    # 2. Fix the function call to match your search_md_db definition
+    file_to_parse = "AI/group_customer_analyze/Agents_rules/SD_FAQ.md"
+    init_and_load_md(file_to_parse)
     try:
-        return faq_engine.search(question)
-            
+        response = search_md_db(query_text=query, n_results=5)
+        formatted_string = format_search_results(response)
+
+        return formatted_string
     except Exception as e:
-        return f"Error retrieving FAQ: {str(e)}"
+        return f"Database Search Error: {str(e)}"
 
 async def create_Ask_ai_many_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLiteSession]:
     """Initializes a new Inventory agent and session."""
@@ -959,7 +968,14 @@ async def create_Ask_ai_many_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLite
         logger2.error(f"error creating session: {e}")
 
     try:
-        instructions = await prompt_agent_Ask_ai_many(USER_ID)
+        from AI.utils import _is_csv_empty
+        df_path = Path(f"data/{USER_ID}/work_data_folder/cleaned_real_big_orders.csv")
+        if _is_csv_empty(df_path):
+            NEW_USER_BOOL = True
+        else:
+            NEW_USER_BOOL = False
+
+        instructions = await prompt_agent_Ask_ai_many(USER_ID, NEW_USER_BOOL)
         agent = Agent(
             name="Warehouse_Inventory_Assistant",
             instructions=instructions,

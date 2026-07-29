@@ -2,6 +2,12 @@ import logging
 
 import os
 import re
+import asyncio
+import aiofiles
+import pandas as pd
+from pathlib import Path
+import io
+import time
 
 # some util functions
 def extract_customer_id(file_path: str) -> str:
@@ -41,6 +47,21 @@ def calculate_cost(runner, model="gpt-4.1-mini"):
             "input": 2.50,
             "cached_input": 1.25,
             "output": 10.00
+        },
+        "gpt-4.1": {
+            "input": 2.00,
+            "cached_input": 0.5,
+            "output": 8.00
+        },
+        "gpt-5.1": {
+            "input": 1.25,
+            "cached_input": 0.125,
+            "output": 10.00
+        },
+        "gpt-5.4-mini": {
+            "input": 0.75,
+            "cached_input": 0.075,
+            "output": 4.50
         }
     }
 
@@ -452,16 +473,6 @@ async def analyze_customer_orders_async(orders_csv_path, customers_csv_path):
 
 
 # functions list for processing one file many customer data
-import asyncio
-import os
-import aiofiles
-import pandas as pd
-from pathlib import Path
-import asyncio
-import os
-import io
-import time
-
 
 async def save_dataframe_async(df: pd.DataFrame, file_path: str) -> None:
     """Save dataframe asynchronously"""
@@ -500,3 +511,103 @@ async def _process_and_save_file_data(result: dict, file_path: Path) -> None:
         for part in result["files"]["combined"]
     )
     await write_bytes_to_file_async(str(file_path), combined_bytes)
+
+def _is_csv_empty(filepath: str) -> bool:
+    """Returns True if the CSV is 0 bytes or only contains a header row."""
+    # Check if the file is literally 0 bytes
+    if os.path.getsize(filepath) == 0:
+        return True
+        
+    # Open the file and read only the first two lines
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        _ = f.readline() # Read and ignore the header
+        first_data_row = f.readline() # Attempt to read the first actual row of data
+        
+        # If there's no second line, or it's just a blank line/newline, it's empty
+        if not first_data_row or not first_data_row.strip():
+            return True
+            
+    return False
+
+def is_data_ready(user_folder: str, entity: str) -> bool:
+    """
+    Checks if ALL required files exist and are less than 2 hours old.
+    Returns True if data is ready (skip download), False otherwise.
+    """
+    # can be made dynamic later
+    entity_file_map = {
+        "catalog": ["raw_file_catalog.csv", "raw_file_order_products.csv"],
+        "customers": ["raw_file_customers.csv", "raw_file_orders.csv", "raw_file_order_products.csv"],
+        "orders": ["raw_file_orders.csv", "raw_file_order_products.csv"],
+        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"]
+        # Add 'activities' dependencies
+    }
+    
+    required_files = entity_file_map.get(entity, [])
+    
+    max_age_seconds = 2 * 60 * 60 # 2 hours in seconds
+    current_time = time.time()
+    folder_check_path = os.path.join('data', user_folder, 'work_data_folder')
+
+    for filename in required_files:
+        file_path = os.path.join(folder_check_path, filename)
+        
+        # 1. Check if the file exists at all
+        if not os.path.exists(file_path):
+            print(f"Data Check: Missing required file -> {filename}")
+            return False
+            
+        # 2. Check how old the file is
+        # getmtime returns the time of last modification in seconds since the epoch
+        file_age_seconds = current_time - os.path.getmtime(file_path)
+        
+        if file_age_seconds > max_age_seconds:
+            print(f"Data Check: File too old -> {filename} is {file_age_seconds / 3600:.2f} hours old.")
+            return False
+
+    print("Data Check: All files are present and fresh!")
+    return True
+
+from typing import Dict
+ 
+RAW_FILENAME_BY_ENTITY: Dict[str, str] = {
+    "orders": "one_file_orders.csv",
+    "order_products": "one_file_products.csv",
+    "customer": "one_file_customers.csv",
+}
+ 
+ 
+def raw_filename_for(entity: str) -> str:
+    return RAW_FILENAME_BY_ENTITY.get(entity, f"one_file_{entity}.csv")
+
+# MCP logic
+TOPIC_CONFIG = {
+        "customers": [
+            "churn_report",
+            "refined_opportunity_report",
+            "top_customers_report",
+            "visits_report",
+            "full_report"
+        ],
+        "catalog": [
+            #"key_metrics_report",
+            #"sales_performance_report",
+            #"fulfillment_report",
+            "functional_product_analysis",
+            "product_performance",
+            "sales_trends_report",
+            "bundle_performance_report",
+            "top_3_sales_breakdown",
+            "time_based_product_report",
+            "full_report"
+        ],
+        "orders": [
+            "key_metrics_report",
+            "sales_performance_report",
+            "discount_report",
+            "payment_status_report",
+            "fulfillment_report",
+            "sales_trends_report",
+            "full_report"
+        ] 
+    }

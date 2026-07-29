@@ -1,16 +1,17 @@
 python-dotenv==1.0.1
 PyYAML==6.0.2
-langchain==0.3.19
-langchain-community==0.3.18
-langchain-experimental==0.3.4
-langchain-openai==0.3.6
-pandas==2.2.3
-tabulate==0.9.0
-pydantic==2.10.6
+markdown
 
+pandas==2.3.3
+tabulate==0.9.0
+pydantic==2.12.3
+RapidFuzz==3.14.3
+
+matplotlib==3.10.3
+gradio==5.19.0
 plotly==5.3.1
 kaleido==0.2.1
-numpy
+numpy==2.2.6
 
 # File Handling
 aiofiles==22.1.0
@@ -20,6 +21,9 @@ anyio==4.6.1
 fastapi==0.115.5
 uvicorn==0.32.0
 faiss-cpu
-openai-agents==0.3.3
-markdown
-gradio==5.19.0
+chromadb
+# OpenAI and Agents
+openai-agents==0.13.6
+openai==2.32.0
+tiktoken==0.9.0
+sse-starlette==2.1.3

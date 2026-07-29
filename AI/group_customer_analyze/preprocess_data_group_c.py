@@ -3,6 +3,8 @@ import asyncio
 import aiofiles
 import glob
 from pathlib import Path
+import os 
+from concurrent.futures import ThreadPoolExecutor
 
 from AI.utils import get_logger
 logger2 = get_logger("logger2", "project_log_many.log", False)
@@ -20,6 +22,9 @@ EXPECTED_COLUMNS = {
     "products": [
         "id", "orderId", "manufacturerName", "productCategoryName", "createdAt", "name", "type", "description", "sku", "barcode", "itemsPerCase", "color", "size", "quantity", 
         "paidQuantity", "price", "itemDiscountAmount", "itemDiscountType", "itemDiscountValue", "delivered", "amount", "totalRawAmount", "totalAmount"
+    ],
+    "customers": [
+        "id"
     ]
 }
 
@@ -533,7 +538,7 @@ def one_file_preprocess_products(file_path):
     
     # Convert 'createdAt' to datetime with UTC
     df = convert_to_datetime(df, ["createdAt"])
-    
+    df['product_variant'] = df['name'].astype(str) + ' - ' + df['sku'].astype(str)
     # Convert numeric columns, filling NaN with 0
     for col in ["price", "itemDiscountAmount", "totalAmount", "quantity", "paidQuantity"]:
         if col in df.columns:
@@ -556,6 +561,117 @@ def one_file_preprocess_products(file_path):
     df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
     
     return df, file_path
+
+def one_file_preprocess_catalog(filepath: str) -> str:
+    """
+    Clean CSV logic:
+    1. Removes 'INACTIVE' status rows.
+    2. Drops technical/internal IDs.
+    3. Fills inventory NaNs with 0.
+    4. Saves to 'cleaned_catalog.csv'.
+    """
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File {filepath} not found.")
+        
+    df = pd.read_csv(filepath)
+    original_cols = set(df.columns)
+    original_len = len(df)
+    # 1. Filter out 'INACTIVE' status rows
+    if 'status' in df.columns:
+        # We use .str.upper() to ensure we catch 'inactive', 'Inactive', etc.
+        df = df[df['status'].str.upper() != 'INACTIVE'].copy()
+    
+    
+    # 2. Drop specific 'useless' technical columns if they exist
+    technical_cols = ['status', 'requiredFieldsMissing', 'description', 'hasColorVariation', 'hasSizeVariation', 'tags_tag_tag','type']
+    cols_to_drop = [col for col in technical_cols if col in df.columns]
+    df.drop(columns=cols_to_drop, inplace=True)
+    
+    # 3. Standardize inventory columns (fill NaNs with 0)
+    inv_cols = [c for c in df.columns if 'inventory' in c.lower()]
+    for col in inv_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # Identify all dropped columns
+    dropped_cols = list(original_cols - set(df.columns))
+
+    # 4. Save to the requested filename
+    file_path_catalog = os.path.join('data', 'FULL_DIST_TEST', 'cleaned_catalog.csv')
+
+    return df, file_path_catalog
+
+    #df_clean.to_csv(file_path_catalog, index=False)
+    #
+    #return {
+    #    "file_path": file_path_catalog,
+    #    "dropped_columns": dropped_cols,
+    #    "rows_remaining": f'{len(df_clean)} from {original_len}'
+    #}
+
+async def get_cleaned_catalog(filepath: str) -> str:
+    """Async wrapper to process the CSV without blocking the event loop."""
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, one_file_preprocess_catalog, filepath)
+    return result
+
+def one_file_preprocess_customers(file_path):
+    """Loads and cleans customer data from a CSV file."""
+    try:
+        df = pd.read_csv(file_path)
+        logger2.info(f"Loaded customers CSV from {file_path}")
+    except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
+        logger2.error(f"Error loading customers CSV file {file_path}: {e}")
+        df = pd.DataFrame(columns=EXPECTED_COLUMNS["customers"])
+    else:
+        # Add missing columns
+        for col in EXPECTED_COLUMNS["customers"]:
+            if col not in df.columns:
+                df[col] = pd.NA
+                logger2.info(f"Added missing column '{col}' to customers DataFrame")
+    if df.empty:
+        logger2.warning(f"Customers DataFrame is empty from file: {file_path}")
+        return df, file_path  # Return tuple with file_path
+    
+    # Remove duplicate customers based on 'id'
+    #df.drop_duplicates(subset=["id"], inplace=True)
+
+    # Convert datetime columns to UTC
+    datetime_cols = [
+        "createdAt", "updatedAt", "shipEngineUpdatedAt", "canceledAt", "shippedAt", 
+        "completedAt", "paidAt", "partiallyPaidAt", "unpaidAt", "fulfilledAt", 
+        "paymentDue", "partiallyFulfilledAt", "unfulfilledAt"
+    ]
+    df = convert_to_datetime(df, datetime_cols)
+    
+    try:
+        # Extract 'month' from 'createdAt'; works with pd.NA, resulting in NaT
+        df['month'] = df['createdAt'].dt.tz_localize(None).dt.to_period('M')
+
+        # Convert financial columns to numeric, filling NaN with 0
+        for col in ["totalAmount", "totalRawAmount"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+
+    except Exception as e:
+        logger2.error("Error in preproc customers financial columns: ", e)    
+    
+    # Drop unnecessary columns, ignoring errors if columns are missing
+    columns_to_drop = [
+        'tags_tag_tag', 'website', 'fulfillBy'
+    ]
+    df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
+    
+    return df, file_path
+
+async def get_cleaned_customers(filepath: str) -> str:
+    """Async wrapper to process the CSV without blocking the event loop."""
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, one_file_preprocess_customers, filepath)
+    return result
+
 
 async def prepared_big_data(orders_path: str, products_path: str) -> tuple:
     """Make full data preprocessing asynchronously"""

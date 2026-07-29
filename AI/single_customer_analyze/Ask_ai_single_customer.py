@@ -26,7 +26,7 @@ import pandas as pd
 from AI.utils import get_logger
 logger1 = get_logger("logger1", "project_log.log", False)
 
-llm_model = OpenAIResponsesModel(model='gpt-4.1', openai_client=AsyncOpenAI()) 
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
 import os
 import pandas as pd
@@ -855,7 +855,7 @@ def get_top_n_orders(
     """
     logger1.info(f"Tool 'get_top_n_orders' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  status_filter: {status_filter}, end_date: {end_date}")
     # 1. Path Setup
-    csv_path = Path("data") / user_id / "oorders.csv"
+    csv_path = Path("data") / user_id / "work_ord.csv"
     if not csv_path.exists():
         return f"Error: File not found."
 
@@ -863,7 +863,7 @@ def get_top_n_orders(
         # Load specific columns including Date and Statuses
         # Adjusted to match your CSV structure
         relevant_cols = [
-            'customId_customId', 'customer_name', 'totalAmount', 
+            'customId_customId', 'totalAmount', 
             'totalQuantity', 'createdAt', 'orderStatus' 
         ]
         dataf = pd.read_csv(csv_path, usecols=relevant_cols)
@@ -923,7 +923,7 @@ def get_top_n_orders(
         d_str = row['createdAt'].strftime('%Y-%m-%d') if pd.notnull(row['createdAt']) else "N/A"
         output.append(
             f"ID: {row['customId_customId']} | Date: {d_str} | "
-            f"Customer: {row['customer_name']} | ${row['totalAmount']:.2f}"
+            f"${row['totalAmount']:.2f}"
         )
 
     return '\n'.join(output)
@@ -955,9 +955,8 @@ def get_top_n_products(
         'manufacturer' (Brand/Manufacturer).
     """
     logger1.info(f"Tool 'get_top_n_products' called for: {user_id} order: {sort_order},     by_type: {by_type}, start_date: {start_date},  group_by: {group_by}, end_date: {end_date}")
-    
     # 1. Path Setup
-    csv_path = Path("data") / user_id / "pproducts.csv"
+    csv_path = Path("data") / user_id / "work_prod.csv"
     if not csv_path.exists():
         return f"Error: File not found."
 
@@ -965,10 +964,10 @@ def get_top_n_products(
         dataf = pd.read_csv(csv_path)
         # Ensure date column is datetime
         dataf['createdAt'] = pd.to_datetime(dataf['createdAt'], errors='coerce')
-        
+        dataf['product_variant'] = dataf['name'].astype(str) + ' - ' + dataf['sku'].astype(str)  
         relevant_cols = [
             'product_variant', 'productCategoryName', 'manufacturerName',
-            'totalAmount', 'quantity', 'orderId', 'customer_name', 'createdAt'
+            'totalAmount', 'quantity', 'orderId', 'createdAt'
         ]
         # Check if columns exist (dynamic check because CSVs vary)
         existing_cols = [c for c in relevant_cols if c in dataf.columns]
@@ -1024,7 +1023,6 @@ def get_top_n_products(
         totalRevenue=('totalAmount', 'sum'),
         totalQuantity=('quantity', 'sum'),
         orderCount=('orderId', 'nunique'),
-        customerCount=('customer_name', 'nunique')
     ).reset_index()
 
     # Calculate Metrics
@@ -1052,7 +1050,7 @@ def get_top_n_products(
     
     output_strings = [
         f"--- {direction_label} {n} {label}s by {by_type.capitalize()}{period_info} ---",
-        f"{label} | Revenue | Qty | Orders | Customers | Avg Rev/Order",
+        f"{label} | Revenue | Qty | Orders  | Avg Rev/Order",
         "-" * 100
     ]
 
@@ -1062,7 +1060,6 @@ def get_top_n_products(
             f"${row['totalRevenue']:,.2f} | "
             f"{int(row['totalQuantity'])} | "
             f"{row['orderCount']} | "
-            f"{row['customerCount']} | "
             f"${row['avgRevenuePerOrder']:.2f}"
         )
         output_strings.append(formatted_row)
@@ -1352,144 +1349,31 @@ def get_product_details(user_id:str, name:str=None, sku:str=None, category:str=N
     return report_string
 
 
-@function_tool
-def get_orders_by_customer_id(user_id:str, customer_id:str)-> str:
-    """
-    Returns a DataFrame in md format with specific order details for a given customer_id - use get_customers tool before.
-    """
-    logger1.info(f"Tool 'get_orders_by_customer' called called for: {user_id} and {customer_id}")
-    # Filter DataFrame by customer_id
-    dataframe = pd.read_csv(os.path.join("data", user_id, "oorders.csv"))
-    customer_orders_df = dataframe[dataframe['customerId'] == customer_id].copy()
-    
-    # Define columns requested
-    requested_columns = [
-        'id',
-        'customId_customId',
-        'totalOrderDiscountAmount',
-        'totalOrderDiscountType',
-        'createdAt',
-        'orderStatus',
-        'deliveryStatus',
-        'paymentStatus',
-        'totalAmount',
-        'totalQuantity'
-    ]
-    
-    # Select and rename columns
-    customer_orders_summary = customer_orders_df[requested_columns]
-    
-    # Rename columns as per user request
-    column_rename_map = {
-        'id': 'order_id',
-        'customId_customId': 'custom_order_id'
-    }
-    customer_orders_summary = customer_orders_summary.rename(columns=column_rename_map)
-    customer_orders_summary_md = customer_orders_summary.to_markdown(index=False)
-    return customer_orders_summary_md
-
-
-import os
-import numpy as np
-import faiss
-from openai import OpenAI
-from agents import function_tool  # The specific decorator from the SDK
-
-# Initialize standard OpenAI client for embeddings
-client = OpenAI()
-class SimpleVectorStore:
-    def __init__(self, file_path: str):
-        self.file_path = file_path
-        self.chunks = []
-        self.embeddings = None
-        self.is_initialized = False
-
-    def _cosine_similarity(self, vec_a, matrix_b):
-        """Calculates cosine similarity between vector A and all vectors in Matrix B."""
-        # Normalize vector A
-        norm_a = np.linalg.norm(vec_a)
-        if norm_a == 0: return np.zeros(len(matrix_b))
-        vec_a_norm = vec_a / norm_a
-
-        # Normalize Matrix B (all chunks)
-        norm_b = np.linalg.norm(matrix_b, axis=1, keepdims=True)
-        matrix_b_norm = np.divide(matrix_b, norm_b, where=norm_b!=0)
-
-        # Dot product
-        return np.dot(matrix_b_norm, vec_a_norm)
-
-    def load_and_index(self):
-        if not os.path.exists(self.file_path):
-            raise FileNotFoundError(f"File not found: {self.file_path}")
-            
-        print("Loading FAQ file...")
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-            
-        # Split by double newline (paragraphs)
-        self.chunks = [c.strip() for c in text.split('\n\n') if c.strip()]
-        
-        if not self.chunks:
-            print("Warning: No chunks found in file.")
-            return
-
-        print(f"Embedding {len(self.chunks)} entries...")
-        
-        # Get embeddings in one batch for speed
-        response = client.embeddings.create(
-            input=self.chunks,
-            model="text-embedding-3-small"
-        )
-        
-        # Store as numpy array
-        self.embeddings = np.array([d.embedding for d in response.data]).astype('float32')
-        self.is_initialized = True
-        print("Indexing complete.")
-
-    def search(self, query: str, top_k: int = 2):
-        if not self.is_initialized:
-            self.load_and_index()
-            
-        # Embed query
-        query_embedding = client.embeddings.create(
-            input=[query], 
-            model="text-embedding-3-small"
-        ).data[0].embedding
-        
-        query_vec = np.array(query_embedding).astype('float32')
-        
-        # Calculate similarities
-        scores = self._cosine_similarity(query_vec, self.embeddings)
-        
-        # Get top_k indices (sorted high to low)
-        top_indices = np.argsort(scores)[::-1][:top_k]
-        
-        results = []
-        for idx in top_indices:
-            # Optional: Filter low relevance (e.g., score < 0.3)
-            if scores[idx] > 0.3:
-                results.append(self.chunks[idx])
-                
-        return "\n---\n".join(results) if results else "No relevant info found."
-
-FAQ_FILE_PATH = Path("AI/group_customer_analyze/Agents_rules/QA_SD2.txt")
-faq_engine = SimpleVectorStore(FAQ_FILE_PATH)
+from AI.MCP_tools.faq_file_search import init_and_load_md, search_md_db, format_search_results
 
 @function_tool
-def look_up_faq(question: str) -> str:
+def look_up_faq(query: Optional[str]) -> str:
     """
-    Searches the FAQ (Frequently Asked Questions) text file 
+    Searches the FAQ (Frequently Asked Questions) database 
     to find answers to user questions about policies or features.
 
     Args:
-        question: The specific question or topic the user is asking about.
+        query: The specific question or topic the user is asking about.
     """
-    logger1.info(f"Tool 'look_up_faq' called for: {question}")
+    # 1. Provide a fallback if query is None
+    if not query:
+        return "No query provided. Please ask a specific question."
+
+    # 2. Fix the function call to match your search_md_db definition
+    file_to_parse = "AI/group_customer_analyze/Agents_rules/SD_FAQ.md"
+    init_and_load_md(file_to_parse)
     try:
-        return faq_engine.search(question)
-            
+        response = search_md_db(query_text=query, n_results=5)
+        formatted_string = format_search_results(response)
+
+        return formatted_string
     except Exception as e:
-        return f"Error retrieving FAQ: {str(e)}"
+        return f"Database Search Error: {str(e)}"
 
 async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLiteSession]:
     """Initializes a new Inventory agent and session."""
@@ -1507,7 +1391,13 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
         logger1.error(f"error creating session: {e}")
 
     try:
-        instructions = await prompt_agent_Ask_ai_solo(USER_ID)
+        from AI.utils import _is_csv_empty
+        df_path = Path(f"data/{USER_ID}/work_ord.csv")
+        if _is_csv_empty(df_path):
+            NEW_USER_BOOL = True
+        else:
+            NEW_USER_BOOL = False
+        instructions = await prompt_agent_Ask_ai_solo(USER_ID, NEW_USER_BOOL)
         agent = Agent(
             name="Warehouse_Inventory_Assistant",
             instructions=instructions,
@@ -1522,7 +1412,6 @@ async def create_Ask_ai_single_c_agent(USER_ID:str) -> Tuple[Agent, AdvancedSQLi
             get_order_details,
             get_product_catalog,
             get_product_details,
-            get_orders_by_customer_id,
             look_up_faq]
 
         )
