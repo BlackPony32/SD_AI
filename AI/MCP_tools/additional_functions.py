@@ -29,7 +29,7 @@ def _stopped_ordering_report(orders_path: str, customers_path: str, churn_thresh
     """
     lines = []
     lines.append("# Customer Inactivity Report")
-    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y %H:%M:%S')}")
+    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y')}")
     lines.append("")
 
     try:
@@ -164,7 +164,7 @@ def _opportunity_report(orders_path, customers_path, products_path) -> list:
     """
     lines = []
     lines.append("# Opportunity Report")
-    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y %H:%M:%S')}")
+    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y')}")
     lines.append("")
 
     # --- 1. Load & Clean Data ---
@@ -337,7 +337,7 @@ def _top_customers_report(orders_path, customers_path, products_path) -> list:
     """
     lines = []
     lines.append("# Top Customer Intelligence Report")
-    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y %H:%M:%S')}")
+    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y')}")
     lines.append("")
 
     try:
@@ -513,7 +513,7 @@ def _visits_report(orders_path, customers_path) -> list:
     """
     lines = []
     lines.append("# Visited vs Not Visited Report")
-    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y %H:%M:%S')}")
+    lines.append(f"**Generated:** {datetime.datetime.now().strftime('%m/%d/%Y')}")
     lines.append("")
 
     try:
@@ -551,7 +551,7 @@ def _visits_report(orders_path, customers_path) -> list:
             df_customers['lastCheckInAt'] = pd.to_datetime(
                 df_customers['lastCheckInAt'], 
                 errors='coerce',
-                format='%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)'
+                format='%a %b %d %Y GMT+0000 (Coordinated Universal Time)'
             )
             # Fallback to generic parsing
             if df_customers['lastCheckInAt'].isna().all():
@@ -966,8 +966,12 @@ def _generate_product_performance(products_path, catalog_path, orders_path) -> l
             # B. High Engagement Opportunities
             potential_gems = metrics[~metrics['detailed_name'].isin(top_revenue_names)].copy()
             
-            # Use .clip(lower=0) to prevent log1p from choking on negative revenue anomalies
-            potential_gems['engagement_score'] = (potential_gems['unique_customers'] * potential_gems['order_count']) / np.log1p(potential_gems['total_revenue'].clip(lower=0))
+            denom = np.log1p(potential_gems['total_revenue'].clip(lower=0))
+            
+            # Compute raw score and replace infinity/NaN (caused by $0 revenue) with 0
+            raw_score = (potential_gems['unique_customers'] * potential_gems['order_count']) / denom
+            potential_gems['engagement_score'] = raw_score.replace([np.inf, -np.inf], 0).fillna(0)
+
             hidden_gems = potential_gems.sort_values('engagement_score', ascending=False).head(5)
 
             # C. Underperforming Assets

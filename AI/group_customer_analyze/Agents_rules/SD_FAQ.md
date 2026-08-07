@@ -3494,3 +3494,354 @@ What is the final step to save the task so my rep can see it?
 
 A: Once you have filled out the title, due date, priority, and assigned the relevant representative and customer, briefly review the information for accuracy. Finally, click the "Create" (or "Save") button at the bottom of the menu to finalize the task. Once saved, the assigned representative will immediately be able to view and track the task within their workflow.   
 Source: [How To Create And Assign New Tasks In Simply Depo](https://scribehow.com/viewer/How_To_Create_And_Assign_New_Tasks_In_Simply_Depo__sZ3bfB2oSsGDQqJu48HVxA?referrer=documents)  
+
+### Mobile \- Activity Overview scribe
+
+Q: How do I access my activity log in the mobile app? Where can I view recorded field actions? How do I see my completed visits, orders, and tasks on mobile? 
+
+A: Tap the **Activity** tab in the bottom navigation bar of the Simply Depo mobile app. This opens your central activity log where all recorded field actions are stored and available for review. *Source: [Mobile Activity Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Mobile_Activity_Overview__4arVxFoYQ5uyBwAs8gCkig)*
+
+Q: How do I view the full details of an activity log entry? How can I inspect what actions were taken during a visit? 
+
+A: Tap on any entry within the activity list to open its detailed view. Here you can review what actions were performed, exact timestamps, and all relevant data attached to that log item. 
+
+*Source: [Mobile Activity Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Mobile_Activity_Overview__4arVxFoYQ5uyBwAs8gCkig)*
+
+Q: What information is included in the mobile activity log? What field actions are tracked in the Activity tab feed? 
+
+A: The activity view provides a complete record of field actions logged against your account, including:
+
+* Customer visits  
+* Check-ins  
+* Tasks completed  
+* Orders placed  
+* Forms submitted *Source: [Mobile Activity Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Mobile_Activity_Overview__4arVxFoYQ5uyBwAs8gCkig)*
+
+Q: How do I filter the mobile activity log? Can I view activities created by a specific representative or within a specific territory? How can I filter my field actions by date or type? 
+
+A: Tap the **filter button** in the activity view to refine your list using any of the following criteria:
+
+* **Activities:** Filter by specific action types (e.g., check-ins, orders, tasks, forms).  
+* **Date:** Select a specific date or date range to view.  
+* **Created By:** Filter by the sales representative or team member who performed the activity (ideal for managers auditing logs).  
+* **Territory:** Isolate activities that occurred within a specific assigned territory. *Source: [Mobile Activity Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Mobile_Activity_Overview__4arVxFoYQ5uyBwAs8gCkig)*
+
+Q: What do the different check-in statuses mean in the activity log? What is the difference between "Checked In" and "Not in Customer's Radius"? Why would an activity show a "Skipped" status? 
+
+A: Each entry displays a **check-in status** reflecting how the rep's location was recorded:
+
+* **Checked In:** The representative successfully checked in while physically located within the customer's designated geographic radius.  
+* **Checked In — Not in Customer's Radius:** The representative checked in, but their GPS location was outside the customer's defined radius at that time.  
+* **Skipped:** The check-in requirement was bypassed for the activity, either due to administrative permission settings or because the action type did not require a location check.   
+  *Source: [Mobile Activity Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Mobile_Activity_Overview__4arVxFoYQ5uyBwAs8gCkig)*
+
+### Mobile \- Filtering the Customer List & Bulk Actions scribe
+
+Q: How do I access the customer filtering panel on mobile? Where do I go to start filtering my mobile customer list?   
+A: Tap the **filter icon** at the top of the Customers screen in the mobile app. This opens the full filter panel where you can combine multiple criteria to narrow down your client list.   
+*Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: How can I filter the mobile list to show only my assigned customers or prospects? How do I hide accounts belonging to other representatives?   
+A: Toggle the **"My Customers Only"** switcher to view strictly the active accounts assigned to you, or toggle the **"My Prospects Only"** switcher to focus exclusively on your unpurchased sales leads and pipeline.   
+*Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: How do I view inactive accounts in the mobile app? Where is the filter for dormant customer profiles? A: Toggle the **"Inactive Customers"** switcher within the filter panel to include or isolate dormant accounts for re-engagement or database cleanup.   
+*Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: How do I filter mobile customers by their scheduled visit times or day? Can I see which customers are due for a visit on a specific day of the week?   
+A: Use the **Visit Schedule** filter to select a specific day of the week, then set a **time range** ("from" and "to" fields) to display only the customers whose scheduled visit windows fall within that timeframe.   
+*Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: How do I find customers who haven't been visited or haven't ordered recently on mobile? How can I track days since last check-in or last purchase?   
+A: Apply the following activity-based filters:
+
+* **Days Since Last Check-In:** Identifies accounts that haven't received a physical rep visit in a specified number of days.  
+* **Days Since Last Order:** Flags accounts that haven't placed a purchase within a designated timeframe to help prevent churn.   
+  *Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: Can I filter mobile customers by sales stage, open tasks, or recent activity? How do I filter by tags on mobile?   
+A: Yes, you can narrow your list using additional granular filter fields:
+
+* **Lead Status:** Isolate accounts by pipeline stage (e.g., *Contacted*, *Had Demo*, *Negotiating*).  
+* **Last Activity:** Filter by the date of recent logged actions (check-ins, orders, tasks, forms, notes).  
+* **Pending Tasks:** Display only customers with open, incomplete tasks attached.  
+* **Tags:** Isolate specific customer segments based on custom labels (e.g., *Wholesale*, *VIP*). *Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: How do I apply or clear filters on the mobile customer screen?   
+A: Tap **"See Customers"** at the bottom of the filter panel to apply your selected criteria. To clear all active filters and return to the full unfiltered view, tap **"Clear"** in the top right corner. *Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+Q: How do I enable bulk selection on the mobile customer list? How can I select multiple customers to turn them into a field route?   
+A: **Long press** (tap and hold) any customer entry in the list to activate bulk selection mode. Checkboxes will appear next to all accounts; check the desired locations, then tap **"Create Route"** to be redirected to the route creation screen with your selected accounts automatically pre-filled as stops. *Source: [Filtering the Customer List on Mobile. Bulk Action triggering](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Filtering_the_Customer_List_on_Mobile_Bulk_Action_triggering__0lypU-SVT2mIPcs43CkJKQ)*
+
+### Mobile \- Customer Actions On Mobile scribe
+
+Q: How do I access a customer's profile in the mobile app? Where do I go to start managing a specific customer on mobile?   
+A: Tap the **Customers** tab in the bottom navigation bar to open your customer list, then tap on any customer entry to open their full profile hub. *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+Q: How do I check in at a customer location on mobile? Why should I check in before completing tasks or orders?   
+A: Open the customer's profile and tap the **"Check In"** button at the top of the screen. Checking in first ensures your arrival timestamp and physical visit are accurately logged before you proceed with other on-site actions. *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+Q: How do I view and complete assigned tasks or forms for a customer on mobile? Can I review past form responses?   
+A: Within the customer profile, tap **Tasks** to complete assigned to-do items, or tap **Forms** to fill out required questionnaires. You can also tap the **Responses** tab inside the Forms section to review previously submitted answers and compare historical audit data. *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+Q: How do I upload visit photos from the mobile app? How can I tag products, prices, or reorder flags in a shelf photo?   
+A: Open the **Photos** section in the customer profile, tap **"Add Photo"**, and choose to take a photo on the spot or upload one from your gallery. Once uploaded, tap **"Add Products"** to select the brand and tag specific items visible on the shelf. You can toggle details like **On Promotion**, **Marketing Materials**, or **Total (Case/Unit)**, set unit prices, check **Reorder Products** to flag out-of-stock items for admins, and attach a written note. *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+Q: How do I manage notes, contacts, and tags from a mobile customer profile? A: Use the dedicated sections within the customer profile:
+
+* **Notes:** Tap to add visit observations or review past comments.  
+* **Contacts:** Tap to view, edit, or create key store contacts to ensure order communications reach the right person.  
+* **Tags:** Tap to assign or review categorization labels (e.g., store type, tier). *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+Q: How do I place an order or review order history directly from a customer's mobile profile?   
+A: Tap the **Order** button inside the customer's profile and select the desired transaction type (Direct, 3rd Party, or Credit Memo) to build an order immediately. To check past transactions, tap the **Orders** tab to view the full order history and perform management actions like marking orders as paid or fulfilling items. *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+Q: Where can I see a complete activity history for a specific customer on mobile?   
+A: Tap the **Actions** tab inside the customer profile to review a chronological log of all past interactions, including check-ins, completed tasks, submitted forms, notes, and photos. *Source: [Customer Actions On Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Customer_Actions_On_Mobile__VfnHjRJ-RLmIWZmgNlvQSA)*
+
+### Mobile \- Creating Customers on Mobile scribe
+
+Q: How do I start adding a new customer profile in the mobile app? Where do I go to create a client or prospect entry on mobile?   
+A: Tap the **Customers** tab in the bottom navigation bar of the Simply Depo mobile app, then tap the **"New"** button to open the customer creation form. *Source: [Creating Customers on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Customers_on_Mobile__Pg-nhZ5wQbST-z1yjXnhMA)*
+
+Q: How do I set the business status and lead status for a new mobile customer? Can I create new lead statuses directly from the mobile app?   
+A: Tap the status field at the top of the form and select either **"Active"** (for ordering customers) or **"Prospect"** (for potential leads). Below this, tap **Lead Status** to choose your customer's pipeline stage (e.g., *Contacted*, *Had Demo*, *Negotiating*).
+
+> **Note:** Lead statuses are configured by administrators on the web platform; new lead statuses cannot be created directly from the mobile app. *Source: [Creating Customers on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Customers_on_Mobile__Pg-nhZ5wQbST-z1yjXnhMA)*
+
+Q: How does the business name auto-complete feature work on mobile? Why should I select a matching business from the dropdown menu?   
+A: As you type in the **Business Name** field, a dropdown list of matching businesses will appear. Tapping a matching result automatically populates verified information from Google Maps—including address details, phone numbers, and websites—saving time and preventing manual entry errors. You can manually adjust or complete any remaining fields afterward. *Source: [Creating Customers on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Customers_on_Mobile__Pg-nhZ5wQbST-z1yjXnhMA)*
+
+Q: How do I configure payment methods, payment terms, and standing discounts for a customer on mobile?   
+A: Open the **Payments** tab within the customer creation form:
+
+* **Payment Method:** Select an optional default payment preference (e.g., Cash, Credit Card).  
+* **Payment Terms:** Select applicable terms (e.g., Net 15, Net 30\) configured by your administrator.  
+* **Discount:** Enter a percentage value in the discount field to automatically apply a permanent standing deduction to all future orders placed for this customer. *Source: [Creating Customers on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Customers_on_Mobile__Pg-nhZ5wQbST-z1yjXnhMA)*
+
+Q: What operational details can I configure under the "Other" tab when adding a customer on mobile?   
+A: Tap the **"Other"** tab to manage optional account settings:
+
+* **Licenses and Certifications:** Upload business licenses or compliance documents.  
+* **Visiting Schedule:** Set optimal visit time windows for representative check-ins or deliveries.  
+* **Working Hours:** Record standard store operating hours.  
+* **Tags:** Add custom labels to group and filter the account across the platform. Tap **"Save"** once all fields are complete to finalize the profile. *Source: [Creating Customers on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Customers_on_Mobile__Pg-nhZ5wQbST-z1yjXnhMA)*
+
+Q: How do I use the Map Select Search feature to find and add nearby businesses on mobile? How do I discover potential customer prospects on a live map?   
+A: Tap the **map search icon** within the app to browse surrounding area businesses:
+
+1. Tap the **menu icon** to pick a business category (e.g., *Food and Beverage Retail*, *Convenience Store*, *Restaurant*).  
+2. Tap **"Search This Area"** to drop map pins for matching locations.  
+3. Tap any map pin to inspect business details.  
+4. Tap **"Add Customer"** to open a profile with pre-populated details, review or adjust information, and tap **"Save"** to add them to your account list. *Source: [Creating Customers on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Customers_on_Mobile__Pg-nhZ5wQbST-z1yjXnhMA)*
+
+### Mobile \- How to Access and Complete Forms on Mobile scribe
+
+Q: What are forms in the mobile app and why should field representatives use them? How do forms help collect data during store visits?   
+A: Forms in the Simply Depo mobile app are customizable digital questionnaires used by field reps to collect structured data—such as store audits, compliance checks, order surveys, or merchandising reports—during on-site customer visits. They keep data accurate and immediately visible to administrators on the web platform. *Source: [How to Access and Complete Forms on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_to_Access_and_Complete_Forms_on_Mobile__y5hN7K8BRDyrhuTM3-SvWg)*
+
+Q: How do I access customer forms from a mobile customer profile? Why should I check in before completing a form?   
+A: Tap the **Customers** tab in the bottom navigation bar, select the customer you are visiting, and tap **"Check In"** at the top of their profile to record your arrival. Then, tap the **"Forms"** tab inside the profile to view all available forms assigned and activated by your admin. *Source: [How to Access and Complete Forms on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_to_Access_and_Complete_Forms_on_Mobile__y5hN7K8BRDyrhuTM3-SvWg)*
+
+Q: Can I assign a form to a customer on the spot using the mobile app?   
+A: Yes, if your administrative permissions allow it, you can tap to open the available forms list within the customer profile's **Forms** tab and assign an unassigned form to that customer manually during your visit. *Source: [How to Access and Complete Forms on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_to_Access_and_Complete_Forms_on_Mobile__y5hN7K8BRDyrhuTM3-SvWg)*
+
+Q: Can I complete forms attached to assigned tasks on mobile? Where do I find form tasks?   
+A: Yes. You can access required forms through the **Tasks** tab. If an assigned task requires completing a questionnaire, opening the relevant task will make the corresponding form accessible directly inside it, keeping task and form workflows unified. *Source: [How to Access and Complete Forms on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_to_Access_and_Complete_Forms_on_Mobile__y5hN7K8BRDyrhuTM3-SvWg)*
+
+Q: How do I submit a form on mobile, and can I edit my answers after submitting? Who can edit form responses after the submission day ends?   
+A: Open the form, fill out all required fields carefully, and tap **"Submit"**. To review or correct your answers, open the **"Responses"** tab. You can edit your submitted response **until the end of the day** it was submitted. Once that window closes, only an admin can make edits on the web platform. *Source: [How to Access and Complete Forms on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_to_Access_and_Complete_Forms_on_Mobile__y5hN7K8BRDyrhuTM3-SvWg)*
+
+### Mobile \- Managing Messages and Notifications on Mobile scribe
+
+Q: How do I access messages and send a new message in the mobile app? How can I contact other users or team members on mobile?   
+A: Tap the **Messages** icon to open your conversation view. To message another user, tap the **New Message** icon and select a contact from your user list. *Source: [Managing Messages and Notifications on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Managing_Messages_and_Notifications_on_Mobile__PQsLq-_uRBiQnlQf1wbgOg)*
+
+Q: Where can I view all activity notifications in the mobile app? How do I filter between read and unread notifications?   
+A: Tap the notifications icon to open your activity updates list. Use the built-in filters at the top of the list to toggle between **Unread** and **Read** notifications. *Source: [Managing Messages and Notifications on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Managing_Messages_and_Notifications_on_Mobile__PQsLq-_uRBiQnlQf1wbgOg)*
+
+Q: How do I mark a notification as read on mobile?   
+A: **Swipe left** on any unread notification item in your list to mark it as read. *Source: [Managing Messages and Notifications on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Managing_Messages_and_Notifications_on_Mobile__PQsLq-_uRBiQnlQf1wbgOg)*
+
+Q: How do I customize my notification preferences in the mobile app? Can I select which specific alert categories I receive?   
+A: Tap **Notification Settings** within the notifications view to customize your alerts. You can open specific categories (such as **Orders**, **Notes**, etc.) and enable or disable individual alert types based on your preference (all options are enabled by default). *Source: [Managing Messages and Notifications on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Managing_Messages_and_Notifications_on_Mobile__PQsLq-_uRBiQnlQf1wbgOg)*
+
+### Mobile \- Order Actions on mobile: Paying, Fulfilling and other scribe
+
+Q: How do I accept and record a payment for an order on mobile? Can I notify the customer when a payment is processed?   
+A: Open an unpaid or partially paid order and tap either the **"+"** button in the payment section or the **"Accept Payment"** button to open the payment drawer. Select the payment method, enter the payment amount, and check **"Send Notification to Customer"** if you want to email them a payment receipt and invoice. Tap confirm to finalize. *Source: [Order Actions on mobile: Paying, Fulfilling and other](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Order_Actions_on_mobile_Paying_Fulfilling_and_other___25Zr2CGSUWDtBxrpz_0Bg)*
+
+Q: How do I fulfill order items on mobile? Can I process partial fulfillments?   
+A: Tap the **"+"** button in the fulfillment section or tap **"Fulfill Items"** on the order screen. In the drawer, select a **Delivery Method**, adjust the **Fulfillment Date** if necessary, and use the quantity dropdown next to each product to set how many units are being fulfilled (allowing for partial shipments). Check **"Send Notification to Customer"** if you wish to notify them, then confirm. *Source: [Order Actions on mobile: Paying, Fulfilling and other](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Order_Actions_on_mobile_Paying_Fulfilling_and_other___25Zr2CGSUWDtBxrpz_0Bg)*
+
+Q: What actions are available in the top-right options menu of an open order on mobile?   
+A: Tap the **Print** icon to print the invoice directly, or tap the **three-dot menu** to access the following:
+
+* **Edit:** Modify order details.  
+* **Duplicate:** Create a copy to use as a new order.  
+* **Email Order:** Send order details to the customer.  
+* **Export PDF:** Download a PDF invoice.  
+* **Update Customer Info:** Refresh customer details from their updated profile.  
+* **Add / Remove Signature:** Manage customer signatures on the order.  
+* **Archive:** Move the order out of the main list (retrievable via filters).  
+* **Cancel:** Cancel the order entirely (and proceed with refunds/restocking if already paid/fulfilled). *Source: [Order Actions on mobile: Paying, Fulfilling and other](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Order_Actions_on_mobile_Paying_Fulfilling_and_other___25Zr2CGSUWDtBxrpz_0Bg)*
+
+Q: How do I refund an order on mobile? How do I restock refunded items?   
+A: Open a paid/fulfilled order, tap the three-dot menu, and select **"Refund"**. Specify the product quantities and monetary refund value, then optionally add an internal reason note. Check **"Restock Items"** to automatically add refunded items back into inventory, and check **"Send Notification to Customer"** to email them a confirmation. *Source: [Order Actions on mobile: Paying, Fulfilling and other](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Order_Actions_on_mobile_Paying_Fulfilling_and_other___25Zr2CGSUWDtBxrpz_0Bg)*
+
+Q: How do I process a return for an order on mobile?   
+A: Open the order's three-dot options menu and select **"Return"**. Select a **Return Reason** (e.g., damaged goods, wrong item), enter the quantity returned for each item, and select a shipping option if applicable. Check **"Restock Items"** to return the products to active inventory upon receipt, and check **"Send Notification to Customer"** to send an email confirmation. *Source: [Order Actions on mobile: Paying, Fulfilling and other](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Order_Actions_on_mobile_Paying_Fulfilling_and_other___25Zr2CGSUWDtBxrpz_0Bg)*
+
+### Mobile \- Creating Direct, 3rd Party and Credit Orders on Mobile scribe
+
+Q: How do I create a new order on mobile? How do I switch between list view and card view in the product catalog?   
+A: Tap the **Orders** tab in the bottom navigation bar and select **"+ New"** to open the product catalog. Use the view toggle at the top of the catalog screen to switch between **List view** (single-column with more details visible) and **Card view** (two per row grid layout). *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: How do I select a customer when placing an order on mobile? How can I inspect detailed product specs before adding items to the cart?   
+A: When you tap to add a product for the first time, a search prompt will appear allowing you to select a customer by name, address, or ID. To review product specs before adding items, tap the **"i" (information) button** on any product to view its full name, pricing, barcode, items per case, and additional catalog details. *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: What are the three order types available on mobile, and how do I select them? A: Tap **"View Cart"** and select your desired order type from the selector:
+
+* **Direct:** A standard order processed and fulfilled directly between your business and the customer.  
+* **3rd Party:** An order fulfilled by an external distributor or partner rep.  
+* **Credit Memo:** A credit issued to a customer for returned items, damaged goods, or pricing adjustments. *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: How do I add products to a mobile cart using barcode scanning? How do I save an order as a draft or clear the cart?   
+A: Tap the **barcode scanner icon** at the top of the cart screen, allow camera permissions, and point your camera at the physical product barcode to automatically identify and add it to the cart (the product must exist in your catalog). To save or reset your work, tap the **three-dot menu** at the top of the cart screen and choose **Save as Draft** or **Clear Cart**. *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: What types of discounts can I apply to a Direct Order on mobile?   
+A: Tap the **discounts section** in the cart to apply any of the following promotions:
+
+* **Manufacturer Specific Discount:** Pre-configured percentage or fixed savings on a specific manufacturer's items.  
+* **Slotting Discount:** Free promotional items added to the order.  
+* **Specific Item Discount:** Discounts applied to individual products in the cart.  
+* **Total Order Discount:** A overall discount applied across the grand total of the order. *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: How do I submit an order on mobile? How do customer signatures and email confirmations work?   
+A: Tap **"Place Order"** to submit immediately, or tap **"Place Order & Email"** to specify email recipients and send an automated order confirmation upon submission. If enabled by your admin in web settings, a digital signature screen will appear after placement for the customer or rep to sign on screen (or tap **"Skip"** if not required). *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: How do 3rd Party Orders work on mobile, and how do they differ from Direct Orders?   
+A: Select **"3rd Party"** from the order type selector before adding items or in the cart. You will be prompted to assign a 3rd party representative (or select "Do Not Assign"). The cart workflow is identical to direct orders except **payment terms are unavailable**, as billing is handled directly by the third-party partner. Placed orders can be tracked under the **"3rd Party"** tab on the main Orders page. *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+Q: How do I create and process a Credit Memo on mobile?   
+A: Select **"Credit"** from the order type selector when starting an order or inside the cart. Adjust credited items, quantities, and customer details, then finalize the transaction to record the credit balance for application against future customer purchases. *Source: [Creating Direct, 3rd Party and Credit Orders on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_Direct_3rd_Party_and_Credit_Orders_on_Mobile__9QrHLj43TB6LQT3thNZumg)*
+
+### Mobile \- Products Tab Overview on Mobile scribe
+
+Q: How do I access the Products tab in the mobile app? How can I inspect product details without adding items to a cart?   
+A: Tap the **menu icon** in the navigation bar and select **"Products"** to open the catalog view. Scroll through the product list and tap the **info icon** next to any item to view its price, barcode, items per case, and description without adding it to the cart. *Source: [Products Tab Overview on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Products_Tab_Overview_on_Mobile__yi98ouQhTAu17QZSIm9wWA)*
+
+Q: How do I filter the product catalog on mobile?   
+A: Tap the **filter option** in the Products tab to narrow down items by:
+
+* **Manufacturer:** Show products from a specific brand or supplier.  
+* **Category:** Filter items belonging to a particular product category. *Source: [Products Tab Overview on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Products_Tab_Overview_on_Mobile__yi98ouQhTAu17QZSIm9wWA)*
+
+Q: How do I start a new order directly from the Products tab on mobile?   
+A: Search for products by name/SKU or use filters, then tap **"Add to Cart"**. Next, select the customer account when prompted, tap **"View Cart"**, and follow the checkout steps to finalize the order. You can also tap the **barcode icon** in the Products tab to scan product barcodes directly into the cart using your camera. *Source: [Products Tab Overview on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Products_Tab_Overview_on_Mobile__yi98ouQhTAu17QZSIm9wWA)*
+
+Q: How do I create a Credit Memo starting from the Products tab on mobile?   
+A: Add the relevant products to the cart from the Products tab, tap the **percentage icon** to open the discount panel, and enter a total order discount. Tap **"Set Discount"** to apply it, then proceed through checkout to finalize and submit the credit memo. *Source: [Products Tab Overview on Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Products_Tab_Overview_on_Mobile__yi98ouQhTAu17QZSIm9wWA)*
+
+### Mobile \- How To Create And Complete A Route On Mobile scribe
+
+Q: What are routes in the mobile app, and what is the difference between "My Routes" and "Assigned Routes"? How do quick filters work on the routes list?   
+A: Routes allow field representatives to plan and execute daily customer visits in an organized, optimized sequence. There are two types of routes:
+
+* **My Routes:** Personal routes created by the sales representative directly within the mobile app.  
+* **Assigned Routes:** Pre-planned routes created and assigned by an administrator from the web platform.
+
+Use quick filters (**All Routes**, **Active**, **Completed**) at the top of the routes list to filter entries by status. *Source: [How To Create And Complete A Route On Mobile. Routes Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_To_Create_And_Complete_A_Route_On_Mobile_Routes_Overview__T5qM7HeFSTi1RMK2sXoQ2w)*
+
+Q: How do I create a new route on mobile? Can I schedule a route for a future date on mobile? How do I set start and end locations?   
+A: Tap the **Routes** tab, then tap the **"+"** button to open the route creation form:
+
+1. **Route Name:** Type a descriptive name. Note that routes created on mobile can only be set for **today's date**.  
+2. **Start Location:** Select your current GPS location or type a custom address.  
+3. **End Location:** Select **"Round Trip from Start Location"**, enter a custom finish address, or choose **"No end location"** (not recommended for delivery reps, as it affects route optimization).  
+4. **Add Stops:** Tap **"Add Stops"** to add locations from either the **Customers** tab (general visits) or **Orders** tab (order fulfillment/delivery). Select stops and tap **"Create Route"** or **"Update Stops"**. *Source: [How To Create And Complete A Route On Mobile. Routes Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_To_Create_And_Complete_A_Route_On_Mobile_Routes_Overview__T5qM7HeFSTi1RMK2sXoQ2w)*
+
+Q: How do I review my route on a map? What actions can I perform directly from map pins on mobile?   
+A: Tap the **map icon** during or after setup to review the full geographical sequence of stops. Tapping any **customer pin** on the map displays stop details and provides two quick actions:
+
+* **Call:** Call the customer directly.  
+* **Directions:** Open Google Maps for turn-by-turn navigation to that location. *Source: [How To Create And Complete A Route On Mobile. Routes Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_To_Create_And_Complete_A_Route_On_Mobile_Routes_Overview__T5qM7HeFSTi1RMK2sXoQ2w)*
+
+Q: How do I start and execute a personal route ("My Route") on mobile? What steps should I follow at each stop?   
+A: Open a route under **My Routes**, select your transport mode (**Vehicle**, **Walking**, or **Cycling**), tap **"Start Day"** (if not already started), and tap **"Start Route"**:
+
+1. **Navigate & Call:** Tap the call icon or start button (navigation) for the current stop.  
+2. **Check-In:** Tap **"Check In"** upon arrival to log your visit and unlock store actions.  
+3. **Execute Actions:** View/create orders, complete assigned tasks and forms, attach visit photos, and write notes.  
+4. **Check Out:** Tap **"Check Out"** once all activities are complete to mark the stop as finished and proceed to the next location.  
+5. **Complete Route:** Once all stops are finished, tap **"Complete Route"** from the route menu to close the route and log it in activity history. *Source: [How To Create And Complete A Route On Mobile. Routes Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_To_Create_And_Complete_A_Route_On_Mobile_Routes_Overview__T5qM7HeFSTi1RMK2sXoQ2w)*
+
+Q: How do I edit or reoptimize an active route on mobile? What options are available in the route menu? A: Tap the **more actions menu** (three dots or drawer handle) on an active route to access:
+
+* **Edit Route:** Remove stops by swiping left, add new customers/orders, or change start/end locations.  
+* **Reoptimize Route:** Recalculate the most efficient path for remaining stops based on your current GPS position (automatically excludes already completed stops).  
+* **Other Options:** Duplicate, share, complete, or delete the route. *Source: [How To Create And Complete A Route On Mobile. Routes Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_To_Create_And_Complete_A_Route_On_Mobile_Routes_Overview__T5qM7HeFSTi1RMK2sXoQ2w)*
+
+Q: How do I start and complete an "Assigned Route" on mobile? Can I delete an assigned route from my phone?   
+A: Open the **Assigned Routes** tab and select a route assigned by your admin (note: routes cannot be started until their activation date arrives). Set or confirm your **start and end location**, then tap **"Update Route"** to begin. Complete stop visits using the standard check-in, action execution, and check-out process.
+
+> **Note:** Representatives **cannot delete assigned routes** from mobile; only administrators can remove them from the web platform. *Source: [How To Create And Complete A Route On Mobile. Routes Overview](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/How_To_Create_And_Complete_A_Route_On_Mobile_Routes_Overview__T5qM7HeFSTi1RMK2sXoQ2w)*
+
+### Mobile \- Setting Overview at Mobile scribe
+
+Q: How do I select or change my preferred route navigation app in the mobile app? Where do I set Google Maps as my default navigation provider?   
+A: Tap the **menu icon** in the navigation bar, select **"Settings"**, and navigate to the **Route** section. Select your preferred navigation app (e.g., Google Maps) from the list of installed navigation applications on your device. *Source: [Setting Overview at Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Setting_Overview_at_Mobile__n8YxdvBHQY-SSbhgFmBf7w)*
+
+Q: How do I save photos taken during customer visits to my phone's camera roll? How do I manage mobile photo storage settings?   
+A: Open **Settings** from the main menu and toggle the **Data and Storage** option. Enabling this setting saves a local copy of all visit photos directly to your device's photo library in addition to uploading them to the platform. *Source: [Setting Overview at Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Setting_Overview_at_Mobile__n8YxdvBHQY-SSbhgFmBf7w)*
+
+Q: How do I manage offline data and clear cache on mobile? How do I manually force a data sync after working offline?   
+A: Open **Settings** and navigate to the **Cache and Offline Data** section:
+
+* **Cache:** Tap **"Clear"** next to Cache to delete temporary photos and route data to free up phone storage space.  
+* **Offline Data:** Review sync statuses for local records (Customers, Products, Inventory, Discounts, Warehouses, etc.). Tap **"Sync Now"** to manually pull fresh server data, or tap **"Clear Cache"** to reset all offline data stored on the device. *Source: [Setting Overview at Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Setting_Overview_at_Mobile__n8YxdvBHQY-SSbhgFmBf7w)*
+
+Q: How do I change my account password in the mobile app?   
+A: Open **Settings** from the main menu, select **Change Password**, enter your current password, and set your new password. *Source: [Setting Overview at Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Setting_Overview_at_Mobile__n8YxdvBHQY-SSbhgFmBf7w)*
+
+Q: How do I connect a Bluetooth label printer in the mobile app? Which printer brands are supported on mobile?   
+A: Navigate to **Settings** and tap the **Label Printer** section:
+
+1. Confirm that **Bluetooth is enabled** on your mobile device.  
+2. Select **Zebra** as your printer brand (currently the only supported brand).  
+3. Select your Zebra printer from the list of available nearby Bluetooth devices to connect and enable in-field label printing. *Source: [Setting Overview at Mobile](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Setting_Overview_at_Mobile__n8YxdvBHQY-SSbhgFmBf7w)*
+
+### Mobile \- Creating and Completing Tasks on Mobile scribe
+
+Q: How do I access assigned tasks in the mobile app? Where can I view my task list on mobile?   
+A: Tap the **Tasks** tab in the bottom navigation bar of the Simply Depo mobile app to view all tasks assigned to you. Alternatively, if you have already checked in to a customer, you can access tasks linked directly to them from their customer profile page. *Source: [Creating and Completing Tasks on Mobile. Filtering Options](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_and_Completing_Tasks_on_Mobile_Filtering_Options__SOduFVYvQZGxR2niu3ej0Q)*
+
+Q: How do I complete an assigned task on mobile? What happens if a form is attached to a task?   
+A: Tap on the task to open it. If a form is attached, tap the form button, fill out all required fields, and tap **"Submit Form"** (which turns green once mandatory fields are complete). Once the form is submitted (or if no form is attached), tap **"Complete Task"** to mark it as finished.
+
+> **Note:** If you haven't checked in to the customer or started your work day, you will be prompted to check in before completing the task (unless your admin enabled check-in bypass permissions). *Source: [Creating and Completing Tasks on Mobile. Filtering Options](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_and_Completing_Tasks_on_Mobile_Filtering_Options__SOduFVYvQZGxR2niu3ej0Q)*
+
+Q: How do I create a new task in the mobile app? Can I assign tasks to other representatives?   
+A: Tap the **"+"** or **"New Task"** button in the Tasks section to open the creation form:
+
+1. **Select a Customer:** Search and link the task to a specific customer account so it appears in their profile.  
+2. **Task Title & Description:** Enter a descriptive name and optional detailed instructions.  
+3. **Due Date & Time:** Set the completion deadline and optional specific hour.  
+4. **Assignee & Priority:** Assign the task to yourself or another team member, and select the urgency level (High, Medium, Low).  
+5. **Attach Form:** Optionally select a form (e.g., store audit, compliance check) for the assignee to fill out during their visit.  
+6. **Create:** Tap **"Create Task"** to save and submit. *Source: [Creating and Completing Tasks on Mobile. Filtering Options](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_and_Completing_Tasks_on_Mobile_Filtering_Options__SOduFVYvQZGxR2niu3ej0Q)*
+
+Q: Can I edit or delete tasks in the mobile app?   
+A: You can only edit or delete tasks that **you created yourself**. Open the task and tap **Edit** to modify details (title, due date, assignee, form) or **Delete** to remove it. Tasks created by an administrator or another team member can only be completed, not modified or deleted. *Source: [Creating and Completing Tasks on Mobile. Filtering Options](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_and_Completing_Tasks_on_Mobile_Filtering_Options__SOduFVYvQZGxR2niu3ej0Q)*
+
+Q: How do I filter tasks in the mobile app? What task filter options are available on mobile?   
+A: Tap the **filter button** at the top of the Tasks page to filter by:
+
+* **Due Date:** Show tasks due within a specific date range.  
+* **Status:** Filter by task state (e.g., Open, Completed, Overdue).  
+* **Assigned To:** Isolate tasks assigned to a specific representative or all reps.  
+* **Priority:** Filter by urgency level (High, Medium, Low).  
+* **Forms:** Display only tasks that have attached forms.
+
+You can also use quick filter options at the top of the main tasks list, such as **Due tasks**, **Future tasks**, and **No due date**. *Source: [Creating and Completing Tasks on Mobile. Filtering Options](https://scribehow.com/o/dHI8STFsQ8a-IOc65tvkQw/viewer/Creating_and_Completing_Tasks_on_Mobile_Filtering_Options__SOduFVYvQZGxR2niu3ej0Q)*
+
