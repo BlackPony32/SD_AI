@@ -478,7 +478,7 @@ def describe_customer(user_id: Optional[str], search_query: Optional[str]) -> st
                     customer_orders['createdAt'] = pd.to_datetime(customer_orders['createdAt'], errors='coerce').dt.tz_localize(None)
                     last_order_date = customer_orders['createdAt'].max()
                     if pd.notna(last_order_date):
-                        days_since_last_order = (datetime.now() - last_order_date).days
+                        days_since_last_order = (datetime.datetime.now() - last_order_date).days
 
         # --- 4. CALCULATE HEALTH & ENGAGEMENT FLAG ---
         health_flag = "Prospect (No Orders Yet)"
