@@ -5,3 +5,4 @@ project_log_many.log
 __pycache__
 db
 SD
+test*

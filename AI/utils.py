@@ -539,8 +539,8 @@ def is_data_ready(user_folder: str, entity: str) -> bool:
         "catalog": ["raw_file_catalog.csv", "raw_file_order_products.csv"],
         "customers": ["raw_file_customers.csv", "raw_file_orders.csv", "raw_file_order_products.csv"],
         "orders": ["raw_file_orders.csv", "raw_file_order_products.csv"],
-        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"]
-        # Add 'activities' dependencies
+        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"],
+        "activities": ["raw_file_activities.csv","raw_file_orders.csv"]
     }
     
     required_files = entity_file_map.get(entity, [])
@@ -609,5 +609,339 @@ TOPIC_CONFIG = {
             "fulfillment_report",
             "sales_trends_report",
             "full_report"
-        ] 
+        ], 
+        "activities": [
+            "orders_and_revenue_by_salesperson_report",
+            "activities_distribution_report",
+            "key_analysis_report",
+            "full_report"
+        ],
+        "tasks": [
+            "task_backlog_report",
+            "full_report"
+        ],
+        "notes": [
+            "executive_summary_report",
+            "action_items_report",
+            "full_report"
+        ],
+        "forms": ["full_report"]
     }
+
+
+# test for new mcp endpoint redesign
+
+import asyncio
+import importlib
+import json
+import logging
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Sequence, Tuple
+
+import aiohttp
+import httpx
+from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+
+logger2 = logging.getLogger(__name__)
+
+DATA_ROOT = "data"
+WORK_FOLDER = "work_data_folder"
+FRESHNESS_SECONDS = 2 * 60 * 60
+FULL_REPORT = "full_report"
+
+
+# ---------------------------------------------------------------------------
+# Paths
+def work_dir(distributor_id: str) -> str:
+    return os.path.join(DATA_ROOT, distributor_id, WORK_FOLDER)
+
+
+def raw_file_path(distributor_id: str, filename: str) -> str:
+    return os.path.join(work_dir(distributor_id), filename)
+
+
+def cleaned_path(distributor_id: str, name: str) -> str:
+    return os.path.join(DATA_ROOT, distributor_id, f"cleaned_{name}.csv")
+
+
+# ---------------------------------------------------------------------------
+# Freshness check + sync lock
+def files_are_fresh(distributor_id: str, filenames: Sequence[str]) -> bool:
+    """True if every file exists and is younger than FRESHNESS_SECONDS.
+
+    Blocking (os.stat); call it via asyncio.to_thread from the endpoint.
+    This replaces is_data_ready() — the caller passes the file list, derived
+    from the entity spec, so the check can never disagree with what is fetched.
+    """
+    folder = work_dir(distributor_id)
+    now = time.time()
+    for filename in filenames:
+        path = os.path.join(folder, filename)
+        if not os.path.exists(path):
+            logger2.info("Data check: missing %s", filename)
+            return False
+        age = now - os.path.getmtime(path)
+        if age > FRESHNESS_SECONDS:
+            logger2.info("Data check: %s is %.2fh old", filename, age / 3600)
+            return False
+    logger2.info("Data check: %d file(s) present and fresh", len(filenames))
+    return True
+
+
+_sync_locks: Dict[str, asyncio.Lock] = {}
+
+
+def lock_for(key: str) -> asyncio.Lock:
+    """Serialise sync per distributor+entity so two requests can't both download
+    into the same folder and produce torn CSVs."""
+    lock = _sync_locks.get(key)
+    if lock is None:
+        lock = _sync_locks[key] = asyncio.Lock()
+    return lock
+
+
+# ---------------------------------------------------------------------------
+# Upstream errors
+_HTTP_ERR = re.compile(r"HTTP Error (\d{3}):\s*(.*)", re.S)
+
+
+def as_http_exception(exc: Exception, distributor_id: str) -> HTTPException:
+    """Turn a stringly-typed upstream failure into a real HTTPException.
+
+    Long-term fix: make get_distributor_data raise a typed UpstreamError with
+    .status_code and .payload, then this regex can be deleted.
+    """
+    msg = str(exc)
+    match = _HTTP_ERR.search(msg)
+    if match and int(match.group(1)) == status.HTTP_404_NOT_FOUND:
+        detail: Any = match.group(2).strip()
+        try:
+            detail = json.loads(detail).get("message", detail)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "Upstream Resource Missing",
+                "distributor_id": distributor_id,
+                "upstream_message": str(detail).strip(),
+            },
+        )
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Data sync failed: {msg}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 1: fetch + download only the datasets this entity needs
+async def sync_raw_data(
+    distributor_id: str,
+    datasets: Sequence[str],
+    t0: float,
+) -> None:
+
+    try:
+        timeout_config = httpx.Timeout(5.0, read=120.0)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
+            fetched = await asyncio.gather(*[
+                get_distributor_data(distributor_id=distributor_id, entities=[name], client=client)
+                for name in datasets
+            ])
+        logger2.info("Step 1 - fetch done (%s): %.2fs",
+                     ", ".join(datasets), time.perf_counter() - t0)
+
+        async with aiohttp.ClientSession() as session:
+            await asyncio.gather(*[
+                handle_distributor_data(payload, name, distributor_id, session)
+                for payload, name in zip(fetched, datasets)
+            ])
+        logger2.info("Step 2 - download done: %.2fs", time.perf_counter() - t0)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise as_http_exception(exc, distributor_id) from exc
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: the orders/products/catalog/customers cleaning pipeline
+# ---------------------------------------------------------------------------
+from AI.MCP_tools.get_SD_data import get_distributor_data, handle_distributor_data
+from AI.group_customer_analyze.preprocess_data_group_c import (
+    get_cleaned_catalog,
+    get_cleaned_customers,
+    prepared_big_data,
+    save_df,
+)
+async def build_sales_pipeline(
+    distributor_id: str,
+    raw_files: Mapping[str, str],
+    t0: float,
+) -> Tuple[Dict[str, str], bool]:
+    """Clean + persist the four sales CSVs.
+
+    `raw_files` is the dataset -> filename map (RAW_FILES from the endpoint
+    module); this function reads exactly the four keys it needs from it.
+
+    Returns (cleaned_paths, orders_are_empty).
+    """
+
+    orders_df, products_df = await prepared_big_data(
+        raw_file_path(distributor_id, raw_files["orders"]),
+        raw_file_path(distributor_id, raw_files["order_products"]),
+    )
+    catalog_df, _ = await get_cleaned_catalog(
+        raw_file_path(distributor_id, raw_files["catalog"])
+    )
+    customers_df, _ = await get_cleaned_customers(
+        raw_file_path(distributor_id, raw_files["customers"])
+    )
+    logger2.info("Step 3 - preprocessing done: %.2fs", time.perf_counter() - t0)
+
+    paths = {
+        "orders": cleaned_path(distributor_id, "orders"),
+        "products": cleaned_path(distributor_id, "products"),
+        "catalog": cleaned_path(distributor_id, "catalog"),
+        "customers": cleaned_path(distributor_id, "customers"),
+    }
+    await asyncio.gather(
+        save_df(orders_df, paths["orders"]),
+        save_df(products_df, paths["products"]),
+        save_df(catalog_df, paths["catalog"]),
+        save_df(customers_df, paths["customers"]),
+    )
+    return paths, bool(orders_df.empty)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: report runners
+@dataclass
+class ReportContext:
+    distributor_id: str
+    entity: str
+    report_type: str
+    request: Any = None
+    paths: Dict[str, str] = field(default_factory=dict)  # cleaned_* paths, if built
+
+
+@dataclass
+class ReportPayload:
+    report: Any
+    sections: Any
+
+
+ReportRunner = Callable[[ReportContext], Awaitable[ReportPayload]]
+
+
+def coerce_payload(result: Any) -> ReportPayload:
+    """Accept whatever shape a run_report returns, today or after you change it.
+
+    Handles: an object with .report + .to_dict(), an object with .report +
+    .sections, a (report, sections) tuple, or a plain dict.
+    """
+    if isinstance(result, ReportPayload):
+        return result
+    if isinstance(result, tuple) and len(result) == 2:
+        return ReportPayload(report=result[0], sections=result[1])
+    if isinstance(result, dict):
+        return ReportPayload(report=result.get("report"), sections=result.get("sections", result))
+
+    report = getattr(result, "report", None)
+    if hasattr(result, "to_dict"):
+        sections = result.to_dict()
+    else:
+        sections = getattr(result, "sections", None)
+    if report is None and sections is None:
+        raise TypeError(f"Unrecognised report result type: {type(result)!r}")
+    return ReportPayload(report=report, sections=sections)
+
+
+def module_runner(
+    module_path: str,
+    func_name: str = "run_report",
+    entity_arg: Optional[str] = None,
+    pass_entity: bool = True,
+) -> ReportRunner:
+    """For activities / forms / tasks: `await mod.run_report(distributor_id, entity)`.
+
+    The import stays lazy (as in the original in-function imports) so a heavy AI
+    module only loads when that entity is actually requested. If a module later
+    changes its signature, adjust func_name / pass_entity here — the endpoint
+    does not change.
+    """
+    async def _run(ctx: ReportContext) -> ReportPayload:
+        mod = importlib.import_module(module_path)
+        fn = getattr(mod, func_name)
+        args = (ctx.distributor_id, entity_arg or ctx.entity) if pass_entity else (ctx.distributor_id,)
+        return coerce_payload(await fn(*args))
+
+    _run.__name__ = f"run_{module_path.rsplit('.', 1)[-1]}"
+    return _run
+
+
+def batch_process_runner(agent_name: Optional[str] = None) -> ReportRunner:
+    """For orders / catalog / customers: topic-analysis batch over the cleaned CSVs."""
+    async def _run(ctx: ReportContext) -> ReportPayload:
+        from AI.MCP_tools.topic_analysis_agents import main_batch_process
+
+        kwargs: Dict[str, Any] = {}
+        if ctx.report_type != FULL_REPORT:
+            kwargs["specific_topic"] = ctx.report_type
+
+        report, sections = await main_batch_process(
+            ctx.paths["orders"],
+            ctx.paths["products"],
+            ctx.paths["customers"],
+            ctx.paths["catalog"],
+            ctx.distributor_id,
+            agent_name or f"{ctx.entity}_agent",
+            **kwargs,
+        )
+        return ReportPayload(report=report, sections=sections)
+
+    _run.__name__ = "run_batch_process"
+    return _run
+
+
+# ---------------------------------------------------------------------------
+# Responses
+# ---------------------------------------------------------------------------
+
+EMPTY_ORDERS_MESSAGE = (
+    "The report cannot be generated based on empty data (No valid orders found).\n\n"
+    "You can create a new order to start analyzing your data - check this guide: "
+    "[How to Create and Process a New Direct Order]"
+    "(https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__"
+    "XOZEjF9KTJ2B_C4G32afpQ?referrer=documents)\n\n"
+    "and ask AI agent for help with platform navigation and order creation, or you can "
+    "clarify with our specialist: [Schedule a Meeting]"
+    "(https://meetings.hubspot.com/john-vasylets/customers)\n"
+)
+
+
+def error_response(
+    code: int,
+    kind: str,
+    message: Any,
+    distributor_id: str,
+    **extra: Any,
+) -> JSONResponse:
+    body = {"error": kind, "message": message, "distributor_id": distributor_id}
+    body.update(extra)
+    return JSONResponse(status_code=code, content=jsonable_encoder(body))
+
+
+def ok_response(payload: ReportPayload, distributor_id: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=jsonable_encoder({
+            "sections": payload.sections,
+            "report": payload.report,
+            "uuid": distributor_id,
+        }),
+    )

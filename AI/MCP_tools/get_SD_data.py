@@ -2,7 +2,7 @@ import os
 import asyncio
 import httpx
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import time
 import aiohttp
 import aiofiles
@@ -137,6 +137,60 @@ async def handle_distributor_data(
         tasks.append(_download_and_save_file(session, file_url, file_path))
 
     # Run the tasks for THIS specific entity
+    if tasks:
+        await asyncio.gather(*tasks)
+        logger2.info(f"Successfully saved {len(tasks)} file(s) for {requested_entity}.")
+
+import re
+
+def _extract_url(raw: str) -> str:
+    """
+    The distributor API sometimes returns fields as markdown links
+    `[text](url)` instead of a plain URL. Pull out the real URL
+    (inside the parentheses) if that's the case.
+    """
+    if not raw:
+        return raw
+    match = re.match(r'^\[.*\]\((.*)\)$', raw.strip())
+    return match.group(1) if match else raw.strip()
+
+
+async def handle_activities_data(
+    api_response: Union[dict, list],
+    requested_entity: str,
+    user_uuid: str,
+    session: aiohttp.ClientSession
+):
+    """
+    Parses the API response (dict OR list of dicts), creates the user
+    folder, and queues downloads.
+    """
+    # Normalize: API can return either a single object or a list of them
+    records = api_response if isinstance(api_response, list) else [api_response]
+
+    user_folder = os.path.join('data', str(user_uuid), 'work_data_folder')
+    await asyncio.to_thread(os.makedirs, user_folder, exist_ok=True)
+
+    tasks = []
+
+    for record in records:
+        distributor_name = record.get("distributorName", "Unknown_Distributor")
+
+        # CASE 1: Multiple files
+        if "fileUrls" in record:
+            for file_type, raw_url in record["fileUrls"].items():
+                file_url = _extract_url(raw_url)
+                filename = f"raw_file_{file_type}.csv"
+                file_path = os.path.join(user_folder, filename)
+                tasks.append(_download_and_save_file(session, file_url, file_path))
+
+        # CASE 2: Single file
+        elif "fileUrl" in record:
+            file_url = _extract_url(record["fileUrl"])
+            filename = f"raw_file_{requested_entity}.csv"
+            file_path = os.path.join(user_folder, filename)
+            tasks.append(_download_and_save_file(session, file_url, file_path))
+
     if tasks:
         await asyncio.gather(*tasks)
         logger2.info(f"Successfully saved {len(tasks)} file(s) for {requested_entity}.")

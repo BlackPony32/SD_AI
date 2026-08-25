@@ -26,10 +26,10 @@ from AI.group_customer_analyze.statistics_group_c import format_status, usd, top
   customer_insights, format_percentage
 
 load_dotenv()
-mcp = FastMCP("sd-ai-mcp", json_response=True,port=8001)
+mcp = FastMCP("sd-ai-mcp", json_response=True,port=8001,log_level="WARNING")
 
 # 1. ROBUST LOGGER (UTF-8 FORCED)
-import logging
+
 import functools
 import time
 import sys
@@ -86,7 +86,7 @@ def log_tool_usage(func):
         arg_str = f"Args: {pos_args} | Kwargs: {clean_kwargs}"
         
         # Log Start
-        logger2.info(f"▶ START | Tool: '{tool_name}' | User: {user_id} | {arg_str}")
+        print(f"▶ START | Tool: '{tool_name}' | User: {user_id} | {arg_str}")
 
         try:
             # 3. Execute Tool
@@ -104,7 +104,7 @@ def log_tool_usage(func):
             log_preview = res_str_flat[:120] + "..." if len(res_str_flat) > 120 else res_str_flat
             
             # Log Success
-            logger2.info(f"✔ END   | Tool: '{tool_name}' | User: {user_id} | Time: {duration:.2f}s | Result: {log_preview}")
+            print(f"✔ END   | Tool: '{tool_name}' | User: {user_id} | Time: {duration:.2f}s | Result: {log_preview}")
             
             return result
             
@@ -5269,6 +5269,1204 @@ def look_up_faq(query: Optional[str]) -> str:
     except Exception as e:
         return f"Database Search Error: {str(e)}"
 
+# ACtivities Tools
+
+from collections import Counter
+from typing import Any
+
+import pandas as pd
+
+from tools_utils import (
+    ACTIVITY_CATEGORY_DESCRIPTIONS, ACTIVITY_CATEGORY_LABELS, ACTIVITY_WORKFLOW_PAIRS,
+    DORMANT_DAYS, MIN_SAMPLE_PER_PERSON, NOTE_ACTION_KEYWORDS, NOTE_THEMES,
+    TASK_CLOSED_STATUSES, UNASSIGNED_SALESPERSON, Period, ToolError,
+    bullet_list, change, describe_distribution, fmt_date, header_block, humanize,
+    load_activities, load_notes, load_orders, load_tasks, md_table, money, money_short,
+    normalize_key, parse_bool, parse_int, pct, period_coverage_note, resolve_period,
+    resolve_value, split_multi, tool_guard, truncate,
+)
+
+# ===========================================================================
+# Notes
+
+@mcp.tool(name="search_notes")
+@log_tool_usage
+def search_notes(user_id: str, query: str | None = None, period: str | None = None,
+                 author: str | None = None, theme: str | None = None,
+                 min_importance: int | None = None, has_money: bool | None = None,
+                 include_noise: bool = False, sort: str = "importance",
+                 limit: int = 15, full_text: bool = False) -> str:
+    """Find and read individual CRM notes.
+
+    Use this when the question is about *what was said* — what a rep wrote about
+    an account, which notes mention an unpaid invoice, what the complaints
+    actually are. Use `get_notes_statistics` instead when the question is about
+    how many, by whom, or whether something is trending.
+
+    About this data: roughly half of every notes export is junk — "test note",
+    "rtrtrtr", keyboard mashing repeated for a thousand characters. Junk is
+    flagged and excluded by default, never deleted, and the counts always
+    reconcile against the raw file. Notes carry an author that is either a sales
+    representative or a distributor, and often neither.
+
+    Args:
+        user_id (str): The user/tenant id; selects the export directory.
+        query (str, optional): Case-insensitive substring or regex to match in
+            note text. Multiple terms separated by commas are OR-ed:
+            "invoice, overdue" finds notes containing either.
+        period (str, optional): Time window. Defaults to the last month. Accepts
+            "last 90 days", "this quarter", "June 2026", "Q2 2026", "2026",
+            "2026-01-01..2026-03-31", "since 2026-01-01", "all time".
+        author (str, optional): Representative or distributor name, fuzzy —
+            "super" finds "Super Sales". Unknown names return the real list.
+        theme (str, optional): One of: Money / collections, Problems /
+            complaints, Churn risk, Growth, Scheduling, Urgency.
+        min_importance (int, optional): Keep only notes scoring at least this.
+            Scores run 0–20ish; 5+ is a note that names a concrete problem.
+        has_money (bool, optional): True keeps only notes containing a currency
+            figure; False keeps only those without.
+        include_noise (bool): Include junk and duplicate notes. Default False.
+        sort (str): "importance" (default), "newest", "oldest", or "longest".
+        limit (int): Maximum notes returned, 1–200. Default 15.
+        full_text (bool): Print each note in full instead of truncating to one
+            line. Use for a handful of notes, not for fifty.
+
+    Returns:
+        str: Markdown — scope header, then one entry per note with date, author,
+        importance, themes and text. Says why when nothing matched.
+    """
+    path = f"{user_id}/work_data_folder"
+    df, caveats = load_notes(path)
+    total = len(df)
+    anchor = df["_ts"].max() if df["_ts"].notna().any() else pd.Timestamp.now(tz="UTC")
+    window = resolve_period(period, anchor)
+
+    limit = parse_int(limit, default=15, minimum=1, maximum=200, name="limit")
+    include_noise = parse_bool(include_noise)
+
+    work = df.copy()
+    if not include_noise:
+        work = work[~work["_is_noise"] & work["_dupe_of"].isna()]
+    work = work[window.mask(work["_ts"])]
+    caveats = list(caveats) + period_coverage_note(window, df["_ts"], len(work), total)
+
+    filters: dict[str, Any] = {}
+    if author:
+        matches = resolve_value(author, df["_author"], field_name="author",
+                                allow_multiple=True)
+        work = work[work["_author"].isin(matches)]
+        filters["author"] = matches
+    if theme:
+        matches = resolve_value(theme, NOTE_THEMES.keys(), field_name="theme")
+        # A Series mask, not a bare list: on an empty frame pandas reads an
+        # empty list as *column* selection and silently drops every column.
+        work = work[pd.Series([any(t in matches for t in ts) for ts in work["_themes"]],
+                              index=work.index, dtype=bool)]
+        filters["theme"] = matches
+    if query:
+        terms = split_multi(query)
+        try:
+            mask = pd.Series(False, index=work.index)
+            for term in terms:
+                mask |= work["_text"].str.contains(term, case=False, regex=True, na=False)
+        except Exception:                     # a term that is not valid regex
+            mask = pd.Series(False, index=work.index)
+            for term in terms:
+                mask |= work["_text"].str.contains(term, case=False, regex=False, na=False)
+        work = work[mask]
+        filters["query"] = terms
+    if min_importance is not None:
+        floor = parse_int(min_importance, default=0, minimum=0, maximum=100,
+                          name="min_importance")
+        work = work[work["_score"] >= floor]
+        filters["min_importance"] = f"≥{floor}"
+    if has_money is not None:
+        want = parse_bool(has_money)
+        work = work[work["_has_money"] == want]
+        filters["has_money"] = want
+    if include_noise:
+        filters["include_noise"] = True
+
+    order = {"importance": ("_score", False), "newest": ("_ts", False),
+             "oldest": ("_ts", True), "longest": ("_len", False)}
+    if sort not in order:
+        raise ToolError(f"Unknown sort '{sort}'.", f"one of: {', '.join(order)}")
+    column, ascending = order[sort]
+    work = work.sort_values([column, "_ts"], ascending=[ascending, False])
+
+    out = [header_block("Notes", window, matched=len(work), total=total,
+                        unit="notes", filters=filters, caveats=caveats), ""]
+
+    if work.empty:
+        out += ["**Nothing matched.**", "",
+                "The filters above eliminated every note. Widening one at a time, in "
+                "order of how much each usually costs you:", "",
+                bullet_list([
+                    "`period=\"all time\"` — the default window is only the last month",
+                    "drop `query` or use fewer terms",
+                    "`include_noise=true` if you are checking whether notes exist at all",
+                    "drop `author` — most notes in these exports have no named author",
+                ])]
+        return "\n".join(out)
+
+    shown = work.head(limit)
+    out.append(f"### {len(shown)} note(s)"
+               + (f", highest importance first" if sort == "importance" else "")
+               + (f" *(of {len(work)} matching — raise `limit` for more)*"
+                  if len(work) > limit else ""))
+    out.append("")
+
+    for _, row in shown.iterrows():
+        tags = ", ".join(row["_themes"]) or "—"
+        badges = []
+        if row["_is_noise"]:
+            badges.append("⚠ junk")
+        if pd.notna(row["_dupe_of"]):
+            badges.append("⚠ duplicate")
+        if row["_has_money"]:
+            badges.append("$")
+        head = (f"**{fmt_date(row['_ts'])}** · {row['_author']} "
+                f"· importance {int(row['_score'])} · themes: {tags}")
+        if badges:
+            head += " · " + " ".join(badges)
+        out.append(head)
+        out.append(f"> {row['_text'] if full_text else truncate(row['_text'], 220)}")
+        out.append("")
+
+    if not full_text and any(len(t) > 220 for t in shown["_text"]):
+        out.append("*Some notes were truncated — pass `full_text=true` to read them whole.*")
+    return "\n".join(out).rstrip()
+
+
+@mcp.tool(name="get_notes_statistics")
+@log_tool_usage
+def get_notes_statistics(user_id: str, period: str | None = None,
+                         group_by: str = "author", compare_to_previous: bool = True,
+                         include_noise: bool = False, top_n: int = 10) -> str:
+    """Count and summarise CRM notes: volume, authorship, themes, data quality.
+
+    Use this for "how many", "who writes them", "what are they about", "is this
+    rising". Use `search_notes` when the answer requires reading the text.
+
+    The one number to read first is the junk share. If most of the file is test
+    data, every other figure here describes a small surviving minority, and the
+    tool says so rather than letting a clean-looking table imply otherwise.
+
+    Args:
+        user_id (str): The user/tenant id.
+        period (str, optional): Time window. Defaults to the last month.
+            "all time" is usually the right choice for these files, which are
+            small and sparse.
+        group_by (str): "author" (default), "month", "theme", "keyword",
+            "author_kind", or "length".
+        compare_to_previous (bool): Compare against the equally long window
+            immediately before. Default True; ignored for "all time".
+        include_noise (bool): Count junk and duplicates in the main figures.
+            Default False — they are always reported separately either way.
+        top_n (int): Rows per table, 1–50. Default 10.
+
+    Returns:
+        str: Markdown — scope header, headline counts, a grouped table, theme
+        breakdown, and a data-quality section.
+    """
+    return _notes_statistics(user_id, period, group_by, compare_to_previous,
+                             include_noise, top_n)
+
+
+@tool_guard
+def _notes_statistics(user_id: str, period: str | None, group_by: str,
+                      compare_to_previous: bool, include_noise: bool, top_n: int) -> str:
+
+    path = f"{user_id}/work_data_folder"
+    df, caveats = load_notes(path)
+    total = len(df)
+    anchor = df["_ts"].max() if df["_ts"].notna().any() else pd.Timestamp.now(tz="UTC")
+    window = resolve_period(period, anchor)
+    top_n = parse_int(top_n, default=10, minimum=1, maximum=50, name="top_n")
+    include_noise = parse_bool(include_noise)
+    compare_to_previous = parse_bool(compare_to_previous, default=True)
+
+    in_window = df[window.mask(df["_ts"])]
+    clean = in_window if include_noise else in_window[
+        ~in_window["_is_noise"] & in_window["_dupe_of"].isna()]
+
+    caveats = list(caveats) + period_coverage_note(window, df["_ts"], len(in_window), total)
+    out = [header_block("Notes statistics", window, matched=len(in_window), total=total,
+                        unit="notes", filters={"group_by": group_by}, caveats=caveats), ""]
+
+    if in_window.empty:
+        out.append("**No notes in this window.** Try `period=\"all time\"`.")
+        return "\n".join(out)
+
+    # --- headline ---------------------------------------------------------
+    noise_n = int(in_window["_is_noise"].sum())
+    dupe_n = int(in_window["_dupe_of"].notna().sum())
+    money_n = int(clean["_has_money"].sum())
+
+    headline = [
+        f"**{len(clean):,} usable notes** out of {len(in_window):,} in the window "
+        f"({pct(len(clean), len(in_window))} survived cleanup).",
+        f"{noise_n:,} are test data or keyboard mashing, {dupe_n:,} are exact duplicates "
+        f"of an earlier note.",
+        f"{money_n:,} mention a currency figure ({pct(money_n, len(clean))} of usable notes).",
+    ]
+    if not clean.empty:
+        headline.append(f"Note length: {describe_distribution(clean['_len'], ' chars')}.")
+        dates = clean["_ts"].dropna()
+        if not dates.empty:
+            headline.append(f"Written between {fmt_date(dates.min())} and "
+                            f"{fmt_date(dates.max())} across "
+                            f"{dates.dt.normalize().nunique()} distinct day(s).")
+
+    previous = window.previous() if compare_to_previous else None
+    if previous is not None:
+        prior = df[previous.mask(df["_ts"])]
+        prior_clean = prior if include_noise else prior[
+            ~prior["_is_noise"] & prior["_dupe_of"].isna()]
+        headline.append(
+            f"Versus {previous.describe()}: {len(prior_clean):,} usable notes → "
+            f"{change(len(clean), len(prior_clean))}.")
+
+    out += ["### Headline", "", bullet_list(headline), ""]
+
+    if clean.empty:
+        out.append("Every note in this window is junk or a duplicate, so there is nothing "
+                   "to break down. Pass `include_noise=true` to inspect them anyway.")
+        return "\n".join(out)
+
+    # --- grouped table ----------------------------------------------------
+    out += _notes_group_table(clean, group_by, top_n)
+
+    # --- themes -----------------------------------------------------------
+    theme_counts = Counter(t for ts in clean["_themes"] for t in ts)
+    out += ["", "### What the notes are about", ""]
+    if theme_counts:
+        rows = [[theme, f"{n:,}", pct(n, len(clean)),
+                 truncate(", ".join(NOTE_THEMES[theme][:4]), 46)]
+                for theme, n in theme_counts.most_common()]
+        out.append(md_table(["Theme", "Notes", "Share of usable", "Matched on"],
+                            rows, align=["---", "---:", "---:", "---"]))
+        untagged = len(clean) - sum(1 for ts in clean["_themes"] if ts)
+        out += ["", f"{untagged:,} usable note(s) ({pct(untagged, len(clean))}) match no "
+                    f"theme — they are readable but carry no action keyword."]
+    else:
+        out.append("*No note in this window matches any tracked theme. They may be real "
+                   "but purely informational, or the vocabulary may not fit this business.*")
+
+    # --- quality ----------------------------------------------------------
+    out += ["", "### Data quality", "",
+            bullet_list([
+                f"{noise_n:,} junk notes ({pct(noise_n, len(in_window))} of the window) — "
+                f"test entries, keyboard mashing, single characters.",
+                f"{dupe_n:,} exact duplicates ({pct(dupe_n, len(in_window))}) — the same "
+                f"text saved more than once; counting them doubles any per-account total.",
+                f"{int((clean['_author_kind'] == 'none').sum()):,} usable notes name neither "
+                f"a representative nor a distributor.",
+                f"Median usable note is {int(clean['_len'].median())} characters — "
+                + ("long enough to carry real content."
+                   if clean['_len'].median() >= 40 else
+                   "short enough that most are fragments rather than accounts of anything."),
+            ])]
+    return "\n".join(out)
+
+
+def _notes_group_table(clean: pd.DataFrame, group_by: str, top_n: int) -> list[str]:
+    """One grouped table for the notes statistics tool."""
+    total = len(clean)
+
+    if group_by == "author":
+        rows = []
+        for name, sub in sorted(clean.groupby("_author"), key=lambda kv: -len(kv[1]))[:top_n]:
+            kinds = set(sub["_author_kind"])
+            rows.append([name,
+                         "person" if kinds == {"rep"} else
+                         "distributor" if kinds == {"distributor"} else "mixed / none",
+                         f"{len(sub):,}", pct(len(sub), total),
+                         f"{sub['_score'].mean():.1f}",
+                         f"{int(sub['_has_money'].sum()):,}",
+                         fmt_date(sub["_ts"].max())])
+        return ["### By author", "",
+                md_table(["Author", "Kind", "Notes", "Share", "Avg importance",
+                          "With $", "Last note"], rows,
+                         align=["---", "---", "---:", "---:", "---:", "---:", "---"]),
+                "", "*'distributor' is a company-level bucket, not a person — several people "
+                    "may share it.*"]
+
+    if group_by == "month":
+        by_month = clean.dropna(subset=["_ts"]).copy()
+        by_month["_m"] = by_month["_ts"].dt.tz_convert("UTC").dt.tz_localize(None).dt.to_period("M").astype(str)
+        rows = [[m, f"{len(sub):,}", f"{sub['_score'].mean():.1f}",
+                 f"{int(sub['_has_money'].sum()):,}", sub["_author"].nunique()]
+                for m, sub in sorted(by_month.groupby("_m"))][-top_n:]
+        return ["### By month", "",
+                md_table(["Month", "Notes", "Avg importance", "With $", "Distinct authors"],
+                         rows, align=["---", "---:", "---:", "---:", "---:"])]
+
+    if group_by == "theme":
+        counts = Counter(t for ts in clean["_themes"] for t in ts)
+        rows = [[theme, f"{n:,}", pct(n, total)] for theme, n in counts.most_common(top_n)]
+        return ["### By theme", "",
+                md_table(["Theme", "Notes", "Share"], rows, align=["---", "---:", "---:"])]
+
+    if group_by == "keyword":
+        counts = Counter()
+        for text in clean["_text"].str.lower():
+            for kw in NOTE_ACTION_KEYWORDS:
+                if kw in text:
+                    counts[kw] += 1
+        rows = [[kw, f"{n:,}", pct(n, total), NOTE_ACTION_KEYWORDS[kw]]
+                for kw, n in counts.most_common(top_n)]
+        return ["### By keyword", "",
+                md_table(["Keyword", "Notes", "Share", "Weight"], rows,
+                         align=["---", "---:", "---:", "---:"]),
+                "", "*Weight is how strongly the term implies action; it drives the "
+                    "importance score.*"]
+
+    if group_by == "author_kind":
+        rows = [[{"rep": "Named representative", "distributor": "Distributor (company)",
+                  "none": "Unattributed"}.get(k, k), f"{len(sub):,}", pct(len(sub), total),
+                 f"{sub['_score'].mean():.1f}"]
+                for k, sub in sorted(clean.groupby("_author_kind"), key=lambda kv: -len(kv[1]))]
+        return ["### By attribution", "",
+                md_table(["Attribution", "Notes", "Share", "Avg importance"], rows,
+                         align=["---", "---:", "---:", "---:"])]
+
+    if group_by == "length":
+        buckets = [(0, 20, "very short (<20 chars)"), (20, 60, "short (20–59)"),
+                   (60, 160, "medium (60–159)"), (160, 10**9, "long (160+)")]
+        rows = [[label, f"{int(((clean['_len'] >= lo) & (clean['_len'] < hi)).sum()):,}",
+                 pct(int(((clean['_len'] >= lo) & (clean['_len'] < hi)).sum()), total)]
+                for lo, hi, label in buckets]
+        return ["### By length", "",
+                md_table(["Length", "Notes", "Share"], rows, align=["---", "---:", "---:"])]
+
+    raise ToolError(f"Unknown group_by '{group_by}' for notes.",
+                    "one of: author, month, theme, keyword, author_kind, length")
+
+
+# ===========================================================================
+# Activities
+
+@mcp.tool(name="search_activities")
+@log_tool_usage
+def search_activities(user_id: str, activity_type: str | None = None,
+                      category: str | None = None, actor: str | None = None,
+                      period: str | None = None, customer: str | None = None,
+                      sort: str = "newest", limit: int = 25,
+                      timeline: bool = False) -> str:
+    """List individual events from the activity log.
+
+    Use this to answer "what happened", "when did X occur", "show me the
+    cancellations in June". Use `get_activity_statistics` for volumes, trends
+    and per-person rollups.
+
+    About this data: the activity log records *what the system did*, and its
+    actor column is mostly a channel — DISTRIBUTOR (the back office),
+    QUICKBOOKS (a sync) — not a person. Only a small minority of rows name an
+    individual. Each row here is marked `person` or `channel` so a bucket is
+    never mistaken for someone's workload. The log also captures only part of
+    the order book, so it is evidence of behaviour, not a source of totals.
+
+    Args:
+        user_id (str): The user/tenant id.
+        activity_type (str, optional): Event type, fuzzy — "order added",
+            "ORDER_ADDED" and "order" all work. Comma-separate for several.
+        category (str, optional): "commercial", "engagement", "risk", "admin"
+            or "other" — coarser than activity_type and stable across new types.
+        actor (str, optional): Representative name or channel, fuzzy.
+        period (str, optional): Time window. Defaults to the last month.
+        customer (str, optional): Customer/account name, fuzzy. Frequently
+            empty in these exports.
+        sort (str): "newest" (default) or "oldest".
+        limit (int): Maximum events returned, 1–300. Default 25.
+        timeline (bool): Add a per-day count table above the event list — useful
+            for spotting bursts and import artifacts.
+
+    Returns:
+        str: Markdown — scope header, optional daily timeline, then a table of
+        events with timestamp, type, category, actor and actor kind.
+    """
+    path = f"{user_id}/work_data_folder"
+    df, caveats = load_activities(path)
+    total = len(df)
+    window = resolve_period(period, df["_ts"].max())
+    limit = parse_int(limit, default=25, minimum=1, maximum=300, name="limit")
+
+    work = df[window.mask(df["_ts"])]
+    caveats = list(caveats) + period_coverage_note(window, df["_ts"], len(work), total)
+
+    filters: dict[str, Any] = {}
+    if activity_type:
+        matches: list[str] = []
+        for token in split_multi(activity_type):
+            matches += resolve_value(token, df["_type"], field_name="activity_type",
+                                     allow_multiple=True)
+        work = work[work["_type"].isin(set(matches))]
+        filters["activity_type"] = sorted(set(matches))
+    if category:
+        matches = resolve_value(category, ACTIVITY_CATEGORY_LABELS.keys(),
+                                field_name="category", allow_multiple=True)
+        work = work[work["_category"].isin(matches)]
+        filters["category"] = matches
+    if actor:
+        matches = resolve_value(actor, df["_actor"], field_name="actor", allow_multiple=True)
+        work = work[work["_actor"].isin(matches)]
+        filters["actor"] = matches
+    if customer:
+        pool = df["_customer"].dropna() if "_customer" in df.columns else pd.Series(dtype=str)
+        if pool.empty:
+            raise ToolError("The customer column is empty in every row of this export.",
+                            "drop the `customer` filter; use `actor` or `activity_type`")
+        matches = resolve_value(customer, pool, field_name="customer", allow_multiple=True)
+        work = work[work["_customer"].isin(matches)]
+        filters["customer"] = matches
+
+    if sort not in {"newest", "oldest"}:
+        raise ToolError(f"Unknown sort '{sort}'.", "one of: newest, oldest")
+    work = work.sort_values("_ts", ascending=(sort == "oldest"))
+
+    out = [header_block("Activity log", window, matched=len(work), total=total,
+                        unit="events", filters=filters, caveats=caveats), ""]
+
+    if work.empty:
+        available = ", ".join(sorted(df["_type"].unique())[:12])
+        out += ["**Nothing matched.**", "",
+                bullet_list([
+                    f"types present in the whole file: {available}",
+                    "widen with `period=\"all time\"` — the default is the last month",
+                    "try `category` instead of `activity_type` — it is coarser and stable",
+                ])]
+        return "\n".join(out)
+
+    if parse_bool(timeline):
+        daily = work.groupby(work["_ts"].dt.normalize()).size().sort_index()
+        peak = int(daily.max())
+        rows = [[fmt_date(d), f"{n:,}", "█" * max(1, round(n / peak * 24))]
+                for d, n in daily.tail(30).items()]
+        out += [f"### Daily volume (last {len(rows)} active day(s) in window)", "",
+                md_table(["Date", "Events", ""], rows, align=["---", "---:", "---"]), ""]
+
+    shown = work.head(limit)
+    rows = [[fmt_date(r["_ts"]) + " " + pd.Timestamp(r["_ts"]).strftime("%H:%M"),
+             r["_type_label"], ACTIVITY_CATEGORY_LABELS.get(r["_category"], "Other"),
+             humanize(r["_actor"]),
+             "person" if r["_actor_kind"] == "person" else
+             "channel" if r["_actor_kind"] == "channel" else "—"]
+            for _, r in shown.iterrows()]
+
+    out.append(f"### {len(shown)} event(s)"
+               + (f" *(of {len(work):,} matching — raise `limit` for more)*"
+                  if len(work) > limit else ""))
+    out += ["", md_table(["When (UTC)", "Activity", "Category", "Actor", "Actor is"], rows)]
+
+    person_n = int(shown["_actor_kind"].eq("person").sum())
+    out += ["", f"*{person_n} of these {len(shown)} rows name an individual; the rest record "
+                f"the channel that produced the event. Timestamps are UTC as stored.*"]
+    return "\n".join(out)
+
+
+@mcp.tool(name="get_activity_statistics")
+@log_tool_usage
+def get_activity_statistics(user_id: str, period: str | None = None,
+                            group_by: str = "type", compare_to_previous: bool = True,
+                            include_revenue: bool = True, top_n: int = 15) -> str:
+    """Aggregate the activity log: volume, mix, actors, timing, workflow rates.
+
+    Use this for "how busy are we", "what is the team actually doing", "are
+    cancellations up", "who generates the events". Use `search_activities` to
+    see the underlying rows.
+
+    Two things this tool knows that the raw file does not make obvious:
+
+      * **Order volume should not be read from here.** The log captures only
+        part of the order book. When `include_revenue` is on, the salesperson
+        table is taken from the orders export instead, which is the only
+        complete attribution available — the log leaves the salesperson blank on
+        order-creation rows.
+      * **Workflow rates are cohort ratios.** "68% task completion" compares
+        completions to creations *in the same window*; there is no parent id
+        linking a completion back to its own creation, so the figure misstates
+        if work routinely closes in a later period than it opens. That caveat is
+        printed alongside the number, not buried here.
+
+    Args:
+        user_id (str): The user/tenant id.
+        period (str, optional): Time window. Defaults to the last month.
+        group_by (str): "type" (default), "category", "actor", "channel",
+            "month", "weekday", "hour", or "salesperson" (revenue, from orders).
+        compare_to_previous (bool): Compare with the equally long preceding
+            window. Default True; ignored for "all time".
+        include_revenue (bool): Add the orders-and-revenue-by-salesperson table
+            from the orders export. Default True; skipped silently if there is
+            no orders file.
+        top_n (int): Rows per table, 1–50. Default 15.
+
+    Returns:
+        str: Markdown — scope header, headline volume, the grouped table,
+        workflow rates, and (optionally) revenue by salesperson.
+    """
+    return _activity_statistics(user_id, period, group_by, compare_to_previous,
+                                include_revenue, top_n)
+
+
+@tool_guard
+def _activity_statistics(user_id: str, period: str | None, group_by: str,
+                         compare_to_previous: bool, include_revenue: bool,
+                         top_n: int) -> str:
+
+    path = f"{user_id}/work_data_folder"
+    df, caveats = load_activities(path)
+    total = len(df)
+    anchor = df["_ts"].max()
+    window = resolve_period(period, anchor)
+    top_n = parse_int(top_n, default=15, minimum=1, maximum=50, name="top_n")
+    compare_to_previous = parse_bool(compare_to_previous, default=True)
+    include_revenue = parse_bool(include_revenue, default=True)
+
+    work = df[window.mask(df["_ts"])]
+    caveats = list(caveats) + period_coverage_note(window, df["_ts"], len(work), total)
+
+    out = [header_block("Activity statistics", window, matched=len(work), total=total,
+                        unit="events", filters={"group_by": group_by}, caveats=caveats), ""]
+    if work.empty:
+        out.append("**No events in this window.** Try `period=\"all time\"`; the file "
+                   f"covers {fmt_date(df['_ts'].min())} to {fmt_date(df['_ts'].max())}.")
+        return "\n".join(out)
+
+    # --- headline ---------------------------------------------------------
+    active_days = int(work["_date"].nunique())
+    span_days = window.days or max((work["_ts"].max() - work["_ts"].min()).days + 1, 1)
+    daily = work.groupby("_date").size()
+    headline = [
+        f"**{len(work):,} events** across {active_days} active day(s) of {span_days} "
+        f"({pct(active_days, span_days)} of days had any activity).",
+        f"{work['_type'].nunique()} distinct activity types, "
+        f"{work['_actor'].nunique()} distinct actors "
+        f"({int(work['_actor_kind'].eq('person').sum()):,} events name an individual).",
+        f"Busiest day: {fmt_date(daily.idxmax())} with {int(daily.max()):,} events; "
+        f"typical active day has {int(daily.median()):,}.",
+        f"{pct(int(work['_is_weekend'].sum()), len(work))} of events fall on a weekend.",
+    ]
+    if compare_to_previous and (previous := window.previous()):
+        prior = df[previous.mask(df["_ts"])]
+        headline.append(f"Versus {previous.describe()}: {len(prior):,} events → "
+                        f"{change(len(work), len(prior))}.")
+    out += ["### Headline", "", bullet_list(headline), ""]
+
+    # --- grouped table ----------------------------------------------------
+    out += _activity_group_table(df, work, window, group_by, top_n, compare_to_previous)
+
+    # --- workflow ---------------------------------------------------------
+    counts = work["_type"].value_counts()
+    workflow_rows = []
+    for opened_type, closed_type, label, relation in ACTIVITY_WORKFLOW_PAIRS:
+        opened, closed = int(counts.get(opened_type, 0)), int(counts.get(closed_type, 0))
+        if not opened and not closed:
+            continue
+        workflow_rows.append([
+            label, humanize(opened_type), f"{opened:,}", humanize(closed_type), f"{closed:,}",
+            pct(closed, opened) if opened else "—", relation])
+    if workflow_rows:
+        out += ["", "### Opened vs closed", "",
+                md_table(["Flow", "Opened by", "Opened", "Closed by", "Closed", "Rate",
+                          "Rate means"], workflow_rows,
+                         align=["---", "---", "---:", "---", "---:", "---:", "---"]),
+                "", "*Cohort ratio, not per-item matching: the log carries no parent id "
+                    "linking a completion to its own creation, so the rate compares totals "
+                    "over the same window and overstates lag when work closes in a later "
+                    "period than it opens.*"]
+
+    # --- revenue ----------------------------------------------------------
+    if include_revenue and group_by != "salesperson":
+        try:
+            out += ["", *_salesperson_table(user_id, window, top_n)]
+        except ToolError as exc:
+            out += ["", "### Orders and revenue by salesperson", "",
+                    f"*Not available: {exc.message}*"]
+    return "\n".join(out)
+
+
+def _activity_group_table(df: pd.DataFrame, work: pd.DataFrame, window: Period,
+                          group_by: str, top_n: int, compare: bool) -> list[str]:
+    total = len(work)
+    previous = window.previous() if compare else None
+    prior = df[previous.mask(df["_ts"])] if previous is not None else None
+
+    def delta_for(column: str, value: Any, current: int) -> str:
+        if prior is None:
+            return "—"
+        return change(current, int((prior[column] == value).sum()))
+
+    if group_by == "type":
+        rows = []
+        for value, n in work["_type"].value_counts().head(top_n).items():
+            rows.append([humanize(value),
+                         ACTIVITY_CATEGORY_LABELS.get(work.loc[work["_type"] == value,
+                                                               "_category"].iloc[0], "Other"),
+                         f"{n:,}", pct(n, total), delta_for("_type", value, int(n))])
+        return ["### By activity type", "",
+                md_table(["Activity", "Category", "Events", "Share", "vs previous window"],
+                         rows, align=["---", "---", "---:", "---:", "---"])]
+
+    if group_by == "category":
+        rows = []
+        for value, n in work["_category"].value_counts().items():
+            top_types = ", ".join(humanize(t) for t in
+                                  work.loc[work["_category"] == value, "_type"]
+                                  .value_counts().head(3).index)
+            rows.append([ACTIVITY_CATEGORY_LABELS.get(value, "Other"),
+                         ACTIVITY_CATEGORY_DESCRIPTIONS.get(value, ""),
+                         f"{n:,}", pct(n, total), delta_for("_category", value, int(n)),
+                         truncate(top_types, 40)])
+        return ["### By category", "",
+                md_table(["Category", "Covers", "Events", "Share", "vs previous", "Top types"],
+                         rows, align=["---", "---", "---:", "---:", "---", "---"])]
+
+    if group_by in {"actor", "channel"}:
+        column = "_actor" if group_by == "actor" else "_channel"
+        rows = []
+        for value, n in work[column].value_counts().head(top_n).items():
+            sub = work[work[column] == value]
+            kind = sub["_actor_kind"].mode()
+            recency = int((window.anchor - sub["_ts"].max()).days)
+            status = ("active" if recency <= DORMANT_DAYS[0] else
+                      "cooling" if recency <= DORMANT_DAYS[1] else
+                      "dormant" if recency <= DORMANT_DAYS[2] else "churned")
+            rows.append([humanize(value),
+                         "person" if (len(kind) and kind.iloc[0] == "person") else "channel",
+                         f"{n:,}", pct(n, total),
+                         humanize(sub["_type"].mode().iloc[0]),
+                         f"{recency}d ({status})",
+                         delta_for(column, value, int(n))])
+        return [f"### By {group_by}", "",
+                md_table([group_by.capitalize(), "Is a", "Events", "Share", "Mostly does",
+                          "Idle since", "vs previous"], rows,
+                         align=["---", "---", "---:", "---:", "---", "---", "---"]),
+                "", "*A `channel` row is a bucket — the back office, an integration — and "
+                    "may represent many people or none. Do not read it as one person's "
+                    "workload.*"]
+
+    if group_by == "month":
+        by_month = work.copy()
+        by_month["_m"] = by_month["_ts"].dt.tz_convert("UTC").dt.tz_localize(None).dt.to_period("M").astype(str)
+        rows = [[m, f"{len(sub):,}", sub["_type"].nunique(),
+                 humanize(sub["_type"].mode().iloc[0]), sub["_date"].nunique()]
+                for m, sub in sorted(by_month.groupby("_m"))][-top_n:]
+        return ["### By month", "",
+                md_table(["Month", "Events", "Distinct types", "Most common", "Active days"],
+                         rows, align=["---", "---:", "---:", "---", "---:"])]
+
+    if group_by == "weekday":
+        order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                 "Saturday", "Sunday"]
+        counts = work["_weekday"].value_counts()
+        rows = [[day, f"{int(counts.get(day, 0)):,}", pct(int(counts.get(day, 0)), total)]
+                for day in order]
+        return ["### By weekday (UTC)", "",
+                md_table(["Weekday", "Events", "Share"], rows, align=["---", "---:", "---:"])]
+
+    if group_by == "hour":
+        counts = work["_hour"].value_counts().reindex(range(24), fill_value=0)
+        peak = int(counts.max()) or 1
+        rows = [[f"{h:02d}:00", f"{int(n):,}", pct(int(n), total),
+                 "█" * max(0, round(int(n) / peak * 20))]
+                for h, n in counts.items() if n]
+        return ["### By hour (UTC)", "",
+                md_table(["Hour", "Events", "Share", ""], rows,
+                         align=["---", "---:", "---:", "---"]),
+                "", "*Hours are UTC as stored. Convert to the tenant's local timezone before "
+                    "drawing any staffing conclusion. An hour dominated by one activity type "
+                    "is usually a scheduled job, not people working.*"]
+
+    if group_by == "salesperson":
+        return _salesperson_table_for_group(work, top_n)
+
+    raise ToolError(f"Unknown group_by '{group_by}' for activities.",
+                    "one of: type, category, actor, channel, month, weekday, hour, "
+                    "salesperson")
+
+
+def _salesperson_table_for_group(work: pd.DataFrame, top_n: int) -> list[str]:
+    return ["### By salesperson", "",
+            "*The activity log leaves the salesperson blank on order-creation rows, so this "
+            "grouping is not available from it. Revenue by salesperson is produced from the "
+            "orders export instead — it appears below whenever `include_revenue` is on.*"]
+
+
+def _salesperson_table(user_id: str, window: Period, top_n: int) -> list[str]:
+    """Orders and revenue per salesperson, from the orders export.
+
+    Separate from the activity log on purpose: the log records only part of the
+    order book and carries no salesperson on order rows, so reading revenue from
+    it would understate every person's number by an unknown amount.
+    """
+    orders, notes = load_orders(user_id)
+    in_window = orders[window.mask(orders["_ts"])]
+    if in_window.empty:
+        return ["### Orders and revenue by salesperson", "",
+                f"*No orders in this window. The orders file covers "
+                f"{fmt_date(orders['_ts'].min())} to {fmt_date(orders['_ts'].max())}.*"]
+
+    total_revenue = float(in_window["_amount"].sum())
+    grouped = (in_window.groupby("_salesperson")
+               .agg(orders=("_amount", "size"), revenue=("_amount", "sum"),
+                    median=("_amount", "median"), largest=("_amount", "max"),
+                    last=("_ts", "max"))
+               .sort_values("revenue", ascending=False))
+
+    rows = [[name if name != UNASSIGNED_SALESPERSON else f"*{name}*",
+             f"{int(r['orders']):,}", money_short(r["revenue"]), pct(r["revenue"], total_revenue),
+             money_short(r["revenue"] / max(int(r["orders"]), 1)), money_short(r["median"]),
+             money_short(r["largest"]), fmt_date(r["last"])]
+            for name, r in grouped.head(top_n).iterrows()]
+    rows.append(["**Total**", f"**{len(in_window):,}**", f"**{money_short(total_revenue)}**",
+                 "100%", money_short(total_revenue / max(len(in_window), 1)),
+                 money_short(in_window["_amount"].median()),
+                 money_short(in_window["_amount"].max()), fmt_date(in_window["_ts"].max())])
+
+    top3 = float(grouped["revenue"].head(3).sum())
+    out = ["### Orders and revenue by salesperson", "",
+           "From the **orders export**, not the activity log — the log records only part of "
+           "the order book and leaves the salesperson blank on order-creation rows.", "",
+           md_table(["Salesperson", "Orders", "Revenue", "Share", "Avg order", "Median order",
+                     "Largest", "Last order"], rows,
+                    align=["---", "---:", "---:", "---:", "---:", "---:", "---:", "---"]),
+           ""]
+    out.append(bullet_list([
+        f"Top 3 salespeople hold {pct(top3, total_revenue)} of revenue in this window.",
+        f"Order value: {describe_distribution(in_window['_amount'], currency=True)}.",
+        *notes,
+    ]))
+    if len(grouped) > top_n:
+        out.append(f"\n*Showing the top {top_n} of {len(grouped)} salespeople by revenue; "
+                   f"the total row covers all of them.*")
+    return out
+
+
+# ===========================================================================
+# Tasks
+
+@mcp.tool(name="search_tasks")
+@log_tool_usage
+def search_tasks(user_id: str, query: str | None = None, status: str | None = None,
+                 priority: str | None = None, owner: str | None = None,
+                 category: str | None = None, account: str | None = None,
+                 overdue_only: bool = False, period: str | None = None,
+                 date_field: str = "created", sort: str = "most_overdue",
+                 limit: int = 20, show_duplicates: bool = False) -> str:
+    """Find individual tasks in the backlog.
+
+    Use this for "what is Maria working on", "show me the overdue payment
+    tasks", "which tasks mention Riverside Grocery". Use
+    `get_task_statistics` for counts, completion rates and per-owner load.
+
+    About this data: completed tasks are included by default because they are
+    the denominator of every completion rate — pass `status="PENDING"` for the
+    open backlog alone. A large share of tasks come from a recurring-task
+    generator and repeat verbatim; those are collapsed unless
+    `show_duplicates` is set. "Overdue" is measured against the newest
+    createdAt in the file rather than today, so a stale export does not mark
+    the entire backlog late.
+
+    Args:
+        user_id (str): The user/tenant id.
+        query (str, optional): Substring matched against title and description.
+            Comma-separated terms are OR-ed.
+        status (str, optional): "PENDING", "COMPLETED", … Fuzzy;
+            comma-separate for several. Omit for all.
+        priority (str, optional): "HIGH", "MEDIUM", "LOW", "UNSET". Fuzzy;
+            comma-separate for several.
+        owner (str, optional): Representative or distributor, fuzzy — "maria"
+            finds "Maria Gonzalez". Use "(unassigned)" for ownerless tasks.
+        category (str, optional): Work type, e.g. "Payment / collection",
+            "Complaint / issue", "Follow-up". Fuzzy.
+        account (str, optional): Store/account name parsed out of the text.
+            Heuristic — good for a rollup, not an authoritative key.
+        overdue_only (bool): Keep only open tasks past their due date.
+        period (str, optional): Time window. Defaults to the last month.
+        date_field (str): Which date `period` filters on — "created" (default)
+            or "due".
+        sort (str): "most_overdue" (default), "due", "newest", "oldest",
+            or "priority".
+        limit (int): Maximum tasks returned, 1–200. Default 20.
+        show_duplicates (bool): List every copy of a repeated task instead of
+            collapsing them into one row with a count.
+
+    Returns:
+        str: Markdown — scope header, then a table of tasks with due date,
+        status, priority, owner, days overdue and quality flags.
+    """
+    path = f"{user_id}/work_data_folder"
+    df, caveats = load_tasks(path)
+    total = len(df)
+    anchor = df["_ts"].max() if df["_ts"].notna().any() else pd.Timestamp.now(tz="UTC")
+    window = resolve_period(period, anchor)
+    limit = parse_int(limit, default=20, minimum=1, maximum=200, name="limit")
+
+    if date_field not in {"created", "due"}:
+        raise ToolError(f"Unknown date_field '{date_field}'.", "one of: created, due")
+    date_column = "_ts" if date_field == "created" else "_due"
+
+    work = df[window.mask(df[date_column])]
+    caveats = list(caveats) + period_coverage_note(window, df[date_column], len(work), total)
+
+    filters: dict[str, Any] = {"date_field": date_field}
+    if status:
+        matches = [m for token in split_multi(status)
+                   for m in resolve_value(token, df["_status"], field_name="status",
+                                          allow_multiple=True)]
+        work = work[work["_status"].isin(set(matches))]
+        filters["status"] = sorted(set(matches))
+    if priority:
+        matches = [m for token in split_multi(priority)
+                   for m in resolve_value(token, df["_priority"], field_name="priority",
+                                          allow_multiple=True)]
+        work = work[work["_priority"].isin(set(matches))]
+        filters["priority"] = sorted(set(matches))
+    if owner:
+        matches = resolve_value(owner, df["_owner"], field_name="owner", allow_multiple=True)
+        work = work[work["_owner"].isin(matches)]
+        filters["owner"] = matches
+    if category:
+        matches = resolve_value(category, df["_category"], field_name="category",
+                                allow_multiple=True)
+        work = work[work["_category"].isin(matches)]
+        filters["category"] = matches
+    if account:
+        pool = df["_account"].dropna()
+        if pool.empty:
+            raise ToolError("No account name could be parsed out of any task in this export.",
+                            "drop `account` and use `query` against the title text instead")
+        matches = resolve_value(account, pool, field_name="account", allow_multiple=True)
+        work = work[work["_account"].isin(matches)]
+        filters["account"] = matches
+    if query:
+        terms = split_multi(query)
+        haystack = work["_title"] + " " + work["_desc"]
+        mask = pd.Series(False, index=work.index)
+        for term in terms:
+            mask |= haystack.str.contains(term, case=False, regex=False, na=False)
+        work = work[mask]
+        filters["query"] = terms
+    if parse_bool(overdue_only):
+        work = work[work["_overdue_days"].notna()]
+        filters["overdue_only"] = True
+
+    collapse = not parse_bool(show_duplicates)
+    dupe_counts = work.groupby("_dupe_key").size() if collapse else None
+    if collapse:
+        work = work.drop_duplicates(subset="_dupe_key", keep="first")
+
+    orders = {
+        "most_overdue": (["_overdue_days", "_due"], [False, True]),
+        "due": (["_due"], [True]),
+        "newest": (["_ts"], [False]),
+        "oldest": (["_ts"], [True]),
+        "priority": (["_priority_rank", "_overdue_days"], [True, False]),
+    }
+    if sort not in orders:
+        raise ToolError(f"Unknown sort '{sort}'.", f"one of: {', '.join(orders)}")
+    if sort == "priority":
+        rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "UNSET": 3}
+        work = work.assign(_priority_rank=work["_priority"].map(lambda p: rank.get(p, 4)))
+    columns, ascending = orders[sort]
+    work = work.sort_values(columns, ascending=ascending, na_position="last")
+
+    out = [header_block("Tasks", window, matched=len(work), total=total, unit="tasks",
+                        filters=filters, caveats=caveats), ""]
+
+    if work.empty:
+        out += ["**Nothing matched.**", "",
+                bullet_list([
+                    "`period=\"all time\"` — the default window is only the last month",
+                    f"statuses present: {', '.join(sorted(df['_status'].unique()))}",
+                    f"priorities present: {', '.join(sorted(df['_priority'].unique()))}",
+                    "`date_field=\"due\"` if you meant tasks *due* in that window rather "
+                    "than created in it",
+                ])]
+        return "\n".join(out)
+
+    shown = work.head(limit)
+    rows = []
+    for _, r in shown.iterrows():
+        overdue = ("—" if pd.isna(r["_overdue_days"])
+                   else f"**{int(r['_overdue_days'])}d**")
+        copies = int(dupe_counts.get(r["_dupe_key"], 1)) if collapse else 1
+        title = truncate(r["_title"], 46) + (f" ×{copies}" if copies > 1 else "")
+        flags = ", ".join(f for f in r["_flags"] if f in
+                          {"unactionable_pair", "no_description", "vague_title",
+                           "placeholder_text"}) or "—"
+        rows.append([title, r["_status"].title(), r["_priority"].title(), r["_owner"],
+                     r["_category"], fmt_date(r["_due"]), overdue, flags])
+
+    out.append(f"### {len(shown)} task(s)"
+               + (f" *(of {len(work):,} matching — raise `limit` for more)*"
+                  if len(work) > limit else ""))
+    out += ["", md_table(["Title", "Status", "Priority", "Owner", "Type", "Due", "Overdue",
+                          "Quality flags"], rows)]
+
+    if collapse and dupe_counts is not None and (dupe_counts > 1).any():
+        extra = int((dupe_counts[dupe_counts > 1] - 1).sum())
+        out += ["", f"*{extra} identical copy/copies were collapsed (shown as ×N). Most come "
+                    f"from the recurring-task generator; pass `show_duplicates=true` to list "
+                    f"them individually.*"]
+    return "\n".join(out)
+
+
+@mcp.tool(name="get_task_statistics")
+@log_tool_usage
+def get_task_statistics(user_id: str, period: str | None = None,
+                        group_by: str = "owner", overdue_only: bool = False,
+                        compare_to_previous: bool = True, top_n: int = 12) -> str:
+    """Aggregate the task backlog: size, lateness, completion, ownership, quality.
+
+    Use this for "how big is the backlog", "who is behind", "what kind of work
+    never gets finished", "is the priority field meaningful". Use `search_tasks`
+    to see the rows behind any figure.
+
+    Three readings this tool sets up that raw counts do not:
+
+      * **Overdue is a rate, not a count.** 14 overdue means nothing until you
+        know whether the owner holds 20 tasks or 200, so every per-owner row
+        carries its denominator, and owners below a minimum sample are marked
+        rather than ranked.
+      * **The priority-inversion test.** If HIGH does not complete faster than
+        LOW, the priority field is decorative. Grouping by priority answers that
+        directly.
+      * **Aging separates late from abandoned.** Something 90+ days overdue is
+        not late work, it is dead work still carried as a commitment.
+
+    Args:
+        user_id (str): The user/tenant id.
+        period (str, optional): Time window over task creation date. Defaults to
+            the last month; "all time" is usually right for backlog questions.
+        group_by (str): "owner" (default), "status", "priority", "category",
+            "account", "month", or "quality".
+        overdue_only (bool): Restrict every figure to open, past-due tasks.
+        compare_to_previous (bool): Compare with the equally long preceding
+            window. Default True; ignored for "all time".
+        top_n (int): Rows per table, 1–50. Default 12.
+
+    Returns:
+        str: Markdown — scope header, headline backlog figures, aging profile,
+        the grouped table, and a data-quality section.
+    """
+    return _task_statistics(user_id, period, group_by, overdue_only,
+                            compare_to_previous, top_n)
+
+
+@tool_guard
+def _task_statistics(user_id: str, period: str | None, group_by: str, overdue_only: bool,
+                     compare_to_previous: bool, top_n: int) -> str:
+
+    path = f"{user_id}/work_data_folder"
+    df, caveats = load_tasks(path)
+    total = len(df)
+    anchor = df["_ts"].max() if df["_ts"].notna().any() else pd.Timestamp.now(tz="UTC")
+    window = resolve_period(period, anchor)
+    top_n = parse_int(top_n, default=12, minimum=1, maximum=50, name="top_n")
+    overdue_only = parse_bool(overdue_only)
+    compare_to_previous = parse_bool(compare_to_previous, default=True)
+
+    work = df[window.mask(df["_ts"])]
+    if overdue_only:
+        work = work[work["_overdue_days"].notna()]
+    caveats = list(caveats) + period_coverage_note(window, df["_ts"], len(work), total)
+
+    out = [header_block("Task backlog statistics", window, matched=len(work), total=total,
+                        unit="tasks",
+                        filters={"group_by": group_by,
+                                 "overdue_only": overdue_only or None},
+                        caveats=caveats), ""]
+    if work.empty:
+        out.append("**No tasks in this window.** Try `period=\"all time\"`.")
+        return "\n".join(out)
+
+    open_tasks = work[work["_is_open"]]
+    done_tasks = work[~work["_is_open"]]
+    overdue = work[work["_overdue_days"].notna()]
+    overdue_days = sorted(int(d) for d in overdue["_overdue_days"])
+
+    headline = [
+        f"**{len(open_tasks):,} open** of {len(work):,} tasks "
+        f"({pct(len(done_tasks), len(work))} completion rate).",
+        f"**{len(overdue):,} open tasks are overdue** — {pct(len(overdue), len(open_tasks))} "
+        f"of open work.",
+        f"{int(open_tasks['_due'].isna().sum()):,} open tasks have no due date and can never "
+        f"be counted late; {int(open_tasks['_owner_kind'].eq('none').sum()):,} have no owner.",
+        f"{open_tasks['_owner'].nunique()} distinct owner(s) hold the open backlog.",
+    ]
+    if compare_to_previous and (previous := window.previous()):
+        prior = df[previous.mask(df["_ts"])]
+        headline.append(f"Tasks created versus {previous.describe()}: {len(prior):,} → "
+                        f"{change(len(work), len(prior))}.")
+    out += ["### Headline", "", bullet_list(headline), ""]
+
+    # --- aging ------------------------------------------------------------
+    if overdue_days:
+        buckets = Counter("1–7d" if d <= 7 else "8–30d" if d <= 30
+                          else "31–90d" if d <= 90 else "90d+" for d in overdue_days)
+        rows = [[label, f"{buckets.get(label, 0):,}", pct(buckets.get(label, 0), len(overdue)),
+                 meaning]
+                for label, meaning in (("1–7d", "recoverable slippage"),
+                                       ("8–30d", "needs chasing"),
+                                       ("31–90d", "the owner has stopped looking"),
+                                       ("90d+", "dead work still carried as a commitment"))]
+        out += ["### How late", "",
+                md_table(["Overdue by", "Tasks", "Share of overdue", "Reads as"], rows,
+                         align=["---", "---:", "---:", "---"]), "",
+                bullet_list([
+                    f"Median overdue task is {overdue_days[len(overdue_days) // 2]} days late; "
+                    f"the worst is {max(overdue_days)} days.",
+                    f"{int(sum(1 for a in open_tasks['_age_days'] if pd.notna(a) and a > 90)):,} open "
+                    f"task(s) were created more than 90 days ago.",
+                ]), ""]
+        worst = overdue.nlargest(min(5, len(overdue)), "_overdue_days")
+        out += ["**Oldest overdue**", "",
+                md_table(["Task", "Owner", "Priority", "Due", "Days late"],
+                         [[truncate(r["_title"], 50), r["_owner"], r["_priority"].title(),
+                           fmt_date(r["_due"]), f"**{int(r['_overdue_days'])}**"]
+                          for _, r in worst.iterrows()],
+                         align=["---", "---", "---", "---", "---:"]), ""]
+
+    # --- grouped table ----------------------------------------------------
+    out += _task_group_table(work, group_by, top_n)
+
+    # --- quality ----------------------------------------------------------
+    flag_counts = Counter(f for flags in work["_flags"] for f in flags)
+    dupe_groups = work.groupby("_dupe_key").size()
+    extra = int((dupe_groups[dupe_groups > 1] - 1).sum())
+    explain = {
+        "no_description": "title only — whoever picks it up has to guess the detail",
+        "vague_title": "the title names no subject (\"follow up\", \"urgent\")",
+        "unactionable_pair": "vague title *and* no description — blocks anyone but the author",
+        "description_echoes_title": "the description repeats the title and adds nothing",
+        "placeholder_text": "test or placeholder text left in a real record",
+        "empty_title": "no title at all",
+        "all_caps": "shouted title, usually pasted",
+    }
+    rows = [[flag, f"{n:,}", pct(n, len(work)), explain.get(flag, "")]
+            for flag, n in flag_counts.most_common()]
+    out += ["", "### Can these tasks be picked up by someone else?", ""]
+    out.append(md_table(["Flag", "Tasks", "Share", "What it means"], rows,
+                        align=["---", "---:", "---:", "---"],
+                        empty="*Every task has a usable title and description.*"))
+    out += ["", bullet_list([
+        f"{int((dupe_groups > 1).sum()):,} duplicate group(s) add {extra:,} redundant row(s) "
+        f"— mostly the recurring-task generator, but they double-count per-owner totals.",
+        f"{int(work['_account'].notna().sum()):,} of {len(work):,} tasks name a parseable "
+        f"account in their text ({pct(int(work['_account'].notna().sum()), len(work))}); "
+        f"account rollups only cover those.",
+    ])]
+    return "\n".join(out)
+
+
+def _task_group_table(work: pd.DataFrame, group_by: str, top_n: int) -> list[str]:
+    total = len(work)
+
+    def block(sub: pd.DataFrame) -> tuple[int, int, int, int, str]:
+        opened = int(sub["_is_open"].sum())
+        late = int(sub["_overdue_days"].notna().sum())
+        high_open = int((sub["_priority"].eq("HIGH") & sub["_is_open"]).sum())
+        worst = sub["_overdue_days"].dropna()
+        return (len(sub), opened, late, high_open,
+                f"{int(worst.max())}d" if len(worst) else "—")
+
+    if group_by == "owner":
+        rows = []
+        for name, sub in sorted(work.groupby("_owner"),
+                                key=lambda kv: -int(kv[1]["_is_open"].sum()))[:top_n]:
+            n, opened, late, high_open, worst = block(sub)
+            thin = "" if n >= MIN_SAMPLE_PER_PERSON else " `*`"
+            rows.append([f"{name}{thin}", f"{n:,}", f"{opened:,}",
+                         pct(n - opened, n), f"{late:,}", pct(late, opened),
+                         f"{high_open:,}", worst])
+        return ["### By owner", "",
+                md_table(["Owner", "Tasks", "Open", "Completed %", "Overdue",
+                          "Overdue rate", "High open", "Worst"], rows,
+                         align=["---", "---:", "---:", "---:", "---:", "---:", "---:", "---:"]),
+                "", f"*`*` marks owners with fewer than {MIN_SAMPLE_PER_PERSON} tasks — their "
+                    f"rates are arithmetic, not performance. '(unassigned)' is not a person.*"]
+
+    if group_by == "priority":
+        order = ["HIGH", "MEDIUM", "LOW", "UNSET"]
+        present = [p for p in order if p in set(work["_priority"])]
+        present += [p for p in sorted(set(work["_priority"])) if p not in order]
+        rows = []
+        for value in present:
+            sub = work[work["_priority"] == value]
+            n, opened, late, _, worst = block(sub)
+            rows.append([value.title(), f"{n:,}", f"{opened:,}", pct(n - opened, n),
+                         f"{late:,}", pct(late, opened), worst])
+        completion = {p: (work[work["_priority"] == p]["_is_open"].eq(False).mean())
+                      for p in present}
+        verdict = ("HIGH completes no faster than LOW — the priority field is not driving "
+                   "what gets done."
+                   if completion.get("HIGH", 0) <= completion.get("LOW", 0) + 0.02
+                   else "HIGH does complete faster than LOW, so the field carries real signal.")
+        return ["### By priority", "",
+                md_table(["Priority", "Tasks", "Open", "Completed %", "Overdue", "Overdue rate",
+                          "Worst"], rows,
+                         align=["---", "---:", "---:", "---:", "---:", "---:", "---:"]),
+                "", f"**Priority-inversion test:** {verdict}"]
+
+    if group_by == "status":
+        rows = [[value.title(), f"{n:,}", pct(n, total),
+                 "closed" if value in TASK_CLOSED_STATUSES else "open"]
+                for value, n in work["_status"].value_counts().items()]
+        return ["### By status", "",
+                md_table(["Status", "Tasks", "Share", "Counts as"], rows,
+                         align=["---", "---:", "---:", "---"])]
+
+    if group_by in {"category", "account"}:
+        column = "_category" if group_by == "category" else "_account"
+        pool = work[work[column].notna()]
+        if pool.empty:
+            return [f"### By {group_by}", "",
+                    f"*No task in this window has a parseable {group_by}.*"]
+        rows = []
+        for value, sub in sorted(pool.groupby(column),
+                                 key=lambda kv: -int(kv[1]["_is_open"].sum()))[:top_n]:
+            n, opened, late, high_open, worst = block(sub)
+            rows.append([value, f"{n:,}", f"{opened:,}", pct(n - opened, n),
+                         f"{late:,}", f"{high_open:,}", worst])
+        out = [f"### By {group_by}", "",
+               md_table([group_by.capitalize(), "Tasks", "Open", "Completed %", "Overdue",
+                         "High open", "Worst"], rows,
+                        align=["---", "---:", "---:", "---:", "---:", "---:", "---:"])]
+        if group_by == "account":
+            out += ["", "*Account names are parsed heuristically out of task text. They are a "
+                        "rollup aid, not an authoritative customer key — verify before acting "
+                        "on any single account.*"]
+        else:
+            uncategorized = int(work["_category"].eq("Uncategorized").sum())
+            out += ["", f"*{uncategorized:,} task(s) ({pct(uncategorized, total)}) match no "
+                        f"work-type rule. That is a legibility problem, not a kind of work.*"]
+        return out
+
+    if group_by == "month":
+        by_month = work.dropna(subset=["_ts"]).copy()
+        by_month["_m"] = by_month["_ts"].dt.tz_convert("UTC").dt.tz_localize(None).dt.to_period("M").astype(str)
+        rows = []
+        for month, sub in sorted(by_month.groupby("_m")):
+            n, opened, late, high_open, _ = block(sub)
+            rows.append([month, f"{n:,}", f"{opened:,}", pct(n - opened, n), f"{late:,}",
+                         sub["_owner"].nunique()])
+        return ["### By month created", "",
+                md_table(["Month", "Created", "Still open", "Completed %", "Overdue", "Owners"],
+                         rows[-top_n:],
+                         align=["---", "---:", "---:", "---:", "---:", "---:"])]
+
+    if group_by == "quality":
+        counts = Counter(f for flags in work["_flags"] for f in flags)
+        clean = int(sum(1 for flags in work["_flags"] if not flags))
+        rows = [["(no flags — fully legible)", f"{clean:,}", pct(clean, total)]]
+        rows += [[flag, f"{n:,}", pct(n, total)] for flag, n in counts.most_common(top_n)]
+        return ["### By text quality", "",
+                md_table(["Flag", "Tasks", "Share"], rows, align=["---", "---:", "---:"])]
+
+    raise ToolError(f"Unknown group_by '{group_by}' for tasks.",
+                    "one of: owner, status, priority, category, account, month, quality")
 
 
 if __name__ == "__main__":

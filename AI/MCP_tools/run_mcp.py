@@ -26,7 +26,8 @@ from AI.group_customer_analyze.Agents_rules.prompts import (
     prompt_multi_agent_orders, 
     prompt_multi_agent_customers, 
     prompt_multi_agent_catalog,
-    prompt_multi_agent_FAQ
+    prompt_multi_agent_FAQ,
+    prompt_multi_agent_activities
 )
 
 # 1. SETUP & CONFIGURATION
@@ -34,7 +35,7 @@ load_dotenv()
 
 # Configure Root Logger
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
@@ -105,8 +106,18 @@ FAQ_TOOLS_LIST = [
     "look_up_faq"
 ]
 
-# 2. CONNECTION MANAGEMENT (Using AsyncExitStack)
+ACTIVITY_TOOLS_LIST = [
+    "search_notes",
+    "get_notes_statistics",
+    "search_activities",
+    "get_activity_statistics",
+    "search_tasks",
+    "get_task_statistics"
+]
 
+# 2. CONNECTION MANAGEMENT (Using AsyncExitStack)
+import logging
+logging.getLogger("mcp").setLevel(logging.WARNING)
 def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
     """
     Returns the client OBJECT, but does not connect yet. 
@@ -145,6 +156,10 @@ async def create_catalog_agent(mcp_server: MCPServerStreamableHttp, user_id: str
     instructions = await prompt_multi_agent_catalog(user_id, current_date_str)
     return Agent(name="catalog_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
+async def create_activity_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
+    instructions = await prompt_multi_agent_activities(user_id, current_date_str)
+    return Agent(name="activities_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
+
 async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tuple[Agent, AdvancedSQLiteSession]:
     """
     Builds agents and registers connections into the provided AsyncExitStack.
@@ -156,18 +171,20 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
     client_def_customers = create_client_definition(CUSTOMER_TOOLS_LIST)
     client_def_catalog = create_client_definition(CATALOG_TOOLS_LIST)
     client_def_faq = create_client_definition(FAQ_TOOLS_LIST)
-
+    client_def_activities = create_client_definition(ACTIVITY_TOOLS_LIST)
     # 2. Enter Contexts (Connect) via the Stack
     order_server = await stack.enter_async_context(client_def_orders)
     customer_server = await stack.enter_async_context(client_def_customers)
     catalog_server = await stack.enter_async_context(client_def_catalog)
     faq_server = await stack.enter_async_context(client_def_faq)
+    activities_server = await stack.enter_async_context(client_def_activities)
 
     # 3. Create Sub-Agents
     sub_agent_orders = await create_orders_agent(order_server, session_id)
     sub_agent_customers = await create_customer_agent(customer_server, session_id)
     sub_agent_catalog = await create_catalog_agent(catalog_server, session_id)
     sub_agent_faq = await create_faq_agent(faq_server, session_id)
+    sub_agent_activities = await create_activity_agent(activities_server, session_id)
 
     # 4 Check if data empty - if true then user cn be new or low data quality
     from AI.utils import _is_csv_empty
@@ -205,6 +222,11 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
                 max_turns=8, 
                 tool_description="Use for STATIC KNOWLEDGE. Routes here for company policies, general business info, FAQ lookups, and SimplyDepo (SD) software documentation."
             ),
+            sub_agent_activities.as_tool(
+                tool_name="activities_agent", 
+                max_turns=8, 
+                tool_description="Use for WHAT is being done. Routes here for top activities, activity details, and activity performance metrics. Tasks, notes, and forms are also handled here."
+            )
         ]
     )
     
