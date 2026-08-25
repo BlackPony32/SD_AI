@@ -6,3 +6,6 @@ __pycache__
 db
 SD
 test*
+*.md
+*.txt
+chroma_data

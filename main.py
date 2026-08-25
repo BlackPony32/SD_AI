@@ -354,44 +354,6 @@ class AI_Request(BaseModel):
     
 
 #____
-@app.post("/analyze_routes/{user_id}")
-async def analyze_routes(user_id: str):
-    user_data_path = f"data/{user_id}"
-    orders_csv_path = f"{user_data_path}/oorders.csv"
-    customers_csv_path = f"{user_data_path}/raw_data/concatenated_customers.csv"
-    
-    # Check if user data directory exists
-    if not os.path.exists(user_data_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Incorrect user ID: {user_id}"
-        )
-            
-    # Check if files exist
-    if not os.path.exists(orders_csv_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Orders file not found."
-        )
-    
-    if not os.path.exists(customers_csv_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Customers file not found."
-        )
-    
-    # Analyze customer orders
-    result = await analyze_customer_orders_async(orders_csv_path, customers_csv_path)
-    
-    # Check if result is empty
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No data available after analysis"
-        )
-    
-    return result
-
 
 @app.post("/Ask_ai_many_customers")
 async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
@@ -1027,226 +989,248 @@ and ask AI agent for help with platform navigation and order creation, or you ca
 
 
 # Start of MCP end point
+
+import logging
+import time
+from dataclasses import dataclass
+from typing import Dict, List, Literal, Optional, Tuple, get_args
+from uuid import UUID
+
+from fastapi import Body, HTTPException, status
+from pydantic import BaseModel, Field
+
+from AI.utils import (
+    EMPTY_ORDERS_MESSAGE,
+    FULL_REPORT,
+    ReportContext,
+    ReportRunner,
+    batch_process_runner,
+    build_sales_pipeline,
+    error_response,
+    files_are_fresh,
+    lock_for,
+    module_runner,
+    ok_response,
+    sync_raw_data,
+)
+
+import asyncio
+
+
+RAW_FILES: Dict[str, str] = {
+    "customers": "raw_file_customers.csv",
+    "orders": "raw_file_orders.csv",
+    "order_products": "raw_file_order_products.csv",
+    "catalog": "raw_file_catalog.csv",
+    "activities": "raw_file_activities.csv",
+    "forms": "raw_file_forms.csv", #TODO
+    "tasks": "raw_file_tasks.csv",
+    "notes": "raw_file_notes.csv",
+}
+
+SALES_DATASETS: Tuple[str, ...] = ("customers", "orders", "order_products", "catalog")
+
+
+@dataclass(frozen=True)
+class EntitySpec:
+    datasets: Tuple[str, ...]            # raw datasets to fetch + freshness-check
+    runner: ReportRunner                 # how the report is actually produced
+    needs_sales_pipeline: bool = False   # build the cleaned_* CSVs first
+    empty_orders_blocks: bool = False    # return the "no orders" 404 when orders are empty
+
+    def __post_init__(self) -> None:
+        unknown = set(self.datasets) - set(RAW_FILES)
+        if unknown:
+            raise ValueError(f"EntitySpec references unknown datasets: {sorted(unknown)}")
+        if self.needs_sales_pipeline:
+            missing = set(SALES_DATASETS) - set(self.datasets)
+            if missing:
+                # Fails at import time, not on a request at 3am.
+                raise ValueError(
+                    f"needs_sales_pipeline=True also requires datasets {sorted(missing)}"
+                )
+
+    @property
+    def required_files(self) -> Tuple[str, ...]:
+        return tuple(RAW_FILES[d] for d in self.datasets)
+
+
+def sales_entity(agent_name: Optional[str] = None) -> EntitySpec:
+    """Shorthand for the orders / catalog / customers family."""
+    return EntitySpec(
+        datasets=SALES_DATASETS,
+        runner=batch_process_runner(agent_name),
+        needs_sales_pipeline=True,
+        empty_orders_blocks=True,
+    )
+
+
+ENTITY_SPECS: Dict[str, EntitySpec] = {
+    # --- batch / topic-analysis family: all four cleaned CSVs, one agent each ---
+    "orders":     sales_entity(),
+    "catalog":    sales_entity(),
+    "customers":  sales_entity(),
+
+    # --- standalone-module family: own run_report, own raw data ---
+    "activities": EntitySpec(
+        datasets=("activities", "orders"),
+        runner=module_runner("AI.activities"),
+    ),
+    "forms": EntitySpec(
+        datasets=("forms",),
+        runner=module_runner(module_path="AI.activities.forms.forms_ai", func_name='analyze_form'),
+    ),
+    "tasks": EntitySpec(
+        datasets=("tasks",),
+        runner=module_runner("AI.activities"),
+    ),
+    "notes": EntitySpec(
+        datasets=("notes",),
+        runner=module_runner("AI.activities")
+    )
+}
+
+
+EntityName = Literal[
+    "orders",
+    "catalog",
+    "customers",
+    "activities",
+    "forms",
+    "tasks",
+    "notes",
+]
+
+_declared = set(get_args(EntityName))
+if _declared != set(ENTITY_SPECS):
+    raise RuntimeError(
+        "EntityName and ENTITY_SPECS have drifted. "
+        f"Only in EntityName: {sorted(_declared - set(ENTITY_SPECS))}; "
+        f"only in ENTITY_SPECS: {sorted(set(ENTITY_SPECS) - _declared)}"
+    )
+
+
 class MCPRequest(BaseModel):
     distributor_id: UUID
-    report_type: str = Field(
-        default="full_report",
-        title="Report Type",
-        description="Specify which report section to generate. Defaults to the full report."
+    entity: EntityName = Field(
+        ...,
+        title="Entity",
+        description="Which analysis pipeline to run.",
     )
-    entity: Literal["orders", "activities", "catalog","customers"]    # Single entity, restricted to AllowedEntity values
+    report_type: str = Field(
+        default=FULL_REPORT,
+        title="Report Type",
+        description="Which report section to generate. Defaults to the full report.",
+    )
+    uuid: Optional[str] = None
 
-
+    # --- Backward compatibility only ---
+    customer_ids: Optional[List[str]] = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated. Use `ids` together with id_type='customer' instead.",
+    )
 
 
 @app.post("/generate-mcp-reports")
 async def create_mcp_reports(request: MCPRequest = Body(...)):
+    t0 = time.perf_counter()
+    distributor_id = str(request.distributor_id)
+    entity = request.entity
+    report_type = request.report_type
+
     try:
-        start_time = time.perf_counter()
-        entity = request.entity
-        report_type = request.report_type
-        distributor_id = str(request.distributor_id)
+        # ---- validate -------------------------------------------------
+        spec = ENTITY_SPECS.get(entity)
+        if spec is None:  # unreachable through the Literal, but keeps this honest
+            return error_response(
+                status.HTTP_400_BAD_REQUEST, "unsupported_entity",
+                f"No report pipeline registered for entity '{entity}'.",
+                distributor_id, allowed_entities=sorted(ENTITY_SPECS),
+            )
 
         allowed_reports = TOPIC_CONFIG.get(entity, [])
-
-        # Check if the requested report type exists in the allowed list
         if report_type not in allowed_reports:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={
-                    "error": "invalid_configuration",
-                    "message": f"The report type '{report_type}' is not valid for the '{entity}' entity.",
-                    "allowed_reports": allowed_reports,
-                    "distributor_id": distributor_id # Passing back the ID as requested
-                }
+            return error_response(
+                status.HTTP_400_BAD_REQUEST, "invalid_configuration",
+                f"The report type '{report_type}' is not valid for the '{entity}' entity.",
+                distributor_id, allowed_reports=allowed_reports,
             )
 
+        # ---- sync (only this entity's datasets; one syncer per distributor) ----
+        async with lock_for(f"{distributor_id}:{entity}"):
+            fresh = await asyncio.to_thread(files_are_fresh, distributor_id, spec.required_files)
+            if not fresh:
+                await sync_raw_data(distributor_id, spec.datasets, t0)
 
-        should_download_files = is_data_ready(distributor_id, entity)
-        #print(should_download_files)
+        # ---- prepare --------------------------------------------------
+        ctx = ReportContext(
+            distributor_id=distributor_id,
+            entity=entity,
+            report_type=report_type,
+            request=request,
+        )
 
-        if not should_download_files: #if not should_download_files:
+        if spec.needs_sales_pipeline:
             try:
-                # Call the function to fetch and save data 
-                # --- STEP 1: FETCH DATA ---
-                timeout_config = httpx.Timeout(5.0, read=120.0)
-                async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
-                    fetch_tasks = [
-                        get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
-                        get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
-                        get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
-                        get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client)
-                    ]
-
-                    data, data1, data2, data3 = await asyncio.gather(*fetch_tasks)
-                    print(f"Step 1 - Data fetch completed: {time.perf_counter() - start_time:.2f}s")
-
-                # --- STEP 2: DOWNLOAD FILES ---
-                # Open ONE aiohttp session for all downloads
-                async with aiohttp.ClientSession() as download_session:
-                    handle_tasks = [
-                        handle_distributor_data(data, "customers", distributor_id, download_session),
-                        handle_distributor_data(data1, "orders", distributor_id, download_session),
-                        handle_distributor_data(data2, "order_products", distributor_id, download_session),
-                        handle_distributor_data(data3, "catalog", distributor_id, download_session)
-                    ]
-
-                    await asyncio.gather(*handle_tasks)
-                    print(f"Step 2 - All Data processing completed: {time.perf_counter() - start_time:.2f}s")
-            except Exception as e:
-                error_msg = str(e)
-                if "HTTP Error" in error_msg:
-                    try:
-                        # Extract the JSON payload from the exception string
-                        json_part = error_msg.split("HTTP Error 404: ")[1]
-                        upstream_detail = json.loads(json_part)
-
-                        raise HTTPException(
-                            status_code=status.HTTP_404_NOT_FOUND,
-                            detail={
-                                "error": "Upstream Resource Missing",
-                                "distributor_id": distributor_id,
-                                "upstream_message": upstream_detail.get("message", "").strip()
-                            }
-                        )
-                    except (IndexError, json.JSONDecodeError):
-                        pass # Fall through to generic handler if parsing fails
-
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Data sync failed: {error_msg}"
+                ctx.paths, orders_empty = await build_sales_pipeline(
+                    distributor_id, RAW_FILES, t0
+                )
+            except Exception as exc:
+                logger2.exception("Data processing error: %s", exc)
+                return error_response(
+                    status.HTTP_502_BAD_GATEWAY, "data_preprocessing_failed",
+                    "Failed to fetch or preprocess distributor data from the upstream "
+                    "source. Report generation aborted.",
+                    distributor_id,
                 )
 
-        file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
-        file_path_products = os.path.join('data', distributor_id, 'work_data_folder','raw_file_order_products.csv')
-        file_path_customers = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_customers.csv')
-        file_path_catalog = os.path.join('data', distributor_id,'work_data_folder', 'raw_file_catalog.csv')
+            if orders_empty and spec.empty_orders_blocks:
+                logger2.info("Orders data is empty after processing.")
+                return error_response(
+                    status.HTTP_404_NOT_FOUND, "empty_data",
+                    EMPTY_ORDERS_MESSAGE, distributor_id,
+                )
 
-        # Preprocess data
+        # ---- run ------------------------------------------------------
         try:
-            full_cleaned_orders, full_cleaned_products = await prepared_big_data(
-                str(file_path_orders), 
-                str(file_path_products)
+            payload = await spec.runner(ctx)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Original code logged here and fell through to
+            # content={"sections": clean_sections} on an unbound name ->
+            # UnboundLocalError -> opaque 500 that hid the real cause.
+            logger2.exception("Report generation failed for %s/%s", entity, distributor_id)
+            return error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, "report_generation_failed",
+                str(exc), distributor_id,
             )
 
-            print(f"Step 2 - Data preprocessing completed: {time.perf_counter() - start_time:.2f}s")
-
-            catalog_df, catalog_path = await get_cleaned_catalog(file_path_catalog)
-            customers_df, customers_path = await get_cleaned_customers(file_path_customers)
-            print(f"Step 2.1 - Catalog preprocessing completed: {time.perf_counter() - start_time:.2f}s")
-
-            # Save cleaned data concurrently
-            cleaned_orders_path =  os.path.join('data', distributor_id,  'cleaned_orders.csv') 
-            cleaned_products_path =  os.path.join('data', distributor_id,  'cleaned_products.csv')
-            cleaned_catalog_path = os.path.join('data', distributor_id,  'cleaned_catalog.csv')
-            cleaned_customers_path = os.path.join('data', distributor_id,  'cleaned_customers.csv')
-
-            await asyncio.gather(
-                save_df(full_cleaned_orders, str(cleaned_orders_path)),
-                save_df(full_cleaned_products, str(cleaned_products_path)),
-                save_df(catalog_df, str(cleaned_catalog_path)),
-                save_df(customers_df, str(cleaned_customers_path))
+        if isinstance(payload.sections, dict) and "error" in payload.sections:
+            logger2.error("Report generation aborted: %s", payload.sections["error"])
+            return error_response(
+                status.HTTP_417_EXPECTATION_FAILED, "report_generation_error",
+                payload.sections["error"], distributor_id,
             )
 
-            # check if orders empty - custom output how to create a new order if there is no data to analyze
-            if full_cleaned_orders.empty:
-                logger2.info("Orders data is empty after processing (no data rows found).")
-                message = """The report cannot be generated based on empty data (No valid orders found). \n
-You can create a new order to start analyzing your data - check this guide: [How to Create and Process a New Direct Order](https://scribehow.com/viewer/How_To_Create_And_Process_A_New_Direct_Order__XOZEjF9KTJ2B_C4G32afpQ?referrer=documents)\n
-and ask AI agent for help with platform navigation and order creation, or you can clarify with our specialist: [Schedule a Meeting](https://meetings.hubspot.com/john-vasylets/customers)\n
-"""
-                return JSONResponse(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    content={
-                        "error": "empty_data",
-                        "message": message,
-                        "distributor_id": distributor_id # Passing back the ID as requested
-                    }
-                )
+        logger2.info("Step 4 - report done (%s/%s): %.2fs",
+                     entity, report_type, time.perf_counter() - t0)
+        return ok_response(payload, distributor_id)
 
-        except Exception as e:
-            logger2.error(f"Data processing error: {e}")
-            return JSONResponse(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                content={
-                    "error": "data_preprocessing_failed",
-                    "message": "Failed to fetch or preprocess distributor data from the upstream source. Report generation aborted.",
-                    "distributor_id": str(request.distributor_id)
-                }
-            )
-
-        try:
-            from AI.utils import _is_csv_empty
-            try:
-                is_empty = await asyncio.to_thread(_is_csv_empty, cleaned_orders_path)
-            
-                if is_empty:
-                    logger2.info("Orders data is empty after processing (no data rows found).")
-
-            
-            except Exception as e:
-                logger2.warning(f"Can not check if customers orders are empty: {e}")
-            print(f"Step 3 - Data loading completed: {time.perf_counter() - start_time:.2f}s")
-        
-        except Exception as e:
-            logger2.error(f"Data cleaning error: {e}")
-
-        from AI.MCP_tools.topic_analysis_agents import main_batch_process
-        # create report block
-        try:
-            if request.report_type == 'full_report':
-                final_clean_report, clean_sections = await main_batch_process(
-                    cleaned_orders_path, 
-                    cleaned_products_path, 
-                    cleaned_customers_path, 
-                    cleaned_catalog_path, 
-                    distributor_id, 
-                    f"{request.entity}_agent"
-                )
-            else:
-                final_clean_report, clean_sections = await main_batch_process(
-                    cleaned_orders_path, 
-                    cleaned_products_path, 
-                    cleaned_customers_path, 
-                    cleaned_catalog_path, 
-                    distributor_id, 
-                    f"{request.entity}_agent", 
-                    specific_topic=request.report_type
-                )
-
-            # Check if main_batch_process returned our specific error dictionary
-            if "error" in clean_sections:
-                logger2.error(f"Report generation aborted with error: {clean_sections['error']}")
-
-                return JSONResponse(
-                    status_code=status.HTTP_417_EXPECTATION_FAILED,
-                    content={
-                        "error": "report_generation_error",
-                        "message": clean_sections["error"],
-                        "distributor_id": distributor_id # Passing back the ID as requested
-                    }
-                )
-
-            print(f"Step 4 - Report generation completed successfully: {time.perf_counter() - start_time:.2f}s")
-        except Exception as e:
-            logger2.error(f"Report generation failed: {str(e)}")
-
-
-        return JSONResponse(
-                status_code=status.HTTP_200_OK,
-                content={
-                    "sections": clean_sections,
-                    "report": final_clean_report,
-                    "uuid": distributor_id
-                })
+    except HTTPException:
+        # MUST precede `except Exception`, otherwise every deliberate 404/400
+        # raised above is rewritten as "Internal server error during processing".
+        raise
     except ValueError as ve:
-        # Catches specifically raised logical errors from the services
-        logger2.error(f"Validation/Logic Error in endpoint: {str(ve)}")
+        logger2.error("Validation/Logic Error in endpoint: %s", ve)
         raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        # Catches unexpected critical crashes
-        logger2.error(f"Critical System Error in endpoint: {str(e)}")
+    except Exception:
+        logger2.exception("Critical System Error in endpoint")
         raise HTTPException(status_code=500, detail="Internal server error during processing.")
+
+
+
 
 class ChatRequestMCP(BaseModel):
     message: str
@@ -1257,7 +1241,7 @@ from fastapi import Request
 @app.post("/chat_mcp")
 async def chat_endpoint(request: ChatRequestMCP, req: Request):
     from AI.MCP_tools.run_mcp import agent_stream_generator
-
+    logger2.info(f"Received chat request for distributor {request.distributor_id} : {request.message}")
     return StreamingResponse(
         agent_stream_generator(request, req),
         media_type="text/event-stream"
