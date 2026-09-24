@@ -517,7 +517,7 @@ def one_file_preprocess_orders(file_path):
 def one_file_preprocess_products(file_path):
     """Loads and cleans product data from a CSV file."""
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, low_memory=False)
         logger2.info(f"Loaded products CSV from {file_path}")
         df['sku'] = df['sku'].astype(str)
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:

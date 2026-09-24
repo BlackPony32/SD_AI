@@ -73,7 +73,8 @@ ORDER_TOOLS_LIST = [
     "get_discount_distribution_report",
     "get_fulfillment_analysis_report",
     "get_payment_analysis_report",
-    "get_sales_trends_orders_report"
+    "get_sales_trends_orders_report",
+    "search_orders_by"
 ]
 
 CUSTOMER_TOOLS_LIST = [
@@ -138,14 +139,17 @@ def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
 # 3. AGENT FACTORIES
 from datetime import datetime
 
-current_date_str = datetime.now().strftime("%Y-%m-%d (%A)")
+def current_date_str() -> str:
+    """Per request, not per import -- a module-level constant went stale after
+    midnight on a long-running server."""
+    return datetime.now().strftime("%Y-%m-%d (%A)")
 
 async def create_orders_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_orders(user_id, current_date_str)
+    instructions = await prompt_multi_agent_orders(user_id, current_date_str())
     return Agent(name="orders_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_customer_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_customers(user_id, current_date_str)
+    instructions = await prompt_multi_agent_customers(user_id, current_date_str())
     return Agent(name="customer_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_faq_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
@@ -153,11 +157,11 @@ async def create_faq_agent(mcp_server: MCPServerStreamableHttp, user_id: str) ->
     return Agent(name="faq_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_catalog_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_catalog(user_id, current_date_str)
+    instructions = await prompt_multi_agent_catalog(user_id, current_date_str())
     return Agent(name="catalog_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_activity_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_activities(user_id, current_date_str)
+    instructions = await prompt_multi_agent_activities(user_id, current_date_str())
     return Agent(name="activities_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tuple[Agent, AdvancedSQLiteSession]:
@@ -196,7 +200,7 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
         NEW_USER_BOOL = False
 
     # 5. Create Main Agent
-    main_instructions = await prompt_multi_agent_main(session_id,NEW_USER_BOOL)
+    main_instructions = await prompt_multi_agent_main(session_id, NEW_USER_BOOL, current_date_str())
     main_agent = Agent(
         name="Lead_Orchestrator",
         instructions=main_instructions,
@@ -353,16 +357,22 @@ async def sync_and_process_distributor_data(distributor_id: str) -> bool:
                 get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
                 get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
                 get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client)
+                get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client),
+                get_distributor_data(distributor_id=distributor_id, entities=["activities"], client=shared_client),
+                get_distributor_data(distributor_id=distributor_id, entities=["notes"], client=shared_client),
+                get_distributor_data(distributor_id=distributor_id, entities=["tasks"], client=shared_client)
             ]
-            data, data1, data2, data3 = await asyncio.gather(*fetch_tasks)
+            data, data1, data2, data3, data4, data5, data6 = await asyncio.gather(*fetch_tasks)
 
         async with aiohttp.ClientSession() as download_session:
             handle_tasks = [
                 handle_distributor_data(data, "customers", distributor_id, download_session),
                 handle_distributor_data(data1, "orders", distributor_id, download_session),
                 handle_distributor_data(data2, "order_products", distributor_id, download_session),
-                handle_distributor_data(data3, "catalog", distributor_id, download_session)
+                handle_distributor_data(data3, "catalog", distributor_id, download_session),
+                handle_distributor_data(data4, "activities", distributor_id, download_session),
+                handle_distributor_data(data5, "notes", distributor_id, download_session),
+                handle_distributor_data(data6, "tasks", distributor_id, download_session)
             ]
             await asyncio.gather(*handle_tasks)
 
@@ -507,13 +517,9 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                         logger2.info(f">> START: {tool_name} (ID: {call_id})")
                         TOOL_MESSAGES = {
                             "customer_agent": "Analyzing customer records...",
-                            "get_customer_details": "Querying client database...",
                             "orders_agent": "Processing orders activities...",
-                            "sales_orchestrator": "Evaluating order metrics...",
                             "catalog_agent": "Reviewing product catalog...",
-                            "inventory_lookup": "Analyzing inventory parameters...",
-                            "data_analyzer": "Aggregating data points...",
-                            "calculator_tool": "Compiling performance metrics..."
+                            "activities_agent": "Checking your activities..."
                         }
                         display_message = TOOL_MESSAGES.get(tool_name, "Verifying with the knowledge base...")
                         yield f"data: {json.dumps({'type': 'status', 'content': f'{display_message}'})}\n\n"
@@ -529,7 +535,15 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                             active_tools.pop(call_id, None)
                          
                         logger2.info(f"<< FINISH: {tool_name} (ID {call_id}) | Duration: {duration_str}")
-                        yield f"data: {json.dumps({'type': 'status', 'content': f'{tool_name} finished ({duration_str})'})}\n\n"
+                        TOOL_DONE_LABELS = {
+                            "customer_agent": "Customer data analysis",
+                            "orders_agent": "Order processing",
+                            "catalog_agent": "Catalog data analysis",
+                            "activities_agent": "Your activities review",
+                            "faq_agent": "FAQ knowledge checking"
+                        }
+                        done_label = TOOL_DONE_LABELS.get(tool_name, "Tool finished.")
+                        yield f"data: {json.dumps({'type': 'status', 'content': f'{done_label} finished with ({duration_str})'})}\n\n"
 
             # 4. FINAL CLEANUP & METADATA
             # Flush any remaining valid text markdown

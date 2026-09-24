@@ -1415,3 +1415,369 @@ def counter_table(counter: Counter, headers: tuple[str, str, str], total: int,
 def sample_rows_note(n: int, threshold: int = MIN_SAMPLE_PER_PERSON) -> str:
     return (f"Rows covering fewer than {threshold} records are marked `*` — their rates are "
             f"arithmetic, not performance." if n else "")
+
+
+# ===========================================================================
+# 9. Product search inside line items
+# ---------------------------------------------------------------------------
+
+PRODUCT_MIN_TERM_LEN = 3
+PRODUCT_FUZZY_CUTOFF = 80
+PRODUCT_FUZZY_CUTOFF_SKU = 92
+PRODUCT_AMBIGUITY_GAP = 5
+PRODUCT_SEARCH_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
+    ("sku",          "sku",                 "SKU",          True),
+    ("name",         "name",                "Product",      False),
+    ("category",     "productCategoryName", "Category",     False),
+    ("manufacturer", "manufacturerName",    "Manufacturer", False),
+)
+
+_MATCH_STAGE_NAMES = {3: "exact", 2: "partial", 1: "fuzzy"}
+
+from rapidfuzz import process, fuzz
+
+def parse_date_arg(value: Any, name: str, *, end_of_day: bool = False) -> pd.Timestamp:
+    """Read an MM/DD/YYYY argument, or fail with the format the caller needs.
+
+    Naive (tz-stripped) on purpose: the order exports carry mixed tz-aware and
+    naive `createdAt` values, and comparing the two raises.
+    """
+    try:
+        parsed = pd.to_datetime(value)
+    except Exception:
+        raise ToolError(f"`{name}='{value}'` is not a date.",
+                        "use MM/DD/YYYY, e.g. '01/31/2026'") from None
+    if pd.isna(parsed):
+        raise ToolError(f"`{name}='{value}'` is not a usable date.",
+                        "use MM/DD/YYYY, e.g. '01/31/2026'")
+    if getattr(parsed, "tzinfo", None) is not None:
+        parsed = parsed.tz_localize(None)
+    return parsed.replace(hour=23, minute=59, second=59) if end_of_day else parsed
+
+
+def parse_number_arg(value: Any, name: str) -> float:
+    """Coerce a numeric argument without silently accepting nonsense."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ToolError(f"`{name}` must be a number, got '{value}'.",
+                        "pass a plain number (e.g. 500) or omit it") from None
+    if number != number:  # NaN
+        raise ToolError(f"`{name}='{value}'` is not a number.", "pass a plain number")
+    return number
+
+
+def parse_choice(value: Any, name: str, allowed: dict, default_key: str) -> tuple[Any, str]:
+    """Validate an enum-style argument against `allowed` (key -> internal value).
+
+    Returns (internal value, key). Never silently falls back to the default when
+    the caller passed something wrong - that is how `by_type='banana'` comes to
+    return a revenue ranking that nobody asked for.
+    """
+    if value is None:
+        return allowed[default_key], default_key
+    key = str(value).strip().lower()
+    if key not in allowed:
+        raise ToolError(f"`{name}='{value}'` is not a valid option.",
+                        "one of: " + ", ".join(f"'{k}'" for k in allowed))
+    return allowed[key], key
+
+
+class ProductSearchMiss(ToolError):
+    """A search term matched no live product.
+
+    Distinguished from any other ToolError so the caller can retry the same
+    term against discontinued rows before giving up: "we stopped selling it" is
+    a different answer from "no such product", and an agent must not report the
+    first as zero sales.
+    """
+
+
+def as_text(series: pd.Series) -> pd.Series:
+    """NaN-safe text coercion for a column of unknown dtype.
+
+    Null out FIRST, then stringify. pandas 2 turns NaN into the string "nan"
+    here; pandas 3 keeps a float NaN inside a str-dtype Series - and a float NaN
+    is truthy, so it survives an `if value` guard and reaches rapidfuzz. An
+    all-empty column (`size`, `color`, `barcode` in these exports) is inferred
+    as float64, so this is not a rare path.
+    """
+    out = series.where(series.notna(), "").astype(str).str.strip()
+    out = out.replace({v: "" for v in ("nan", "NaN", "None", "<NA>", "NaT", "null")})
+    return out.fillna("").astype(str)
+
+
+def sample_values(text: pd.Series, cap: int = 8) -> str:
+    """The values actually present in a column, for agent self-correction."""
+    values = sorted({v for v in text.unique() if isinstance(v, str) and v})
+    if not values:
+        return "none"
+    shown = ", ".join(f"'{v}'" for v in values[:cap])
+    return shown + (f" … and {len(values) - cap} more" if len(values) > cap else "")
+
+
+def describe_lines(df: pd.DataFrame) -> str:
+    """'12 line(s) ($626.77)' - the size of a matched set of line items."""
+    revenue = pd.to_numeric(df.get("totalAmount", 0), errors="coerce").fillna(0).sum()
+    return f"{len(df)} line(s) ({money(revenue)})"
+
+
+def line_labels(df: pd.DataFrame, cap: int = 3) -> str:
+    """How a matched set is labelled in the export: "'Salted Lime', 'Sauero'"."""
+    if "name" not in df.columns:
+        return ""
+    names = [n for n in as_text(df["name"]).unique() if n][:cap]
+    return ", ".join(f"'{n}'" for n in names)
+
+
+def split_active_products(df_lines: pd.DataFrame,
+                          df_catalog: pd.DataFrame | None) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Split line items into (active, discontinued, notes) against the catalog.
+
+    Call this BEFORE resolving a search term, not after. A discontinued row is
+    not a candidate the term should be matched against, and in a real export
+    that decides the answer: rows whose `sku` column holds a product *name*
+    instead of a SKU all carry productIds absent from the catalog, so resolving
+    first makes an ordinary query like "Salted Lime & Guava" look ambiguous
+    between the sku and name fields when only one reading is a live product.
+
+    A row is dropped ONLY when its productId is known and absent from the
+    catalog - never on a missing id, and never silently: every reason the
+    exclusion could not be applied comes back as a note.
+    """
+    empty = df_lines.iloc[0:0]
+    notes: list[str] = []
+
+    if "productId" not in df_lines.columns:
+        return df_lines, empty, notes
+    if df_catalog is None:
+        notes.append("No active-catalog file for this account, so discontinued "
+                     "products were NOT excluded from the results.")
+        return df_lines, empty, notes
+    if df_catalog.empty or "id" not in df_catalog.columns:
+        notes.append("The active-catalog file has no usable 'id' column, so "
+                     "discontinued products were NOT excluded.")
+        return df_lines, empty, notes
+
+    active_ids = set(df_catalog["id"].dropna())
+    inactive = df_lines["productId"].notna() & ~df_lines["productId"].isin(active_ids)
+    return df_lines[~inactive], df_lines[inactive], notes
+
+
+def _match_product_field(text: pd.Series, value: str, sku_mode: bool) -> dict:
+    """Score ONE field against the search term. Never raises, never guesses.
+
+    Returns {stage, mask, values, score, ambiguous}, where stage is
+    3 = exact, 2 = substring, 1 = fuzzy, 0 = no match. `ambiguous` lists
+    near-tied candidates when a fuzzy match was too close to call; stage is then
+    0, because a field that cannot decide does not get to compete.
+    """
+    blank = {"stage": 0, "mask": None, "values": [], "score": 0.0, "ambiguous": []}
+    lowered = text.str.lower()
+
+    # 3. Exact, case-insensitive.
+    mask = lowered == value.lower()
+    if bool(mask.any()):
+        return {"stage": 3, "mask": mask, "score": 100.0, "ambiguous": [],
+                "values": sorted({v for v in text[mask].unique() if v})}
+
+    # 2. Substring, above the precision floor only.
+    if len(value) >= PRODUCT_MIN_TERM_LEN:
+        mask = text.str.contains(value, case=False, na=False, regex=False)
+        if bool(mask.any()):
+            return {"stage": 2, "mask": mask, "score": 95.0, "ambiguous": [],
+                    "values": sorted({v for v in text[mask].unique() if v})}
+
+    # 1. Fuzzy, against unique values only - also gated by the length floor.
+    if len(value) < PRODUCT_MIN_TERM_LEN:
+        return blank
+    choices = [v for v in text.unique() if isinstance(v, str) and v]
+    if not choices:
+        return blank
+
+    cutoff = PRODUCT_FUZZY_CUTOFF_SKU if sku_mode else PRODUCT_FUZZY_CUTOFF
+    matches = process.extract(value, choices, scorer=fuzz.WRatio, limit=3,
+                              score_cutoff=cutoff)
+    if not matches:
+        return blank
+
+    top_value, top_score, _ = matches[0]
+    candidates = [m[0] for m in matches if top_score - m[1] <= PRODUCT_AMBIGUITY_GAP]
+
+    # Cross-check with a token-order-insensitive scorer. WRatio is length- and
+    # order-sensitive, so "Lime & Guava)" scores 85.5 against "Salted Lime &
+    # Black Tea" and only 75.0 against "Salted Lime & Guava" - a confident
+    # substitution of the wrong product. When the two scorers disagree on the
+    # winner, the match is not safe to make silently.
+    cross = process.extractOne(value, choices, scorer=fuzz.token_sort_ratio)
+    if cross and cross[0] != top_value:
+        if cross[1] - fuzz.token_sort_ratio(value, top_value) > PRODUCT_AMBIGUITY_GAP:
+            if cross[0] not in candidates:
+                candidates.append(cross[0])
+
+    if len(candidates) > 1:
+        return {"stage": 0, "mask": None, "values": [], "score": top_score,
+                "ambiguous": candidates}
+
+    return {"stage": 1, "mask": lowered == top_value.lower(), "values": [top_value],
+            "score": top_score, "ambiguous": []}
+
+
+def locate_products(df_lines: pd.DataFrame, search: str,
+                    search_in: str = "auto") -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Resolve ONE free-text term to line items. Returns (frame, filters, notes).
+
+    Works out which field the term belongs to instead of making the caller
+    guess, and reports what it decided rather than deciding silently.
+
+    search_in:
+      'auto'  - try every field, pick the winner (default)
+      'any'   - union every field that matched equally well
+      'sku' | 'name' | 'category' | 'manufacturer' - force one field
+
+    Winner rule for 'auto': the strongest stage wins (exact beats substring
+    beats fuzzy). If several fields reach that stage, the field whose rows
+    CONTAIN all the others' wins - one term read more broadly, e.g. 'Sauero'
+    matching both a manufacturer and mislabelled product-name rows. If the row
+    sets are not nested, the term genuinely means two different things and this
+    raises rather than picking one.
+
+    `filters` are resolved values for the report header - never the raw request,
+    so the header can never claim to be about a value the data does not hold.
+    """
+    filters: list[str] = []
+    notes: list[str] = []
+
+    value = str(search or "").strip()
+    if not value:
+        raise ToolError("`search` is empty.",
+                        "pass the product name, SKU, category or manufacturer "
+                        "the user asked about")
+
+    known = {f[0] for f in PRODUCT_SEARCH_FIELDS} | {"auto", "any"}
+    mode = str(search_in or "auto").strip().lower()
+    if mode not in known:
+        raise ToolError(f"`search_in='{search_in}'` is not a searchable field.",
+                        "one of: 'auto' (default), 'any', 'sku', 'name', "
+                        "'category', 'manufacturer'")
+
+    fields = [f for f in PRODUCT_SEARCH_FIELDS if f[1] in df_lines.columns]
+    if not fields:
+        raise ToolError(
+            "The line-item export has none of the columns products are searched "
+            "by (sku, name, productCategoryName, manufacturerName).",
+            "report the export as broken - no product term can be matched, so "
+            "retrying will not help")
+
+    if mode not in ("auto", "any"):
+        wanted = [f for f in fields if f[0] == mode]
+        if not wanted:
+            column = dict((f[0], f[1]) for f in PRODUCT_SEARCH_FIELDS)[mode]
+            raise ToolError(
+                f"This export has no '{column}' column, so `search_in='{mode}'` "
+                f"cannot be applied.",
+                "use search_in='auto' and tell the user which field was unavailable")
+        fields = wanted
+
+    texts = {key: as_text(df_lines[column]) for key, column, _, _ in fields}
+    labels = {key: label for key, _, label, _ in fields}
+    results = {key: _match_product_field(texts[key], value, sku_mode)
+               for key, _, _, sku_mode in fields}
+
+    best_stage = max((r["stage"] for r in results.values()), default=0)
+
+    # --- nothing matched --------------------------------------------------
+    if best_stage == 0:
+        ambiguous = {k: r["ambiguous"] for k, r in results.items() if r["ambiguous"]}
+        if ambiguous:
+            detail = "; ".join(
+                f"as a {labels[k].lower()}: " + ", ".join(f"'{c}'" for c in cands)
+                for k, cands in ambiguous.items())
+            raise ToolError(
+                f"'{value}' is not an exact value and the matching strategies "
+                f"disagree about what it should resolve to ({detail}).",
+                "ask the user which one they mean, or retry with one of those "
+                "exact values - not guessing between them")
+        available = "; ".join(f"{labels[k]}: {sample_values(texts[k])}" for k in results)
+        if len(value) < PRODUCT_MIN_TERM_LEN:
+            raise ProductSearchMiss(
+                f"'{value}' is shorter than {PRODUCT_MIN_TERM_LEN} characters, so "
+                f"only an exact match was accepted - partial and fuzzy matching on "
+                f"one or two characters would match almost anything - and it is not "
+                f"an exact value.",
+                f"pass a longer term, or one of: {available}")
+        raise ProductSearchMiss(
+            f"Nothing matches '{value}' - checked exact, partial and fuzzy "
+            f"matching against every product field.",
+            f"do not retry the identical term. Values present - {available}. "
+            f"`search_product_catalog` confirms spelling")
+
+    winners = [k for k, r in results.items() if r["stage"] == best_stage]
+    chosen, key = None, None
+
+    if len(winners) == 1:
+        key = winners[0]
+        chosen = results[key]
+    elif mode != "any":
+        # Several fields matched equally well. If one field's rows contain all
+        # the others', it is the broader reading of the same term - use it and
+        # say so. Otherwise the term means two different things: ask.
+        sizes = {k: int(results[k]["mask"].sum()) for k in winners}
+        widest = max(sizes, key=sizes.get)
+        widest_mask = results[widest]["mask"]
+        nested = all(int((results[k]["mask"] & ~widest_mask).sum()) == 0
+                     for k in winners if k != widest)
+        if nested:
+            narrower = [k for k in winners if k != widest]
+            others = ", ".join(f"{labels[k].lower()} ({sizes[k]} line(s))" for k in narrower)
+            notes.append(
+                f"'{value}' matches as a {labels[widest].lower()} "
+                f"({sizes[widest]} line(s)) and also as {others}. The narrower "
+                f"matches are a subset of the broader one, so the "
+                f"{labels[widest].lower()} reading was used - pass "
+                f"search_in='{narrower[0]}' to force the narrower one.")
+            key, chosen = widest, results[widest]
+        else:
+            breakdown = "; ".join(
+                f"search_in='{k}' → {labels[k]} "
+                f"{', '.join(repr(v) for v in results[k]['values'][:3])} "
+                f"({sizes[k]} line(s))" for k in winners)
+            corrupt = ""
+            if "sku" in winners and "name" in winners:
+                corrupt = (" A SKU that equals a product NAME normally means "
+                           "mislabelled rows in the export, which is worth reporting.")
+            raise ToolError(
+                f"'{value}' is an {_MATCH_STAGE_NAMES[best_stage]} match in "
+                f"{len(winners)} different fields, on different line items.",
+                f"pick one - {breakdown} - or search_in='any' to combine them.{corrupt}")
+
+    # --- union mode -------------------------------------------------------
+    if chosen is None:
+        mask = results[winners[0]]["mask"]
+        for k in winners[1:]:
+            mask = mask | results[k]["mask"]
+        parts = ", ".join(labels[k].lower() for k in winners)
+        filters.append(f"Search='{value}' (any of: {parts})")
+        notes.append(f"search_in='any': combined the "
+                     f"{_MATCH_STAGE_NAMES[best_stage]} matches from {parts}. The "
+                     f"figures are the COMBINED total across those readings.")
+        return df_lines[mask], filters, notes
+
+    # --- single field -----------------------------------------------------
+    label, values = labels[key], chosen["values"]
+    if len(values) == 1:
+        filters.append(f"{label}='{values[0]}'")
+    else:
+        preview = ", ".join(f"'{v}'" for v in values[:5])
+        more = f" … and {len(values) - 5} more" if len(values) > 5 else ""
+        filters.append(f"{label}~'{value}' → {len(values)} values")
+        notes.append(
+            f"'{value}' is a partial {label.lower()} match covering "
+            f"{len(values)} distinct values ({preview}{more}). The figures are "
+            f"the COMBINED total for all of them, not a single {label.lower()} - "
+            f"pass one of those exact values to isolate one.")
+    if best_stage == 1:
+        notes.append(f"No exact or partial match for '{value}' - using the closest "
+                     f"{label.lower()} '{values[0]}' ({chosen['score']:.0f}% match).")
+    return df_lines[chosen["mask"]], filters, notes
+

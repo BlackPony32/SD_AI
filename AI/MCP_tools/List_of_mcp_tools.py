@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import os
 import datetime
@@ -34,92 +35,213 @@ import functools
 import time
 import sys
 import traceback
+import uuid
+
+#: Where the log file goes. Overridable so a deployed server can write outside
+#: the working directory instead of dropping the file wherever it was started.
+LOG_FILE = os.getenv("MCP_LOG_FILE", "project_log_many.log")
+#: Console verbosity is separate from file verbosity on purpose (see below).
+LOG_CONSOLE_LEVEL = os.getenv("MCP_LOG_CONSOLE_LEVEL", "INFO").upper()
+#: How much of a tool's return value to echo into the log line.
+LOG_RESULT_PREVIEW = int(os.getenv("MCP_LOG_RESULT_PREVIEW", "110"))
+#: How much of a single argument value to echo before truncating.
+LOG_ARG_PREVIEW = int(os.getenv("MCP_LOG_ARG_PREVIEW", "80"))
+
+#: Plain ASCII by default. The previous ▶/✔ markers raise UnicodeEncodeError on a
+#: Windows console still running cp1252, which turns a successful tool call into
+#: a logging crash. Opt back in with MCP_LOG_EMOJI=1 on a UTF-8 terminal.
+_EMOJI = os.getenv("MCP_LOG_EMOJI", "0") == "1"
+_MARK_START = "▶" if _EMOJI else ">>"
+_MARK_END = "✔" if _EMOJI else "OK"
+_MARK_FAIL = "✖" if _EMOJI else "!!"
+_MARK_EMPTY = "○" if _EMOJI else "--"
+
+
+class _ConsoleFormatter(logging.Formatter):
+    """Console formatter that never prints a traceback.
+
+    The traceback still goes to the log file in full. Repeating it on the console
+    is what turns one failed call into forty lines of noise that buries the
+    tool-call sequence an operator is actually trying to read.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        # format() caches the rendered traceback on the record, which is shared
+        # with the file handler, so work on a shallow copy instead of mutating it.
+        shadow = logging.makeLogRecord(record.__dict__)
+        shadow.exc_info = None
+        shadow.exc_text = None
+        shadow.stack_info = None
+        return super().format(shadow)
+
 
 def get_logger(name: str, log_file: str, console: bool = True) -> logging.Logger:
-    """Create and configure a clean, robust logger safe for Windows (UTF-8)."""
+    """Configure a logger that is readable on the console and complete in the file.
+
+    Two handlers with deliberately different jobs:
+      - file: DEBUG and up, with full tracebacks — this is the forensic record.
+      - console: one line per event, no traceback — this is the operational view.
+    """
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     logger.propagate = False
-    
+
     if not logger.handlers:
-        # Clean, aligned formatting
-        formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-        
-        # File handler (UTF-8 strict)
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        
-        # Console handler
+        fmt = "%(asctime)s | %(levelname)-7s | %(message)s"
+        datefmt = "%Y-%m-%d %H:%M:%S"
+
+        try:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+            logger.addHandler(file_handler)
+        except OSError:
+            # An unwritable log path must not stop the server from serving tools.
+            pass
+
         if console:
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setFormatter(formatter)
+            stream = sys.stdout
+            # Force UTF-8 where the runtime allows it; harmless if already UTF-8.
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
+            console_handler = logging.StreamHandler(stream)
+            console_handler.setLevel(getattr(logging, LOG_CONSOLE_LEVEL, logging.INFO))
+            console_handler.setFormatter(_ConsoleFormatter(fmt, datefmt=datefmt))
             logger.addHandler(console_handler)
-    
+
     return logger
 
+
 # Initialize your global logger
-logger2 = get_logger("mcp_tools", "project_log_many.log", console=True)
+logger2 = get_logger("mcp_tools", LOG_FILE, console=True)
+
+
+def _flatten(value, limit: int) -> str:
+    """One-line, length-capped rendering of any value, safe on weird objects."""
+    try:
+        text = str(value)
+    except Exception:
+        text = f"<unrepresentable {type(value).__name__}>"
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def _format_call_args(func, args, kwargs) -> str:
+    """Render the call as `name=value` pairs regardless of how it was invoked.
+
+    The old version assumed `user_id` was args[0] and sliced it off, so a call
+    made entirely with keywords logged the wrong positional list. Binding against
+    the real signature removes the guesswork and makes START lines comparable
+    across calls.
+    """
+    try:
+        bound = inspect.signature(func).bind_partial(*args, **kwargs)
+        items = bound.arguments.items()
+    except (TypeError, ValueError):
+        items = list(enumerate(args)) + list(kwargs.items())
+    shown = [f"{k}={_flatten(v, LOG_ARG_PREVIEW)}"
+             for k, v in items if k != "user_id" and v is not None]
+    return ", ".join(shown) if shown else "(no filters)"
+
 
 def log_tool_usage(func):
+    """Log one line on entry, one on exit, and never let a tool crash the server.
+
+    Every call gets a short id that appears on both the START and the END/FAIL
+    line. With several agents calling tools concurrently the log interleaves, and
+    without that id there is no way to tell which END belongs to which START.
+
+    On failure the agent gets a short, actionable message; the traceback goes to
+    the log file under the same id, so the operator can find it in one grep
+    without the agent having to carry a stack trace in its context.
     """
-    Powerful, clean decorator for tracking tool usage.
-    Tracks execution time, neatly formats inputs, and prevents silent crashes.
-    """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         tool_name = func.__name__
         start_time = time.perf_counter()
-        
-        # 1. Extract User ID smartly (from kwargs or first positional arg)
-        user_id = kwargs.get('user_id')
-        if not user_id and args:
-            user_id = args[0]
-        if not user_id:
-            user_id = 'SYSTEM'
+        call_id = uuid.uuid4().hex[:8]
 
-        # 2. Cleanly format arguments (ignoring None values to reduce noise)
-        clean_kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        # Safely capture positional args (excluding the user_id if it was args[0])
-        pos_args = args[1:] if len(args) > 0 else ()
-        
-        arg_str = f"Args: {pos_args} | Kwargs: {clean_kwargs}"
-        
-        # Log Start
-        print(f"▶ START | Tool: '{tool_name}' | User: {user_id} | {arg_str}")
+        user_id = kwargs.get("user_id")
+        if user_id is None and args:
+            user_id = args[0]
+        user_id = user_id or "SYSTEM"
+
+        logger2.info(f"{_MARK_START} START [{call_id}] {tool_name} | user={user_id} | "
+                     f"{_format_call_args(func, args, kwargs)}")
 
         try:
-            # 3. Execute Tool
             result = func(*args, **kwargs)
-            
-            # 4. Calculate Duration
+        except Exception as exc:
             duration = time.perf_counter() - start_time
-            
-            # 5. Clean Result Logging (No multi-line mess)
-            res_str = str(result)
-            # Replace physical newlines so the log entry stays on a single line in the text file
-            res_str_flat = res_str.replace('\n', ' \\n ').replace('\r', '')
-            
-            # Truncate at 120 characters
-            log_preview = res_str_flat[:120] + "..." if len(res_str_flat) > 120 else res_str_flat
-            
-            # Log Success
-            print(f"✔ END   | Tool: '{tool_name}' | User: {user_id} | Time: {duration:.2f}s | Result: {log_preview}")
-            
-            return result
-            
-        except Exception as e:
-            # 6. Log Failure cleanly
-            duration = time.perf_counter() - start_time
-            error_msg = f"Tool '{tool_name}' failed after {duration:.2f}s: {str(e)}"
-            
-            # exc_info=True automatically attaches the full traceback to the log file neatly
-            logger2.error(f" ERROR | User: {user_id} | {error_msg}", exc_info=True)
-            
-            # Return string to Agent so it knows what happened instead of silently crashing the MCP server
-            return f"Tool Execution Error: {str(e)}"
-            
+            # Full traceback -> file only. The console handler strips it.
+            logger2.error(
+                f"{_MARK_FAIL} FAIL  [{call_id}] {tool_name} | user={user_id} | "
+                f"{duration:.2f}s | {type(exc).__name__}: {_flatten(exc, 200)}",
+                exc_info=True,
+            )
+            return _tool_error_message(tool_name, exc, call_id)
+
+        duration = time.perf_counter() - start_time
+        preview = _flatten(result, LOG_RESULT_PREVIEW)
+        # A tool that returns a rendered "No result." / "Error:" string has not
+        # raised, but it has not answered either. Marking it WARN keeps the
+        # console honest about which calls actually produced data.
+        empty = isinstance(result, str) and result.lstrip().startswith(
+            ("Error", "**No result", "**Tool error", "No ", "Tool Execution Error"))
+        level = logger2.warning if empty else logger2.info
+        mark = _MARK_EMPTY if empty else _MARK_END
+        word = "EMPTY" if empty else "END  "
+        level(f"{mark} {word} [{call_id}] {tool_name} | user={user_id} | "
+              f"{duration:.2f}s | {len(str(result)):,} chars | {preview}")
+        return result
+
     return wrapper
+
+
+def _tool_error_message(tool_name: str, exc: Exception, call_id: str) -> str:
+    """What the *agent* sees when a tool blows up.
+
+    A raw `TypeError: resolve_value() got an unexpected keyword argument` tells an
+    agent nothing it can act on, so it retries the identical call and fails again.
+    This says whose fault it is and what to do next — and, critically, says when
+    retrying is pointless.
+    """
+    kind = type(exc).__name__
+    detail = _flatten(exc, 200)
+
+    if isinstance(exc, (FileNotFoundError, PermissionError)):
+        advice = ("The data export this tool needs is missing or unreadable. "
+                  "Do not retry — report that the data is unavailable for this user.")
+    elif isinstance(exc, (KeyError, ValueError)) and "column" in detail.lower():
+        advice = ("The export is missing a column this tool requires. "
+                  "Try a different tool that reads a different file.")
+    elif isinstance(exc, MemoryError):
+        advice = "The query was too large. Retry with a narrower date range or a smaller limit."
+    else:
+        advice = ("This is an internal bug in the tool, not a problem with your arguments. "
+                  "Retrying the identical call will fail the same way — use a different tool "
+                  "or a narrower query, and tell the user the report is unavailable.")
+
+    return (f"**Tool error.** `{tool_name}` could not complete.\n"
+            f"- Reason: {kind} — {detail}\n"
+            f"- Error ID: `{call_id}` (full traceback in {LOG_FILE})\n"
+            f"- {advice}")
+
+
+def _as_text(series: "pd.Series") -> "pd.Series":
+    """Coerce any column to a clean string Series before using `.str`.
+
+    Columns that are entirely blank in an export (size, color) are read as
+    float64, and `.str` on a float column raises AttributeError. Doing the
+    coercion in one place means a filter can never crash on the dtype the CSV
+    happened to infer.
+    """
+    return (series.astype("object").where(series.notna(), "")
+            .astype(str).str.strip()
+            .replace({"nan": "", "None": "", "NaT": "", "<NA>": ""}))
 
 # --- TOOLS ---
 
@@ -2611,7 +2733,7 @@ def _narrow(combos, column, value, label, filters, notes, sku_mode=False):
             f"narrowed results to zero matches."
         )
         return combos
-    return apply_filter(combos, column, value, label, filters, notes, sku_mode=sku_mode)
+    return _catalog_apply_filter(combos, column, value, label, filters, notes, sku_mode=sku_mode)
 
 def fuzzy_blob_search(
     df: pd.DataFrame,
@@ -2666,7 +2788,7 @@ def fuzzy_blob_search(
     )
     return matched, [note]
  
-def resolve_value(
+def _catalog_resolve_value(
     user_input: str,
     choices: list,
     score_cutoff: int = 80,
@@ -2682,9 +2804,14 @@ def resolve_value(
               match was exact (case-insensitive) and needs no explanation.
       - ambiguous_candidates: list of near-tied candidate values (empty if not ambiguous).
     """
-    if not choices:
+    # rapidfuzz raises on non-string choices, and a column read as float64
+    # (all-NaN size/color, numeric barcodes) reaches here as floats.
+    choices = [str(c) for c in (choices or []) if str(c).strip()
+               and str(c).strip().lower() not in {"nan", "none", "n/a", "<na>"}]
+    user_input = str(user_input or "").strip()
+    if not choices or not user_input:
         return None, None, []
- 
+
     matches = process.extract(
         user_input, choices, scorer=fuzz.WRatio, limit=3, score_cutoff=score_cutoff
     )
@@ -2720,7 +2847,7 @@ def _token_overlap_score(query_tokens: list, row_tokens: list) -> float:
         scores.append(match[1] if match else 0.0)
     return sum(scores) / len(scores)
  
-def apply_filter(
+def _catalog_apply_filter(
     df: pd.DataFrame,
     column: str,
     user_value: str,
@@ -2741,17 +2868,27 @@ def apply_filter(
     if column not in df.columns:
         notes.append(f"Column '{column}' not found in data - skipping {label} filter.")
         return df
- 
-    # 1. Exact / substring match first (fast, 100% precise when it hits)
-    exact = df[df[column].fillna("").astype(str).str.contains(user_value, case=False, na=False)]
+
+    user_value = str(user_value).strip()
+    if not user_value:
+        notes.append(f"Empty {label} filter ignored.")
+        return df
+
+    # 1. Exact / substring match first (fast, 100% precise when it hits).
+    #    regex=False is load-bearing: product names legitimately contain (, ), +,
+    #    * and ?, and treating a user value as a pattern turns "Salted Lime (12oz"
+    #    into an re.error that takes down the whole call.
+    exact = df[_as_text(df[column]).str.contains(user_value, case=False, na=False, regex=False)]
     if not exact.empty:
         filters.append(f"{label}='{user_value}'")
         return exact
- 
+
     # 2. Fuzzy fallback - only against unique values, not every row
     cutoff = 92 if sku_mode else 80
-    unique_values = df[column].dropna().astype(str).unique().tolist()
-    resolved, note, ambiguous = resolve_value(user_value, unique_values, score_cutoff=cutoff)
+    unique_values = _as_text(df[column]).replace("", pd.NA).dropna().unique().tolist()
+    resolved, note, ambiguous = _catalog_resolve_value(
+        user_value, unique_values, score_cutoff=cutoff
+    )
  
     if ambiguous:
         candidates = ", ".join(f"'{c}'" for c in ambiguous)
@@ -2771,7 +2908,7 @@ def apply_filter(
     if note:
         notes.append(note)
     filters.append(f"{label}='{resolved}'")
-    return df[df[column].fillna("").astype(str).str.contains(resolved, case=False, na=False)]
+    return df[_as_text(df[column]).str.contains(resolved, case=False, na=False, regex=False)]
 
 @mcp.tool(name="search_product_catalog")
 @log_tool_usage
@@ -3022,97 +3159,6 @@ def _generate_product_report(df_to_report: pd.DataFrame, filters: list, period_m
 
     return '\n'.join(lines)
 
-def resolve_value(
-    user_input: str,
-    choices: list,
-    score_cutoff: int = 80,
-    ambiguity_gap: int = 5,
-):
-    """
-    Try to resolve `user_input` to the closest value in `choices`.
-
-    Returns a tuple: (resolved_value, note, ambiguous_candidates)
-      - resolved_value: the best matching choice, or None if nothing cleared the cutoff
-                         or the match was ambiguous.
-      - note: human-readable string describing the substitution, or None if the
-              match was exact (case-insensitive) and needs no explanation.
-      - ambiguous_candidates: list of near-tied candidate values (empty if not ambiguous).
-    """
-    if not choices:
-        return None, None, []
-
-    matches = process.extract(
-        user_input, choices, scorer=fuzz.WRatio, limit=3, score_cutoff=score_cutoff
-    )
-    if not matches:
-        return None, None, []
-
-    top_value, top_score, _ = matches[0]
-    close = [m for m in matches if top_score - m[1] <= ambiguity_gap]
-
-    if len(close) > 1:
-        # Too close to call - don't guess, ask instead.
-        return None, None, [m[0] for m in close]
-
-    note = None
-    if top_value.strip().lower() != user_input.strip().lower():
-        note = f"No exact match for '{user_input}' — using closest match '{top_value}' ({top_score:.0f}% match)."
-
-    return top_value, note, []
-
-
-def apply_filter(
-    df: pd.DataFrame,
-    column: str,
-    user_value: str,
-    label: str,
-    filters: list,
-    notes: list,
-    sku_mode: bool = False,
-) -> pd.DataFrame:
-    """
-    Filter `df` on `column` matching `user_value`.
-    Tries exact/substring match first; falls back to fuzzy matching against the
-    column's unique values only if the substring match returns nothing.
-
-    Note: whether a filter argument was PROVIDED is tracked separately by the
-    caller (`provided_filters` in get_product_details). This function only
-    determines whether the provided value resolved to anything - it must not
-    be used to infer "no filter was passed".
-    """
-    if column not in df.columns:
-        notes.append(f"Column '{column}' not found in data - skipping {label} filter.")
-        return df
-
-    # 1. Exact / substring match first (fast, 100% precise when it hits)
-    exact = df[df[column].fillna("").str.contains(user_value, case=False, na=False)]
-    if not exact.empty:
-        filters.append(f"{label}='{user_value}'")
-        return exact
-
-    # 2. Fuzzy fallback - only against unique values, not every row
-    cutoff = 92 if sku_mode else 80
-    unique_values = df[column].dropna().unique().tolist()
-    resolved, note, ambiguous = resolve_value(user_value, unique_values, score_cutoff=cutoff)
-
-    if ambiguous:
-        candidates = ", ".join(f"'{c}'" for c in ambiguous)
-        notes.append(
-            f"'{user_value}' matched multiple {label} values ({candidates}) — "
-            f"please specify which one you meant."
-        )
-        return df.iloc[0:0]  # empty on purpose: force clarification instead of guessing
-
-    if resolved is None:
-        notes.append(f"No match found for {label}='{user_value}' (checked exact and fuzzy match).")
-        return df.iloc[0:0]
-
-    if note:
-        notes.append(note)
-    filters.append(f"{label}='{resolved}'")
-    return df[df[column].fillna("").str.contains(resolved, case=False, na=False)]
-
-
 @mcp.tool(name="get_product_details")
 @log_tool_usage
 def get_product_details(
@@ -3207,22 +3253,22 @@ def get_product_details(
     filtered_df = df_products.copy()
 
     if product_name:
-        filtered_df = apply_filter(
+        filtered_df = _catalog_apply_filter(
             filtered_df, "name", product_name, "Name", filters, notes
         )
 
     if sku:
-        filtered_df = apply_filter(
+        filtered_df = _catalog_apply_filter(
             filtered_df, "sku", sku, "SKU", filters, notes, sku_mode=True
         )
 
     if category:
-        filtered_df = apply_filter(
+        filtered_df = _catalog_apply_filter(
             filtered_df, "productCategoryName", category, "Category", filters, notes
         )
 
     if manufacturer:
-        filtered_df = apply_filter(
+        filtered_df = _catalog_apply_filter(
             filtered_df, "manufacturerName", manufacturer, "Brand", filters, notes
         )
 
@@ -3508,15 +3554,15 @@ def get_product_price(
 
     # Apply Filters
     if name:
-        analysis_df = analysis_df[analysis_df['Name'].str.contains(name, case=False, na=False)]
+        analysis_df = analysis_df[_as_text(analysis_df['Name']).str.contains(name, case=False, na=False, regex=False)]
     if sku:
-        analysis_df = analysis_df[analysis_df['SKU'].str.contains(sku, case=False, na=False)]
+        analysis_df = analysis_df[_as_text(analysis_df['SKU']).str.contains(sku, case=False, na=False, regex=False)]
     if manufacturer:
-        analysis_df = analysis_df[analysis_df['Manufacturer'].str.contains(manufacturer, case=False, na=False)]
+        analysis_df = analysis_df[_as_text(analysis_df['Manufacturer']).str.contains(manufacturer, case=False, na=False, regex=False)]
     if size:
-        analysis_df = analysis_df[analysis_df['Size'].str.contains(size, case=False, na=False)]
+        analysis_df = analysis_df[_as_text(analysis_df['Size']).str.contains(size, case=False, na=False, regex=False)]
     if color:
-        analysis_df = analysis_df[analysis_df['Color'].str.contains(color, case=False, na=False)]
+        analysis_df = analysis_df[_as_text(analysis_df['Color']).str.contains(color, case=False, na=False, regex=False)]
     if min_price is not None:
         analysis_df = analysis_df[analysis_df['Price'] >= min_price]
     if max_price is not None:
@@ -3589,11 +3635,11 @@ def get_executive_inventory_report(
         
         filters_applied = []
         if category and cat_col in df.columns:
-            df = df[df[cat_col].fillna('').str.contains(category, case=False, na=False)]
+            df = df[_as_text(df[cat_col]).str.contains(category, case=False, na=False, regex=False)]
             filters_applied.append(f"Category: '{category}'")
             
         if manufacturer and mfg_col in df.columns:
-            df = df[df[mfg_col].fillna('').str.contains(manufacturer, case=False, na=False)]
+            df = df[_as_text(df[mfg_col]).str.contains(manufacturer, case=False, na=False, regex=False)]
             filters_applied.append(f"Manufacturer: '{manufacturer}'")
             
         if df.empty:
@@ -4135,7 +4181,7 @@ def get_product_customer_insights_report(
 
         target_products = pd.DataFrame()
         if specific_product:
-            matches = prod_stats[prod_stats['detailed_name'].str.contains(specific_product, case=False, na=False)]
+            matches = prod_stats[_as_text(prod_stats['detailed_name']).str.contains(specific_product, case=False, na=False, regex=False)]
             if matches.empty:
                 return f"No product sales found matching '{specific_product}' after applying filters."
             target_products = matches.head(1)
@@ -4781,7 +4827,7 @@ def get_sales_prospecting_report(
         merged['totalAmount'] = pd.to_numeric(merged.get('totalAmount', 0), errors='coerce').fillna(0)
 
         # 5. Find Target Product
-        matches = merged[merged['detailed_name'].str.contains(product_name, case=False, na=False)]
+        matches = merged[_as_text(merged['detailed_name']).str.contains(product_name, case=False, na=False, regex=False)]
         if matches.empty:
             return f"No sales history found for a product matching '{product_name}'."
             
@@ -5034,9 +5080,9 @@ def get_cross_sell_prospects(
     reference_date = df_all["createdAt"].max()
 
     # 3. Resolve the target product across ALL history
-    matched_all = apply_filter(df_all, "name", product_name, "Name", filters, notes) if product_name else df_all
+    matched_all = _catalog_apply_filter(df_all, "name", product_name, "Name", filters, notes) if product_name else df_all
     if sku:
-        matched_all = apply_filter(matched_all, "sku", sku, "SKU", filters, notes, sku_mode=True)
+        matched_all = _catalog_apply_filter(matched_all, "sku", sku, "SKU", filters, notes, sku_mode=True)
 
     if matched_all.empty:
         if notes:
@@ -5242,6 +5288,514 @@ def get_cross_sell_prospects(
 
     return report
 
+
+@mcp.tool(name="search_orders_by")
+@log_tool_usage
+def search_orders_by(
+    user_id: str,
+    search: Optional[str] = None,
+    search_in: Optional[str] = "auto",
+    customer: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    min_total: Optional[float] = None,
+    max_total: Optional[float] = None,
+    sort_by: Optional[str] = "date",
+    sort_order: Optional[str] = "desc",
+    limit: Optional[int] = 25,
+) -> str:
+    """
+    Finds the ORDERS that contain a given product and lists them individually:
+    order id, date, customer, status, payment, the quantity and revenue of the
+    matched product in that order, and the order total.
+ 
+    Use this for "which orders include SKU X", "who bought product Y and when",
+    "show me the pending orders containing Z". For aggregated product performance
+    use get_product_details; for orders with no product filter use get_top_n_orders;
+    for one customer's full order history use get_orders_by_customer.
+ 
+    Args:
+        user_id (str): The user's ID.
+        search (str): REQUIRED. What to look for - a product name, SKU, category
+                      or manufacturer. Pass the user's term as they said it; you
+                      do NOT need to know which of those it is. The tool works
+                      that out against the data, reports what it resolved to, and
+                      asks you to choose if the term genuinely means two things.
+        search_in (str): Which field to search. 'auto' (default) picks the field
+                         that matches best; 'any' combines every field that
+                         matches equally well; 'sku', 'name', 'category' or
+                         'manufacturer' force one field. Only set this after an
+                         'auto' search has told you the term is ambiguous.
+        customer (str): Narrow to orders from this customer (partial match on the
+                        customer name; multiple matches are allowed and disclosed).
+        status_filter (str): Order status, e.g. 'COMPLETED', 'PENDING'. Validated
+                             against the statuses actually present in the data.
+        payment_status (str): Payment status, e.g. 'PAID', 'PENDING'. Validated.
+        start_date (str): Orders created ON or AFTER this date. MM/DD/YYYY.
+        end_date (str): Orders created ON or BEFORE this date. MM/DD/YYYY.
+        min_total (float): Minimum ORDER total (whole order, not the matched lines).
+        max_total (float): Maximum ORDER total.
+        sort_by (str): 'date', 'line revenue', 'line qty', 'order total', 'customer'.
+        sort_order (str): 'desc' (default) or 'asc'.
+        limit (int): Rows to display, 1-200 (default 25). Summary totals always
+                     cover ALL matching orders, not just the displayed rows.
+ 
+    Returns:
+        str: Markdown - what the search resolved to, a summary, a per-product
+             breakdown when more than one product matched, and the order table.
+             Any assumption, substitution or excluded row is reported in a
+             warning block on top.
+    """
+    base_path = Path("data") / str(user_id)
+    lines_path = base_path / "cleaned_products.csv"
+    orders_path = base_path / "cleaned_orders.csv"
+    catalog_path = base_path / "cleaned_catalog.csv"
+ 
+    filters: list = []
+    notes: list = []
+    ORDER_SEARCH_MAX_LIMIT = 150
+    try:
+        # --- 0. ARGUMENTS (validated before any file work) -------------------
+        if search is None or not str(search).strip():
+            raise ToolError(
+                "`get_orders_by_product` needs a `search` value - a product name, "
+                "SKU, category or manufacturer - otherwise it returns every order.",
+                "`get_top_n_orders` for orders with no product filter, "
+                "`get_orders_by_customer` for one customer's history, "
+                "`search_product_catalog` to browse what products exist")
+ 
+        sort_col, sort_key = parse_choice(sort_by, "sort_by", {
+            "date": "_order_date",
+            "line revenue": "_line_revenue",
+            "line qty": "_line_qty",
+            "order total": "_order_total",
+            "customer": "_customer",
+        }, "date")
+        is_ascending, _ = parse_choice(
+            sort_order, "sort_order", {"desc": False, "asc": True}, "desc")
+ 
+        row_limit = parse_int(limit, default=25, minimum=1,
+                              maximum=ORDER_SEARCH_MAX_LIMIT, name="limit")
+        try:
+            asked = (int(float(str(limit).strip()))
+                     if limit is not None and str(limit).strip() else row_limit)
+        except (TypeError, ValueError):
+            asked = row_limit
+        if asked != row_limit:
+            notes.append(
+                f"limit={asked} was clamped to {row_limit} (allowed range "
+                f"1-{ORDER_SEARCH_MAX_LIMIT}). Summary totals still cover every "
+                f"matching order.")
+ 
+        start_dt = parse_date_arg(start_date, "start_date") if start_date else None
+        end_dt = (parse_date_arg(end_date, "end_date", end_of_day=True)
+                  if end_date else None)
+        if start_dt is not None and end_dt is not None and start_dt > end_dt:
+            raise ToolError(
+                f"start_date ({start_date}) is after end_date ({end_date}).",
+                "swap them and retry")
+ 
+        min_amount = parse_number_arg(min_total, "min_total") if min_total is not None else None
+        max_amount = parse_number_arg(max_total, "max_total") if max_total is not None else None
+        if min_amount is not None and max_amount is not None and min_amount > max_amount:
+            raise ToolError(
+                f"min_total ({money(min_amount)}) is above max_total "
+                f"({money(max_amount)}).", "swap them and retry")
+ 
+        # --- 1. LOAD LINE ITEMS ----------------------------------------------
+        if not lines_path.exists():
+            raise ToolError(
+                f"The line-item export (cleaned_products.csv) is missing for user "
+                f"{user_id}, so orders cannot be searched by product.",
+                "this is an export/setup problem - tell the user the product-level "
+                "order search is unavailable for their account; retrying will not help")
+        try:
+            df_lines = pd.read_csv(lines_path, encoding="utf-8-sig")
+        except Exception as read_error:
+            raise ToolError(
+                f"cleaned_products.csv could not be parsed "
+                f"({type(read_error).__name__}: {read_error}).",
+                "the export is corrupt - retrying the identical call will fail "
+                "the same way") from None
+        df_lines.columns = df_lines.columns.str.strip().str.replace('﻿', '')
+ 
+        if "orderId" not in df_lines.columns:
+            raise ToolError(
+                "The line-item export has no 'orderId' column, so line items "
+                "cannot be tied back to orders.",
+                "`get_product_details` for aggregated product figures instead")
+        if df_lines.empty:
+            return ("No line items exist in this account's export - there are no "
+                    "orders to search.")
+ 
+        # --- 2. ACTIVE-CATALOG SPLIT (before resolution, deliberately) -------
+        df_catalog = None
+        if catalog_path.exists():
+            try:
+                df_catalog = pd.read_csv(catalog_path, encoding="utf-8-sig")
+                df_catalog.columns = df_catalog.columns.str.strip().str.replace('﻿', '')
+            except Exception as cat_error:
+                notes.append(
+                    f"The active-catalog file could not be read "
+                    f"({type(cat_error).__name__}), so discontinued products were "
+                    f"NOT excluded - figures may include products no longer sold.")
+        df_active, df_retired, split_notes = split_active_products(df_lines, df_catalog)
+        notes.extend(split_notes)
+ 
+        if df_active.empty and not df_retired.empty:
+            raise ToolError(
+                "No product in this account's order history is still in the active "
+                "catalog, so there is nothing to search.",
+                "this is an export problem - report it rather than retrying")
+ 
+        # --- 3. RESOLVE THE SEARCH TERM --------------------------------------
+        try:
+            df_lines, found, find_notes = locate_products(df_active, search, search_in)
+        except ProductSearchMiss as miss:
+            # Nothing live matched. Check the discontinued rows before giving up:
+            # "we stopped selling it" is a different answer from "no such product".
+            retired_hit = None
+            if not df_retired.empty:
+                try:
+                    retired_hit, _, _ = locate_products(df_retired, search, search_in)
+                except ToolError:
+                    retired_hit = None
+            if retired_hit is not None and not retired_hit.empty:
+                labelled = line_labels(retired_hit)
+                raise ToolError(
+                    f"'{search}' matches {describe_lines(retired_hit)} in order "
+                    f"history"
+                    + (f", recorded there as {labelled}" if labelled else "")
+                    + ", but that product is no longer in the active catalog.",
+                    "say the product was discontinued - do NOT report this as zero "
+                    "sales, and do not retry the same term") from None
+            raise miss
+        filters.extend(found)
+        notes.extend(find_notes)
+ 
+        # The term may ALSO hit discontinued rows. They stay out of the figures,
+        # but the reader has to know they exist or the totals look wrong.
+        if not df_retired.empty:
+            try:
+                also_retired, _, _ = locate_products(df_retired, search, search_in)
+            except ToolError:
+                also_retired = None
+            if also_retired is not None and not also_retired.empty:
+                labelled = line_labels(also_retired)
+                notes.append(
+                    f"Excluded {describe_lines(also_retired)} that also match "
+                    f"'{search}' but belong to product(s) no longer in the active "
+                    f"catalog"
+                    + (f" (recorded as {labelled})" if labelled else "")
+                    + ". The figures below cover live products only.")
+ 
+        # --- 4. AGGREGATE LINES PER ORDER ------------------------------------
+        df_lines = df_lines.copy()
+        df_lines["_qty"] = pd.to_numeric(df_lines.get("quantity", 0),
+                                         errors="coerce").fillna(0)
+        df_lines["_revenue"] = pd.to_numeric(df_lines.get("totalAmount", 0),
+                                             errors="coerce").fillna(0)
+        df_lines["_order_key"] = as_text(df_lines["orderId"])
+ 
+        if "name" in df_lines.columns:
+            df_lines["_label"] = as_text(df_lines["name"]).replace("", "Unnamed")
+        else:
+            df_lines["_label"] = "Unnamed"
+        if "sku" in df_lines.columns:
+            sku_text = as_text(df_lines["sku"])
+            df_lines["_label"] = df_lines["_label"].where(
+                sku_text == "", df_lines["_label"] + " (" + sku_text + ")")
+ 
+        per_order = df_lines.groupby("_order_key", dropna=False).agg(
+            _line_qty=("_qty", "sum"),
+            _line_revenue=("_revenue", "sum"),
+        ).reset_index()
+ 
+        # --- 5. JOIN TO ORDERS -----------------------------------------------
+        if not orders_path.exists():
+            raise ToolError(
+                f"The orders export (cleaned_orders.csv) is missing for user "
+                f"{user_id}. {len(per_order)} order(s) contain the requested "
+                f"product, but their dates, customers and statuses cannot be "
+                f"resolved.", "`get_product_details` for aggregated figures")
+        try:
+            df_orders = pd.read_csv(orders_path, encoding="utf-8-sig")
+        except Exception as read_error:
+            raise ToolError(
+                f"cleaned_orders.csv could not be parsed "
+                f"({type(read_error).__name__}: {read_error}).",
+                "retrying will fail the same way") from None
+        df_orders.columns = df_orders.columns.str.strip().str.replace('﻿', '')
+ 
+        if "id" not in df_orders.columns:
+            raise ToolError("The orders export has no 'id' column, so line items "
+                            "cannot be joined to orders.", "report the export as broken")
+ 
+        df_orders = df_orders.copy()
+        df_orders["_order_key"] = as_text(df_orders["id"])
+        merged = per_order.merge(df_orders, on="_order_key", how="inner")
+ 
+        orphans = len(per_order) - len(merged)
+        if orphans:
+            orphan_revenue = per_order.loc[
+                ~per_order["_order_key"].isin(merged["_order_key"]), "_line_revenue"].sum()
+            notes.append(
+                f"{orphans} matching order(s) ({money(orphan_revenue)}) exist in the "
+                f"line-item export but not in the orders export, so they are not "
+                f"listed below. This is an upstream export gap - the true order "
+                f"count is higher than the number shown.")
+        if merged.empty:
+            raise ToolError(
+                f"{len(per_order)} order(s) contain {', '.join(filters)}, but none "
+                f"of their order ids exist in the orders export.",
+                "this is a data problem, not a bad query - report it rather than "
+                "retrying")
+ 
+        # --- 6. ORDER-LEVEL FIELDS -------------------------------------------
+        if "createdAt" in merged.columns:
+            merged["_order_date"] = pd.to_datetime(merged["createdAt"], errors="coerce")
+            if getattr(merged["_order_date"].dt, "tz", None) is not None:
+                merged["_order_date"] = merged["_order_date"].dt.tz_localize(None)
+            undated = int(merged["_order_date"].isna().sum())
+            if undated:
+                notes.append(
+                    f"{undated} matching order(s) have an unreadable 'createdAt' and "
+                    f"are shown with a '-' date"
+                    + (" and excluded by the date filter."
+                       if (start_dt is not None or end_dt is not None) else "."))
+        else:
+            merged["_order_date"] = pd.NaT
+            notes.append("The orders export has no 'createdAt' column - dates "
+                         "are unavailable.")
+ 
+        merged["_order_total"] = pd.to_numeric(merged.get("totalAmount", 0),
+                                               errors="coerce").fillna(0)
+ 
+        merged["_customer"] = (as_text(merged["customer_displayedName"])
+                               if "customer_displayedName" in merged.columns else "")
+        if "customer_name" in merged.columns:
+            merged["_customer"] = merged["_customer"].where(
+                merged["_customer"] != "", as_text(merged["customer_name"]))
+        merged["_customer"] = merged["_customer"].replace("", "Unknown")
+ 
+        # --- 7. ORDER-LEVEL FILTERS (each reports its own emptiness) ---------
+        def _stop_if_empty(frame, label, detail):
+            if frame.empty:
+                raise ToolError(
+                    f"No orders are left after the {label} filter. {detail} "
+                    f"(filters applied: {', '.join(filters)})",
+                    f"the product itself DID match - it is the {label} filter that "
+                    f"emptied the result, so relax or drop it")
+            return frame
+ 
+        if customer:
+            value = str(customer).strip()
+            if len(value) >= PRODUCT_MIN_TERM_LEN:
+                matched = merged[merged["_customer"].str.contains(
+                    value, case=False, na=False, regex=False)]
+            else:
+                matched = merged[merged["_customer"].str.lower() == value.lower()]
+            if matched.empty:
+                choices = [c for c in merged["_customer"].unique()
+                           if isinstance(c, str) and c]
+                fuzzy = (process.extractOne(value, choices, scorer=fuzz.WRatio,
+                                            score_cutoff=PRODUCT_FUZZY_CUTOFF)
+                         if choices else None)
+                if not fuzzy:
+                    raise ToolError(
+                        f"None of the customers who bought {', '.join(filters)} "
+                        f"match '{customer}'.",
+                        f"either they never bought it, or the name is spelled "
+                        f"differently - buyers are: {', '.join(sorted(choices)[:8])}. "
+                        f"`get_customers` resolves customer names")
+                notes.append(f"No exact customer match for '{customer}' - using "
+                             f"closest match '{fuzzy[0]}' ({fuzzy[1]:.0f}% match).")
+                matched = merged[merged["_customer"] == fuzzy[0]]
+                filters.append(f"Customer='{fuzzy[0]}'")
+            else:
+                distinct = sorted(matched["_customer"].unique())
+                if len(distinct) == 1:
+                    filters.append(f"Customer='{distinct[0]}'")
+                else:
+                    filters.append(f"Customer~'{value}' → {len(distinct)} customers")
+                    notes.append(
+                        f"Customer '{value}' matched {len(distinct)} customers "
+                        f"({', '.join(repr(d) for d in distinct[:5])}). Totals below "
+                        f"are combined across all of them.")
+            merged = _stop_if_empty(matched, "customer",
+                                    f"Requested customer: '{customer}'.")
+ 
+        for arg, column, label in ((status_filter, "orderStatus", "Status"),
+                                   (payment_status, "paymentStatus", "Payment")):
+            if not arg:
+                continue
+            if column not in merged.columns:
+                raise ToolError(
+                    f"The orders export has no '{column}' column, so the {label} "
+                    f"filter cannot be applied.", f"drop it and retry")
+            wanted = str(arg).strip().upper()
+            column_text = as_text(merged[column]).str.upper()
+            present = sorted({s for s in column_text.unique() if s})
+            if wanted not in present:
+                raise ToolError(
+                    f"No order containing {', '.join(filters)} has "
+                    f"{label.lower()} '{arg}'.",
+                    f"values present among these orders: "
+                    f"{', '.join(present) or 'none'}")
+            merged = merged[column_text == wanted]
+            filters.append(f"{label}='{wanted}'")
+ 
+        if start_dt is not None:
+            merged = merged[merged["_order_date"].notna()
+                            & (merged["_order_date"] >= start_dt)]
+            filters.append(f"From={start_dt.strftime('%m/%d/%Y')}")
+            merged = _stop_if_empty(
+                merged, "start_date", f"No matching order was created on or after "
+                f"{start_dt.strftime('%m/%d/%Y')}.")
+        if end_dt is not None:
+            merged = merged[merged["_order_date"].notna()
+                            & (merged["_order_date"] <= end_dt)]
+            filters.append(f"To={end_dt.strftime('%m/%d/%Y')}")
+            merged = _stop_if_empty(
+                merged, "end_date", f"No matching order was created on or before "
+                f"{end_dt.strftime('%m/%d/%Y')}.")
+ 
+        if min_amount is not None:
+            merged = merged[merged["_order_total"] >= min_amount]
+            filters.append(f"OrderTotal>={money(min_amount)}")
+            merged = _stop_if_empty(merged, "min_total",
+                                    f"No matching order reaches {money(min_amount)}.")
+        if max_amount is not None:
+            merged = merged[merged["_order_total"] <= max_amount]
+            filters.append(f"OrderTotal<={money(max_amount)}")
+            merged = _stop_if_empty(merged, "max_total",
+                                    f"No matching order is at or below "
+                                    f"{money(max_amount)}.")
+ 
+        # --- 8. SORT ----------------------------------------------------------
+        merged = merged.sort_values(by=sort_col, ascending=is_ascending,
+                                    na_position="last")
+ 
+        # --- 9. SUMMARY (over ALL matches, not just the displayed rows) -------
+        order_count = len(merged)
+        matched_qty = merged["_line_qty"].sum()
+        matched_revenue = merged["_line_revenue"].sum()
+        buyers = merged["_customer"].nunique()
+ 
+        # Order value is only meaningful where the export actually carries one.
+        priced = merged[merged["_order_total"] > 0]
+        orders_value = priced["_order_total"].sum()
+        unpriced = order_count - len(priced)
+        if unpriced:
+            notes.append(
+                f"{unpriced} of the {order_count} matching order(s) carry a total of "
+                f"$0.00 in the orders export (internal/sample orders, or an export "
+                f"gap). They are listed below but excluded from the order-value "
+                f"comparison, which covers the remaining {len(priced)}.")
+ 
+        dated = merged["_order_date"].dropna()
+        span = (f"{dated.min().strftime('%m/%d/%Y')} to "
+                f"{dated.max().strftime('%m/%d/%Y')}" if not dated.empty else "unknown")
+ 
+        # Per-product breakdown, restricted to the orders that survived every
+        # filter - so its counts always reconcile with the table below.
+        final_lines = df_lines[df_lines["_order_key"].isin(set(merged["_order_key"]))]
+        per_product = final_lines.groupby("_label", dropna=False).agg(
+            _p_orders=("_order_key", "nunique"),
+            _p_qty=("_qty", "sum"),
+            _p_revenue=("_revenue", "sum"),
+        ).reset_index().sort_values("_p_revenue", ascending=False)
+ 
+        out = [f"## Orders containing {', '.join(filters)}",
+               f"*Search: '{search}' (search_in={search_in or 'auto'})*",
+               "",
+               f"- **Matching orders:** {order_count:,} of {len(df_orders):,} "
+               f"in this account",
+               f"- **Units of the matched product(s):** {matched_qty:,.0f}",
+               f"- **Revenue from the matched line(s):** {money(matched_revenue)}"]
+        if orders_value:
+            out.append(
+                f"- **Combined value of those orders:** {money(orders_value)} "
+                f"(includes every other product on them - the matched product is "
+                f"{pct(priced['_line_revenue'].sum(), orders_value)} of it)")
+        else:
+            out.append("- **Combined value of those orders:** not comparable - every "
+                       "matching order has a $0.00 total in the export.")
+        out.append(f"- **Distinct customers:** {buyers:,}")
+        out.append(f"- **Date range:** {span}")
+ 
+        if len(per_product) > 1:
+            out += ["", f"### Matched products ({len(per_product)})",
+                    "*Within the matching orders listed below.*",
+                    md_table(["Product (SKU)", "Orders", "Units", "Line Revenue"],
+                             [[truncate(r["_label"], 45), f"{int(r['_p_orders']):,}",
+                               f"{r['_p_qty']:,.0f}", money(r["_p_revenue"])]
+                              for _, r in per_product.head(10).iterrows()],
+                             align=["---", "---:", "---:", "---:"])]
+            if len(per_product) > 10:
+                out.append(f"*… and {len(per_product) - 10} more products.*")
+ 
+        # --- 10. ORDER TABLE --------------------------------------------------
+        id_col = "customId_customId" if "customId_customId" in merged.columns else "id"
+        rows = []
+        for _, row in merged.head(row_limit).iterrows():
+            order_id = as_text(pd.Series([row.get(id_col, "")])).iloc[0]
+            if order_id.endswith(".0"):
+                order_id = order_id[:-2]
+            rows.append([
+                order_id or "—",
+                row["_order_date"].strftime("%m/%d/%Y")
+                if pd.notna(row["_order_date"]) else "—",
+                truncate(row["_customer"], 30),
+                humanize(row.get("orderStatus")),
+                humanize(row.get("paymentStatus")),
+                f"{row['_line_qty']:,.0f}",
+                money(row["_line_revenue"]),
+                money(row["_order_total"]),
+            ])
+ 
+        out += ["",
+                f"### Orders (showing {min(row_limit, order_count):,} of {order_count:,})",
+                f"*Sorted by: {sort_key} | Order: {'ASC' if is_ascending else 'DESC'}*",
+                "",
+                md_table(["Order ID", "Date", "Customer", "Status", "Payment",
+                          "Qty (matched)", "Revenue (matched)", "Order Total"], rows,
+                         align=["---", "---", "---", "---", "---",
+                                "---:", "---:", "---:"])]
+ 
+        if order_count > row_limit:
+            out += ["", f"*{order_count - row_limit:,} further matching order(s) not "
+                        f"shown - raise `limit` (max {ORDER_SEARCH_MAX_LIMIT}) or "
+                        f"narrow the filters.*"]
+ 
+        out += ["", "> **Reading this table:** 'Qty/Revenue (matched)' is the matched "
+                    "product's share of each order. 'Order Total' is the whole order, "
+                    "including other products. Do not report the order total as the "
+                    "product's revenue."]
+ 
+        report = "\n".join(out)
+        if notes:
+            return "\n".join(f"⚠ {n}" for n in notes) + "\n\n" + report
+        return report
+ 
+    except ToolError as expected:
+        # Explained dead ends. Prepend anything learned on the way, so the agent
+        # sees the substitutions that led here and not just the failure.
+        if notes:
+            return "\n".join(f"⚠ {n}" for n in notes) + "\n\n" + expected.render()
+        return expected.render()
+ 
+    except Exception as e:
+        return (f"**Tool error.** `get_orders_by_product` could not complete.\n"
+                f"- Reason: {type(e).__name__} - {e}\n"
+                f"- This is an internal bug in the tool, not a problem with your "
+                f"arguments. Retrying the identical call will fail the same way - "
+                f"use `get_product_details` or `get_top_n_orders` instead, and tell "
+                f"the user this report is unavailable.\n"
+                f"{traceback.format_exc()}")
+
 # FAQ Tool
 
 @mcp.tool(name="look_up_faq")
@@ -5276,15 +5830,36 @@ from typing import Any
 
 import pandas as pd
 
-from tools_utils import (
+from AI.tools_utils import (
     ACTIVITY_CATEGORY_DESCRIPTIONS, ACTIVITY_CATEGORY_LABELS, ACTIVITY_WORKFLOW_PAIRS,
     DORMANT_DAYS, MIN_SAMPLE_PER_PERSON, NOTE_ACTION_KEYWORDS, NOTE_THEMES,
-    TASK_CLOSED_STATUSES, UNASSIGNED_SALESPERSON, Period, ToolError,
-    bullet_list, change, describe_distribution, fmt_date, header_block, humanize,
-    load_activities, load_notes, load_orders, load_tasks, md_table, money, money_short,
-    normalize_key, parse_bool, parse_int, pct, period_coverage_note, resolve_period,
-    resolve_value, split_multi, tool_guard, truncate,
+    TASK_CLOSED_STATUSES, UNASSIGNED_SALESPERSON, Period, ProductSearchMiss, ToolError,
+    PRODUCT_FUZZY_CUTOFF, PRODUCT_MIN_TERM_LEN, as_text, bullet_list, change,
+    describe_distribution, describe_lines, fmt_date, header_block, humanize,
+    line_labels, load_activities, load_notes, load_orders, load_tasks, locate_products,
+    md_table, money, money_short, normalize_key, parse_bool, parse_choice,
+    parse_date_arg, parse_int, parse_number_arg, pct, period_coverage_note,
+    resolve_period, resolve_value, split_active_products, split_multi, tool_guard,
+    truncate,
 )
+
+def _assert_no_shadowed_helpers() -> None:
+    import AI.tools_utils as _tu
+    for _name in ("_catalog_resolve_value", "_catalog_apply_filter"):
+        if hasattr(_tu, _name):
+            raise ImportError(
+                f"AI.tools_utils now exports '{_name}', which would shadow the "
+                f"catalog helper of the same name. Rename one of them."
+            )
+    if getattr(resolve_value, "__module__", None) != _tu.__name__:
+        raise ImportError(
+            "`resolve_value` in this module is not the one from AI.tools_utils. "
+            "A local definition is shadowing the import; the notes/activities/"
+            "tasks tools would silently call the wrong function."
+        )
+
+
+_assert_no_shadowed_helpers()
 
 # ===========================================================================
 # Notes

@@ -539,7 +539,7 @@ def is_data_ready(user_folder: str, entity: str) -> bool:
         "catalog": ["raw_file_catalog.csv", "raw_file_order_products.csv"],
         "customers": ["raw_file_customers.csv", "raw_file_orders.csv", "raw_file_order_products.csv"],
         "orders": ["raw_file_orders.csv", "raw_file_order_products.csv"],
-        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"],
+        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv", "raw_file_activities.csv"],
         "activities": ["raw_file_activities.csv","raw_file_orders.csv"]
     }
     

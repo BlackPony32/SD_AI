@@ -100,31 +100,31 @@ async def lifespan(app: FastAPI):
     mcp_process = subprocess.Popen(
         [sys.executable, "-m", "AI.MCP_tools.List_of_mcp_tools"]
     )
-    
-    # Block FastAPI startup until MCP is responsive
-    is_ready = False
-    async with httpx.AsyncClient() as client:
-        for attempt in range(15): # 15 seconds
-            try:
-                response = await client.get(MCP_LOCAL_URL)
-                is_ready = True
-                print("MCP Server is up and accepting connections.")
-                break
-            except httpx.RequestError:
-                await asyncio.sleep(1)
-                
-    if not is_ready:
-        print("CRITICAL: MCP Server failed to bind to port in time.")
-
-    yield # Yield control back to FastAPI to handle web requests
-    
-    print("Shutting down MCP Server...")
-    mcp_process.terminate()
     try:
-        mcp_process.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        print("MCP Server didn't terminate in time, killing...")
-        mcp_process.kill()
+        # Block FastAPI startup until MCP is responsive
+        is_ready = False
+        async with httpx.AsyncClient() as client:
+            for _ in range(15): # 15 seconds
+                try:
+                    await client.get(MCP_LOCAL_URL)
+                    is_ready = True
+                    print("MCP Server is up and accepting connections.")
+                    break
+                except httpx.RequestError:
+                    await asyncio.sleep(1)
+
+        if not is_ready:
+            print("CRITICAL: MCP Server failed to bind to port in time.")
+
+        yield # Yield control back to FastAPI to handle web requests
+    finally:
+        print("Shutting down MCP Server...")
+        mcp_process.terminate()
+        try:
+            mcp_process.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            print("MCP Server didn't terminate in time, killing...")
+            mcp_process.kill()
 
 # Attach the lifespan to your app
 app = FastAPI(lifespan=lifespan)
@@ -420,7 +420,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         )
 
 
-from openai.types.responses import ResponseTextDeltaEvent\
+from openai.types.responses import ResponseTextDeltaEvent
 
 @app.post("/st_Ask_ai_many_customers")
 async def st_Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
@@ -1198,9 +1198,6 @@ async def create_mcp_reports(request: MCPRequest = Body(...)):
         except HTTPException:
             raise
         except Exception as exc:
-            # Original code logged here and fell through to
-            # content={"sections": clean_sections} on an unbound name ->
-            # UnboundLocalError -> opaque 500 that hid the real cause.
             logger2.exception("Report generation failed for %s/%s", entity, distributor_id)
             return error_response(
                 status.HTTP_500_INTERNAL_SERVER_ERROR, "report_generation_failed",
@@ -1470,6 +1467,4 @@ async def product_per_state_analysis_func(request: ReportRequest = Body(...)):
 
 if __name__ == '__main__':
     import uvicorn
-    from AI.MCP_tools.List_of_mcp_tools import mcp
-    mcp.mount()
     uvicorn.run(app, port=8000, host='0.0.0.0')

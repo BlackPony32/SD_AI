@@ -294,6 +294,8 @@ def _generate_revenue_profitability_report(catalog_path, orders_path, products_p
                 catalog_cols.append(cost_column)
             catalog_cols = [c for c in catalog_cols if c in catalog_df.columns]
 
+            catalog_cols = list(dict.fromkeys(catalog_cols))
+
             cat_dict = catalog_df.set_index('id')[catalog_cols].to_dict('index')
             selected_ids = set(catalog_df['id'].dropna().unique())
 
