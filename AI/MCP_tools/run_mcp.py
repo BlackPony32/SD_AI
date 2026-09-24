@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from agents import Agent, Runner, OpenAIResponsesModel, AsyncOpenAI
 from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 from agents.extensions.memory import AdvancedSQLiteSession
+from openai import APITimeoutError
 from openai.types.responses import ResponseTextDeltaEvent
 from dotenv import load_dotenv
 
@@ -62,7 +63,11 @@ def setup_custom_logger(name: str, log_file: str) -> logging.Logger:
 logger2 = setup_custom_logger("agent_server", "project_log_many.log")
 MCP_URL = os.getenv("MCP_URL", "http://localhost:8001/mcp")
 USER_ID_DEFAULT = "FULL_DIST_TEST"
-llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
+openai_client = AsyncOpenAI(
+    timeout=httpx.Timeout(float(os.getenv("OPENAI_TIMEOUT_S", "90")), connect=10.0),
+    max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
+)
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=openai_client)
 
 # --- TOOL DEFINITIONS ---
 ORDER_TOOLS_LIST = [
@@ -315,11 +320,12 @@ class ChatRequestMCP(BaseModel):
 
 
 from fastapi import Request
+# AI.utils must load before preprocess_data_group_c: the two import each other.
+from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
+    analyze_customer_orders_async, calculate_cost, is_data_ready, lock_for
 from AI.group_customer_analyze.preprocess_data_group_c import (
     save_df, prepared_big_data, get_cleaned_catalog, get_cleaned_customers
 )
-from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
-    analyze_customer_orders_async, calculate_cost, is_data_ready
 from AI.MCP_tools.get_SD_data import handle_distributor_data, get_distributor_data
 
 
@@ -337,44 +343,60 @@ class DataPreprocessingError(Exception):
     """Error for when pandas/CSV processing fails."""
     pass
 
+CHAT_DATASETS = ("customers", "orders", "order_products", "catalog", "activities", "notes", "tasks")
+REQUIRED_DATASETS = ("customers", "orders", "order_products", "catalog")
+
+
 async def sync_and_process_distributor_data(distributor_id: str) -> bool:
     """
     Checks if data needs to be downloaded, fetches it, and preprocesses it.
     Returns True if a sync occurred, False if data was already ready.
     Raises custom exceptions on failure.
     """
-    # Assuming is_data_ready is imported
-    should_download_files = is_data_ready(distributor_id, 'ask_ai')
-    
-    if should_download_files:
-        return False # Data is already ready, no sync needed
+    # One sync per distributor at a time; a request that waited finds the data ready.
+    async with lock_for(f"{distributor_id}:ask_ai"):
+        return await _sync_and_process(distributor_id)
+
+
+def _check_downloaded_files(distributor_id: str, sync_started: float) -> None:
+    folder = os.path.join('data', distributor_id, 'work_data_folder')
+    missing, stale = [], []
+    for name in CHAT_DATASETS:
+        path = os.path.join(folder, f"raw_file_{name}.csv")
+        if not os.path.exists(path):
+            missing.append(name)
+        elif os.path.getmtime(path) < sync_started - 2:  # allow for coarse mtime resolution
+            stale.append(name)
+
+    missing_required = [name for name in missing if name in REQUIRED_DATASETS]
+    if missing_required:
+        raise DataSyncError(f"Data sync failed: could not download {', '.join(missing_required)}")
+    if missing:
+        logger2.warning(f"Sync for {distributor_id}: no file downloaded for {', '.join(missing)}")
+    if stale:
+        logger2.warning(f"Sync for {distributor_id}: {', '.join(stale)} not refreshed, using the previous copy")
+
+
+async def _sync_and_process(distributor_id: str) -> bool:
+    if is_data_ready(distributor_id, 'ask_ai'):
+        return False
+
+    sync_started = time.time()
 
     # STEP 1: FETCH & DOWNLOAD DATA
     try:
         timeout_config = httpx.Timeout(5.0, read=120.0)
         async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
-            fetch_tasks = [
-                get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["activities"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["notes"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["tasks"], client=shared_client)
-            ]
-            data, data1, data2, data3, data4, data5, data6 = await asyncio.gather(*fetch_tasks)
+            responses = await asyncio.gather(*[
+                get_distributor_data(distributor_id=distributor_id, entities=[name], client=shared_client)
+                for name in CHAT_DATASETS
+            ])
 
         async with aiohttp.ClientSession() as download_session:
-            handle_tasks = [
-                handle_distributor_data(data, "customers", distributor_id, download_session),
-                handle_distributor_data(data1, "orders", distributor_id, download_session),
-                handle_distributor_data(data2, "order_products", distributor_id, download_session),
-                handle_distributor_data(data3, "catalog", distributor_id, download_session),
-                handle_distributor_data(data4, "activities", distributor_id, download_session),
-                handle_distributor_data(data5, "notes", distributor_id, download_session),
-                handle_distributor_data(data6, "tasks", distributor_id, download_session)
-            ]
-            await asyncio.gather(*handle_tasks)
+            await asyncio.gather(*[
+                handle_distributor_data(response, name, distributor_id, download_session)
+                for response, name in zip(responses, CHAT_DATASETS)
+            ])
 
     except Exception as e:
         error_msg = str(e)
@@ -389,6 +411,8 @@ async def sync_and_process_distributor_data(distributor_id: str) -> bool:
 
         # Raise generic sync error
         raise DataSyncError(f"Data sync failed: {error_msg}")
+
+    _check_downloaded_files(distributor_id, sync_started)
 
     # STEP 2: PREPROCESS DATA
     file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
@@ -612,9 +636,14 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
         except asyncio.CancelledError:
             logger2.warning(f"Client disconnected session {distributor_id}")
             
+        except APITimeoutError:
+            logger2.warning(f"OpenAI request timed out for {distributor_id}")
+            friendly_msg = "The AI service is taking too long to respond. Please try again in a moment."
+            yield f"data: {json.dumps({'type': 'error', 'content': friendly_msg})}\n\n"
+
         except Exception as e:
             logger2.error(f"Stream Error: {e}", exc_info=True)
-            
+
             error_str = str(e)
 
             if "MCP server" in error_str or "Could not reach" in error_str:
