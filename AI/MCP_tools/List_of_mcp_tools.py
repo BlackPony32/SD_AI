@@ -5339,7 +5339,7 @@ def search_orders_by(
         max_total (float): Maximum ORDER total.
         sort_by (str): 'date', 'line revenue', 'line qty', 'order total', 'customer'.
         sort_order (str): 'desc' (default) or 'asc'.
-        limit (int): Rows to display, 1-200 (default 25). Summary totals always
+        limit (int): Rows to display, 1-150 (default 25). Summary totals always
                      cover ALL matching orders, not just the displayed rows.
  
     Returns:
