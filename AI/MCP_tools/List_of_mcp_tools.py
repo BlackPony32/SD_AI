@@ -35,8 +35,7 @@ import time
 import sys
 import uuid
 
-#: Where the log file goes. Overridable so a deployed server can write outside
-#: the working directory instead of dropping the file wherever it was started.
+#: Log file path; override with MCP_LOG_FILE.
 LOG_FILE = os.getenv("MCP_LOG_FILE", "project_log_many.log")
 #: Console verbosity is separate from file verbosity on purpose (see below).
 LOG_CONSOLE_LEVEL = os.getenv("MCP_LOG_CONSOLE_LEVEL", "INFO").upper()
@@ -45,9 +44,7 @@ LOG_RESULT_PREVIEW = int(os.getenv("MCP_LOG_RESULT_PREVIEW", "110"))
 #: How much of a single argument value to echo before truncating.
 LOG_ARG_PREVIEW = int(os.getenv("MCP_LOG_ARG_PREVIEW", "80"))
 
-#: Plain ASCII by default. The previous ▶/✔ markers raise UnicodeEncodeError on a
-#: Windows console still running cp1252, which turns a successful tool call into
-#: a logging crash. Opt back in with MCP_LOG_EMOJI=1 on a UTF-8 terminal.
+#: ASCII markers by default (cp1252 consoles can't print the symbols); MCP_LOG_EMOJI=1 opts in.
 _EMOJI = os.getenv("MCP_LOG_EMOJI", "0") == "1"
 _MARK_START = "▶" if _EMOJI else ">>"
 _MARK_END = "✔" if _EMOJI else "OK"
@@ -56,12 +53,7 @@ _MARK_EMPTY = "○" if _EMOJI else "--"
 
 
 class _ConsoleFormatter(logging.Formatter):
-    """Console formatter that never prints a traceback.
-
-    The traceback still goes to the log file in full. Repeating it on the console
-    is what turns one failed call into forty lines of noise that buries the
-    tool-call sequence an operator is actually trying to read.
-    """
+    """Console formatter that leaves tracebacks out; the log file still gets them in full."""
 
     def format(self, record: logging.LogRecord) -> str:
         # format() caches the rendered traceback on the record, which is shared
@@ -74,12 +66,7 @@ class _ConsoleFormatter(logging.Formatter):
 
 
 def get_logger(name: str, log_file: str, console: bool = True) -> logging.Logger:
-    """Configure a logger that is readable on the console and complete in the file.
-
-    Two handlers with deliberately different jobs:
-      - file: DEBUG and up, with full tracebacks — this is the forensic record.
-      - console: one line per event, no traceback — this is the operational view.
-    """
+    """Logger with a complete DEBUG log file (with tracebacks) and a one-line-per-event console."""
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
@@ -127,13 +114,7 @@ def _flatten(value, limit: int) -> str:
 
 
 def _format_call_args(func, args, kwargs) -> str:
-    """Render the call as `name=value` pairs regardless of how it was invoked.
-
-    The old version assumed `user_id` was args[0] and sliced it off, so a call
-    made entirely with keywords logged the wrong positional list. Binding against
-    the real signature removes the guesswork and makes START lines comparable
-    across calls.
-    """
+    """Render the call as `name=value` pairs, however it was invoked."""
     try:
         bound = inspect.signature(func).bind_partial(*args, **kwargs)
         items = bound.arguments.items()
@@ -145,15 +126,10 @@ def _format_call_args(func, args, kwargs) -> str:
 
 
 def log_tool_usage(func):
-    """Log one line on entry, one on exit, and never let a tool crash the server.
+    """Log each tool call and never let a tool crash the server.
 
-    Every call gets a short id that appears on both the START and the END/FAIL
-    line. With several agents calling tools concurrently the log interleaves, and
-    without that id there is no way to tell which END belongs to which START.
-
-    On failure the agent gets a short, actionable message; the traceback goes to
-    the log file under the same id, so the operator can find it in one grep
-    without the agent having to carry a stack trace in its context.
+    START and END/FAIL lines share a short call id. On failure the agent gets a short,
+    actionable message and the traceback goes to the log file under the same id.
     """
 
     @functools.wraps(func)
@@ -184,9 +160,7 @@ def log_tool_usage(func):
 
         duration = time.perf_counter() - start_time
         preview = _flatten(result, LOG_RESULT_PREVIEW)
-        # A tool that returns a rendered "No result." / "Error:" string has not
-        # raised, but it has not answered either. Marking it WARN keeps the
-        # console honest about which calls actually produced data.
+        # A tool that returns a "No result" / "Error" string did not answer: log it as a warning.
         empty = isinstance(result, str) and result.lstrip().startswith(
             ("Error", "**No result", "**Tool error", "No ", "Tool Execution Error"))
         level = logger2.warning if empty else logger2.info
@@ -200,13 +174,7 @@ def log_tool_usage(func):
 
 
 def _tool_error_message(tool_name: str, exc: Exception, call_id: str) -> str:
-    """What the *agent* sees when a tool blows up.
-
-    A raw `TypeError: resolve_value() got an unexpected keyword argument` tells an
-    agent nothing it can act on, so it retries the identical call and fails again.
-    This says whose fault it is and what to do next — and, critically, says when
-    retrying is pointless.
-    """
+    """What the agent sees when a tool fails: whose fault it is, and whether retrying can help."""
     kind = type(exc).__name__
     detail = _flatten(exc, 200)
 
@@ -230,13 +198,7 @@ def _tool_error_message(tool_name: str, exc: Exception, call_id: str) -> str:
 
 
 def _as_text(series: "pd.Series") -> "pd.Series":
-    """Coerce any column to a clean string Series before using `.str`.
-
-    Columns that are entirely blank in an export (size, color) are read as
-    float64, and `.str` on a float column raises AttributeError. Doing the
-    coercion in one place means a filter can never crash on the dtype the CSV
-    happened to infer.
-    """
+    """Coerce a column to clean strings before using `.str` (all-blank columns load as float64)."""
     return (series.astype("object").where(series.notna(), "")
             .astype(str).str.strip()
             .replace({"nan": "", "None": "", "NaT": "", "<NA>": ""}))
@@ -2719,12 +2681,7 @@ def get_top_n_products(
         return f"Error processing products report: {str(e)}\n{traceback.format_exc()}"
 
 def _narrow(combos, column, value, label, filters, notes, sku_mode=False):
-    """
-    Apply one filter step, but skip it (with an explanatory note) if a prior
-    filter already narrowed the working set to zero rows - avoids firing a
-    misleading "no match found for X" against results that were already empty
-    for an unrelated reason.
-    """
+    """Apply one filter step, skipping it with a note when earlier filters already left no rows."""
     if combos.empty:
         notes.append(
             f"Skipped {label} filter ('{value}') because earlier filters already "
@@ -2740,19 +2697,9 @@ def fuzzy_blob_search(
     score_cutoff: int = 75,
     limit: int = 15,
 ):
-    """
-    Free-text search across a combined text blob built from `columns`, joined
-    per row. Splits the query into individual words and scores each row by the
-    average of each query word's best per-token match anywhere in that row's
-    combined text - so word order doesn't matter and the query doesn't need to
-    map cleanly onto a single field.
- 
-    Returns (matched_df, notes):
-      - matched_df: rows with a "match_score" column, sorted descending (may
-        be more than one row - this is a *search*, not a single resolved
-        value, so ties and near-ties are all surfaced rather than forced to
-        pick one).
-      - notes: a one-line summary of what matched, or why nothing did.
+    """Free-text search across `columns` combined per row; word order doesn't matter.
+
+    Returns (matched_df sorted by match_score, notes).
     """
     if df.empty or not query:
         return df.iloc[0:0], []
@@ -2792,15 +2739,10 @@ def _catalog_resolve_value(
     score_cutoff: int = 80,
     ambiguity_gap: int = 5,
 ):
-    """
-    Try to resolve `user_input` to the closest value in `choices`.
- 
-    Returns a tuple: (resolved_value, note, ambiguous_candidates)
-      - resolved_value: the best matching choice, or None if nothing cleared the cutoff
-                         or the match was ambiguous.
-      - note: human-readable string describing the substitution, or None if the
-              match was exact (case-insensitive) and needs no explanation.
-      - ambiguous_candidates: list of near-tied candidate values (empty if not ambiguous).
+    """Resolve `user_input` to the closest value in `choices`.
+
+    Returns (resolved_value, note, ambiguous_candidates); resolved_value is None when
+    nothing clears the cutoff or the match is ambiguous.
     """
     # rapidfuzz raises on non-string choices, and a column read as float64
     # (all-NaN size/color, numeric barcodes) reaches here as floats.
@@ -2854,14 +2796,10 @@ def _catalog_apply_filter(
     notes: list,
     sku_mode: bool = False,
 ) -> pd.DataFrame:
-    """
-    Filter `df` on `column` matching `user_value`.
-    Tries exact/substring match first; falls back to fuzzy matching against the
-    column's unique values only if the substring match returns nothing.
- 
-    Note: whether a filter argument was PROVIDED is tracked separately by the
-    caller. This function only determines whether the provided value resolved
-    to anything - it must not be used to infer "no filter was passed".
+    """Filter `df` on `column` by `user_value`: exact/substring first, then fuzzy on unique values.
+
+    It only reports whether a given value matched; whether a filter was passed at all is
+    tracked by the caller.
     """
     if column not in df.columns:
         notes.append(f"Column '{column}' not found in data - skipping {label} filter.")
@@ -2872,10 +2810,7 @@ def _catalog_apply_filter(
         notes.append(f"Empty {label} filter ignored.")
         return df
 
-    # 1. Exact / substring match first (fast, 100% precise when it hits).
-    #    regex=False is load-bearing: product names legitimately contain (, ), +,
-    #    * and ?, and treating a user value as a pattern turns "Salted Lime (12oz"
-    #    into an re.error that takes down the whole call.
+    # 1. Exact / substring match first. regex=False because product names contain ( ) + * ?
     exact = df[_as_text(df[column]).str.contains(user_value, case=False, na=False, regex=False)]
     if not exact.empty:
         filters.append(f"{label}='{user_value}'")
@@ -2897,9 +2832,7 @@ def _catalog_apply_filter(
         return df.iloc[0:0]  # empty on purpose: force clarification instead of guessing
  
     if resolved is None:
-        # Filter WAS provided, it just didn't match anything - say so explicitly
-        # rather than leaving both `filters` and `notes` empty, which would look
-        # identical to "no filter was ever passed".
+        # The filter was given but matched nothing: say so, or it looks like no filter was passed.
         notes.append(f"No match found for {label}='{user_value}' (checked exact and fuzzy match).")
         return df.iloc[0:0]
  
@@ -4948,10 +4881,9 @@ def _mode_or_none(series: pd.Series):
 
 
 def _resolve_date_window(start_date, end_date, lookback_days, reference_date, notes):
-    """
-    reference_date = latest activity actually present in the data - used as
-    "today" for lookback_days. Returns (start_dt, end_dt, period_msg); both
-    None means All Time.
+    """Return (start_dt, end_dt, period_msg); both None means all time.
+
+    lookback_days counts back from the latest activity in the data, not from today.
     """
     if (start_date or end_date) and lookback_days:
         notes.append(
@@ -6564,12 +6496,7 @@ def _salesperson_table_for_group(work: pd.DataFrame, top_n: int) -> list[str]:
 
 
 def _salesperson_table(user_id: str, window: Period, top_n: int) -> list[str]:
-    """Orders and revenue per salesperson, from the orders export.
-
-    Separate from the activity log on purpose: the log records only part of the
-    order book and carries no salesperson on order rows, so reading revenue from
-    it would understate every person's number by an unknown amount.
-    """
+    """Orders and revenue per salesperson, from the orders export (the activity log undercounts them)."""
     orders, notes = load_orders(user_id)
     in_window = orders[window.mask(orders["_ts"])]
     if in_window.empty:

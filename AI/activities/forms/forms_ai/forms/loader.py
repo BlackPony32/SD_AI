@@ -1,14 +1,4 @@
-"""Turn a `user_id` into three already-downloaded CSVs and then into one flat
-fact table.
-
-The public entry point is `load_dataset(user_id)`. It is async because every
-other public function in the pipeline is, and because the pandas work runs in a
-worker thread (`asyncio.to_thread`) so a 25k-row parse cannot block the event
-loop of the surrounding web app.
-
-Files are located, never fetched. If they are not on disk, that is an error the
-caller should surface, not something this layer papers over.
-"""
+"""Load a user's downloaded CSVs into one flat fact table."""
 
 from __future__ import annotations
 
@@ -58,9 +48,7 @@ class DatasetPaths:
         return tuple(out)
 
 
-# ---------------------------------------------------------------------------
-# Locating the files
-# ---------------------------------------------------------------------------
+# --- Locating the files ---
 
 def _find(directory: Path, stems: tuple[str, ...], user_id: str) -> Path | None:
     """Look for <stem><suffix>, then <user_id>_<stem><suffix>, then any file
@@ -83,12 +71,8 @@ def _find(directory: Path, stems: tuple[str, ...], user_id: str) -> Path | None:
 
 
 def resolve_dataset(user_id: str, root: str | os.PathLike | None = None) -> DatasetPaths:
-    """Find this user's three exports.
-
-    Search order:
-      1. {root}/{user_id}/            - the expected per-user directory
-      2. {root}/                      - flat layout, files prefixed by user_id
-      3. {root}/**/{user_id}/         - one recursive sweep, for sharded roots
+    """Find this user's three exports: {root}/{user_id}/, then {root}/ with user_id-prefixed
+    files, then one recursive sweep for {root}/**/{user_id}/.
     """
     if not str(user_id or "").strip():
         raise ValueError("user_id is required")
@@ -127,14 +111,9 @@ def _read_table(path: Path) -> pd.DataFrame:
                        on_bad_lines="warn", low_memory=False)
 
 
-# ---------------------------------------------------------------------------
-# Choosing which timestamp represents "when the answer was given"
-# ---------------------------------------------------------------------------
-# Exports carry several date columns and they are not equally trustworthy. In
-# the current one, `answerDate` is 100% null and `completedAt` is - for half the
-# rows - the *import* timestamp, not a submission time. Hard-coding a column
-# would silently produce a wrong time axis, so candidates are scored instead
-# and the decision is written into the result metadata.
+# --- Choosing which timestamp represents "when the answer was given" ---
+# Date columns differ in trust (answerDate is empty, completedAt is sometimes the import time),
+# so candidates are scored and the choice is recorded in the result metadata.
 
 EVENT_TIME_CANDIDATES: tuple[str, ...] = (
     "answer_date",        # response-level: when this answer was recorded
@@ -180,9 +159,7 @@ def score_time_column(series: pd.Series) -> dict[str, Any]:
             "score": round(score, 4)}
 
 
-# ---------------------------------------------------------------------------
-# The dataset
-# ---------------------------------------------------------------------------
+# --- The dataset ---
 
 @dataclass
 class FormDataset:
@@ -349,9 +326,7 @@ def _build(paths: DatasetPaths, event_time_field: str | None) -> FormDataset:
                        time_column_report=report, warnings=warnings)
 
 
-# ---------------------------------------------------------------------------
-# Cache + public API
-# ---------------------------------------------------------------------------
+# --- Cache + public API ---
 
 _CACHE: dict[tuple, FormDataset] = {}
 _CACHE_LOCK = asyncio.Lock()

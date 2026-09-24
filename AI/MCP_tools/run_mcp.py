@@ -144,8 +144,7 @@ def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
 from datetime import datetime
 
 def current_date_str() -> str:
-    """Per request, not per import -- a module-level constant went stale after
-    midnight on a long-running server."""
+    """Today's date, computed per call so a long-running server never goes stale."""
     return datetime.now().strftime("%Y-%m-%d (%A)")
 
 async def create_orders_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
@@ -481,7 +480,6 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                 # --- Handle Text Generation ---
                 if event_type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     delta = event.data.delta or ""
-                    #print(delta, end="", flush=True)  # Optional: For debugging in console
                     if capturing_json:
                         # Once triggered, NEVER stream to frontend. Quarantine everything.
                         json_buffer += delta

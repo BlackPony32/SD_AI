@@ -696,9 +696,7 @@ def _generate_product_report(df_to_report, report_title):
     output_strings.append(f"Manufacturer(s):   {', '.join(manufacturers[:3])}" + ("..." if len(manufacturers)>3 else ""))
     output_strings.append(f"Category(s):       {', '.join(categories[:3])}" + ("..." if len(categories)>3 else ""))
 
-    # --- NEW FEATURE: Top Contributors Breakdown ---
-    # If the search result contains multiple products (e.g. searching for a Category),
-    # show which specific products are selling the most.
+    # Top contributors: when several products matched (e.g. a category), show the best sellers.
     
     unique_variants = df_to_report['product_variant'].nunique()
     

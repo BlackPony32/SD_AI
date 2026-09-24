@@ -379,7 +379,6 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
     pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt} ?'
     try:
         # Use AI function to get response
-        #response = await Ask_ai_many_customers(prompt, user_uuid)
         from AI.group_customer_analyze.Ask_ai_many_customers import create_Ask_ai_many_c_agent
         agent, session = await create_Ask_ai_many_c_agent(user_uuid)
 
@@ -391,7 +390,6 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
 
         answer = runner.final_output 
         from pprint import pprint
-        #print(answer)
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -465,7 +463,6 @@ async def st_Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
                             "type": "token",
                             "content": buffer
                         })
-                        #print(buffer)
                         yield f"data: {chunk_data}\n"
                         buffer = ""  # Reset buffer
 
@@ -598,14 +595,7 @@ class ReportRequest(BaseModel):
 def _sync_comparison_logic(df_1: pd.DataFrame, 
                            df_2: pd.DataFrame, 
                            customer_id_s):
-    """
-    Internal synchronous function to perform blocking Pandas operations.
-    Returns a dictionary with the results.
-    
-    Note:
-    - df_1 is assumed to be the 'orders' DataFrame.
-    - df_2 is assumed to be the 'customers' DataFrame.
-    """
+    """Compare IDs between orders (df_1) and customers (df_2); blocking pandas work."""
     
     # 1. Check for required columns
     required_cols_df1 = ['customerId']
@@ -650,14 +640,7 @@ def _sync_comparison_logic(df_1: pd.DataFrame,
 async def check_customer_ids(df_1: pd.DataFrame, 
                            df_2: pd.DataFrame, 
                            customer_id_s):
-    """
-    Asynchronous wrapper for checking IDs in DataFrames.
-    
-    Note: df_1 represents orders, and df_2 represents customers.
-    
-    Executes blocking Pandas logic in a separate thread and
-    returns a dictionary (dict) ready for JSON serialization.
-    """
+    """Run _sync_comparison_logic in a thread (df_1 = orders, df_2 = customers)."""
     # Running the heavy synchronous function in a separate thread
     result_dict = await asyncio.to_thread(_sync_comparison_logic, df_1, df_2, customer_id_s)
     
@@ -727,7 +710,6 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         print(f"Step 0 - Starting data fetch for id {uuid}: {time.perf_counter() - start_time:.2f}s")
         try:
             file_paths = await strategy.fetch_and_write(ids, user_folder, distributor_id)
-            #print(file_paths)
         except Exception as e:
             error_message = str(e)
             logger2.error(f"Data processing/fetching error ({id_type.value}): {error_message}")
@@ -797,11 +779,7 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
                 cleaned_paths[products_entity] = cleaned_products_path
                 orders_check_path = cleaned_orders_path
             else:
-                # NEXT STEP: no cleanup_entities configured for this strategy -
-                # raw fetched files would be used downstream as-is. Hasn't come
-                # up yet since both current strategies use the same
-                # ("orders", "order_products") pair; flagging here for when it
-                # does.
+                # TODO: this strategy has no cleanup_entities yet, so raw fetched files are used as-is.
                 logger2.info(
                     f"No cleanup step configured/possible for id_type={id_type.value} "
                     f"(entities={strategy.entities}); skipping prepared_big_data."
@@ -814,7 +792,6 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
             # Check if customers ids correct but no data in orders
             try:
                 check_if_orders_has_data = pd.read_csv(cleaned_orders_path)
-                #print(check_if_orders_has_data.head(3))
                 if check_if_orders_has_data.empty:
                     logger2.info("Orders data is empty after processing.")
                     message = """The report cannot be generated based on empty data (No valid orders found). \n
@@ -873,7 +850,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
     
                 if check_empty:
                     logger2.error("Empty orders file!")
-                    #incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
                     return JSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,
                     content={
@@ -886,7 +862,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             except Exception as e:
                 logger2.error(e)
         
-                #incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
                 # Create and return response
                 return JSONResponse(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -948,13 +923,11 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             sections, full_report = await report_generator.generate(
                 report_type, cleaned_orders_path, cleaned_products_path, uuid, start_time
             )
-            #print(sections.get(report_type, "No section generated for this report type."))
         else:  # id_type == AnalysisIdType.CATALOG
             selected_catalog_path = os.path.join('data', distributor_id, 'work_data_folder', 'raw_file_selected_catalog.csv')
             sections, full_report = await report_generator.generate(
                 report_type, selected_catalog_path, cleaned_orders_path, cleaned_products_path, cleaned_catalog_path, uuid, start_time
             )
-            #print(sections.get(report_type, "No section generated for this report type."))
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={

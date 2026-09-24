@@ -1,19 +1,4 @@
-"""The two prompts used by the activity report.
-
-  [A] Statistics Analyst -- reads the calculated statistics and produces the
-      seven key points, plus a one-paragraph reading of each table.
-  [B] Situation Writer   -- writes the narrative: executive summary, what the
-      activity shows, who is doing the work, what looks wrong, what to do.
-
-A explains the tables the reader is looking at; B explains the situation those
-tables describe. Neither waits on the other, so wall clock is one call, and a
-failure in one still leaves the report with the other half intact.
-
-Beyond the shared rules, both agents are held to the confidence rules: the
-deterministic layer attaches `reliability` and `basis` to every comparison, and
-ignoring either is a rule violation rather than a style preference -- "activity
-fell 62%" off three events is the most likely way this report misleads someone.
-"""
+"""Prompts for the activity report."""
 
 from __future__ import annotations
 

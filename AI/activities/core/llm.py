@@ -1,9 +1,4 @@
-"""Everything that talks to a model. Previously duplicated in full across the
-activity and task pipelines; there is now one copy.
-
-Nothing here raises: a failed call returns None and the caller falls back to
-code-rendered output, which is the whole failure policy of this codebase.
-"""
+"""Everything that talks to a model."""
 
 from __future__ import annotations
 
@@ -35,9 +30,7 @@ except Exception:
     calculate_cost = None
 
 
-# ---------------------------------------------------------------------------
-# Token / cost accounting
-# ---------------------------------------------------------------------------
+# --- Token / cost accounting ---
 
 @dataclass
 class UsageTracker:
@@ -109,9 +102,7 @@ def extract_usage(result: Any) -> dict[str, int]:
     return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
 
-# ---------------------------------------------------------------------------
-# Agent runner
-# ---------------------------------------------------------------------------
+# --- Agent runner ---
 
 async def run_agent(name: str, instructions: str, user_input: str, usage: UsageTracker,
                     timeout: int = AGENT_TIMEOUT) -> str | None:

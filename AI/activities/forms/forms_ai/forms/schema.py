@@ -1,9 +1,4 @@
-"""Schema normalisation: turn whatever the export happens to look like into a
-predictable set of columns, dtypes and question types.
-
-Everything downstream (intervals, metrics, prompts) talks to the normalised
-names defined here, so a rename in the source export is a one-file change.
-"""
+"""Normalise an export into predictable columns, dtypes and question types."""
 
 from __future__ import annotations
 
@@ -16,12 +11,8 @@ from ..core.logging_setup import get_log
 
 log = get_log("forms.schema")
 
-# ---------------------------------------------------------------------------
-# Question types
-# ---------------------------------------------------------------------------
-# The five that exist in the current export plus the ones the builder can emit.
-# Anything unrecognised becomes UNKNOWN and is resolved by sniffing the answers
-# (see metrics.effective_type) - that is what makes the engine form-agnostic.
+# --- Question types ---
+# Unrecognised types become UNKNOWN and are resolved from the answers (metrics.effective_type).
 
 NUMERIC: Final = "NUMERIC"
 YES_NO: Final = "YES_NO"
@@ -59,12 +50,8 @@ def normalise_type(raw: Any) -> str:
     return _TYPE_ALIASES.get(key, UNKNOWN)
 
 
-# ---------------------------------------------------------------------------
-# Column aliases
-# ---------------------------------------------------------------------------
-# camelCase from the export -> snake_case used internally. Unlisted columns are
-# snake_cased and kept, so extra columns (customer_id, store_id, ...) survive
-# untouched and become available to the filter layer automatically.
+# --- Column aliases ---
+# camelCase export columns -> snake_case; unlisted columns are snake_cased and kept.
 
 _QUESTION_ALIASES = {
     "id": "question_id", "formid": "form_id", "orderindex": "order_index",
@@ -132,13 +119,8 @@ REQUIRED = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Dates
-# ---------------------------------------------------------------------------
-# Three formats show up in this export and they all have to work:
-#   1. JS Date.toString():  "Wed Apr 02 2025 08:25:19 GMT+0000 (Coordinated ...)"
-#   2. dd/mm/yyyy:          "02/04/2025"          <- day-first, NOT US order
-#   3. ISO 8601:            "2025-04-02T08:25:19Z"
+# --- Dates ---
+# Accepts JS Date.toString(), day-first dd/mm/yyyy ("02/04/2025" is 2 April) and ISO 8601.
 
 _JS_TAIL = re.compile(r"\s*GMT[+-]\d{4}\s*\(.*\)\s*$")
 _DDMMYYYY = re.compile(r"^\s*\d{1,2}[/.]\d{1,2}[/.]\d{4}\s*$")
@@ -179,13 +161,7 @@ _RESOLUTIONS = ("second", "minute", "hour", "day")
 
 
 def detect_resolution(series: pd.Series) -> str:
-    """How precise is this timestamp column *in practice*?
-
-    A column typed as datetime can still be day-precision data (every value at
-    00:00:00) or, worse, a seeded ingest timestamp with two distinct values
-    across 25k rows. Bucketing hourly on either is a lie, so the interval engine
-    asks this before it picks a unit.
-    """
+    """How precise this timestamp column is in practice (e.g. all midnight, or a few ingest times)."""
     values = pd.to_datetime(series, errors="coerce").dropna()
     if values.empty:
         return "day"
@@ -206,9 +182,7 @@ def distinct_time_of_day(series: pd.Series) -> int:
     return 0 if values.empty else int(values.dt.time.nunique())
 
 
-# ---------------------------------------------------------------------------
-# Answer value coercion
-# ---------------------------------------------------------------------------
+# --- Answer value coercion ---
 
 _TRUE = {"yes", "y", "true", "1", "1.0", "да", "так", "ok", "done", "checked"}
 _FALSE = {"no", "n", "false", "0", "0.0", "нет", "ні", "none", "unchecked"}

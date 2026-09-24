@@ -1,12 +1,4 @@
-"""One date parser for the CSV exports.
-
-Notes and tasks each carried their own version of this, one of which returned
-naive datetimes and one tz-aware, which is how comparison bugs get in. This one
-always returns tz-aware UTC, or None.
-
-The activity layer keeps its own vectorised pandas parser: same format, but a
-per-element Python call on a large log is two orders of magnitude slower.
-"""
+"""Date parsing for the CSV exports; always returns tz-aware UTC or None."""
 
 from __future__ import annotations
 

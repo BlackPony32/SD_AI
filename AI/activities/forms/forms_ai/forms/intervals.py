@@ -1,42 +1,4 @@
-"""The time axis.
-
-The brief: *whatever* period the user picks - one day, a week, a year, all time -
-the analyser must cut it into comparable equal intervals and compare them. This
-module is the only place that decides how.
-
-The approach
-------------
-1. **The period is resolved first** (explicit `period_from`/`period_to`, else the
-   min/max of the filtered data). Statistics are never computed over a window the
-   user did not ask for.
-
-2. **Granularity is chosen from a ladder**, not from the calendar name of the
-   period. The engine walks hour -> 3h -> 6h -> 12h -> day -> 2d -> week -> 2w ->
-   month -> quarter -> half -> year and keeps the candidate whose bucket count is
-   closest to `FORMS_TARGET_BUCKETS` while staying inside
-   [`FORMS_MIN_BUCKETS`, `FORMS_MAX_BUCKETS`]. A one-day period therefore comes
-   out as 24 hourly buckets and three years as 12 quarterly ones, from the same
-   code path and with the same downstream statistics.
-
-3. **A granularity finer than the data is refused.** `time_resolution` comes from
-   the loader; asking for hourly buckets on day-precision timestamps would
-   manufacture a diurnal pattern out of nothing, so the engine steps up to the
-   finest honest unit and says so in `notes`.
-
-4. **Buckets are calendar-snapped by default** (`mode="calendar"`): a monthly
-   bucket starts on the 1st, a weekly one on Monday. This is what makes labels
-   meaningful and makes two runs of the report line up. The cost is that
-   calendar units are not equal in raw duration (28-31 days), so every bucket
-   carries `days` and every volume metric is also reported per day. When exact
-   equality matters more than readable labels, `mode="uniform"` divides the span
-   into N identical timedeltas.
-
-5. **Empty buckets are emitted.** A month with no submissions is a finding, and
-   dropping it would flatten the trend line and shift every comparison.
-
-6. **A previous, equal-length window is planned alongside** so "this period vs
-   the one before" is available without a second call.
-"""
+"""Split the analysis period into equal, comparable intervals."""
 
 from __future__ import annotations
 
@@ -71,12 +33,9 @@ class Granularity:
 
     @property
     def anchored_offset(self) -> Any:
-        """The step to use when the grid starts at an arbitrary date.
+        """The step to use when the grid starts on an arbitrary date.
 
-        `to_offset("W-MON")` rolls forward to the next Monday, so adding it to a
-        Wednesday start produces a 12-day first period instead of 14. A fixed
-        timedelta keeps every period the same length; months and longer keep a
-        calendar offset so the day-of-month is preserved.
+        Fixed timedeltas keep weeks the same length; months and longer keep calendar offsets.
         """
         if self.freq == "h":
             return pd.Timedelta(hours=self.step)
@@ -149,9 +108,7 @@ class Bucket:
     start: pd.Timestamp
     end: pd.Timestamp        # exclusive
     days: float
-    # True when the grid was anchored to the requested start rather than to a
-    # calendar boundary, so labels must be date ranges: a bucket running 15 Jan to
-    # 14 Feb is not "Jan 2025".
+    # True when the grid starts at the requested date, so labels must be date ranges, not "Jan 2025".
     anchored: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,10 +128,7 @@ class IntervalPlan:
     previous_end: pd.Timestamp | None
     time_resolution: str
     requested_granularity: str
-    # The range the caller actually asked for, before buckets were snapped out to
-    # calendar boundaries. Buckets that stick out past it are only partly covered
-    # by data, so a per-day rate computed over their full width understates
-    # reality - `coverage_of` is what lets that be detected instead of shipped.
+    # The range the caller asked for; buckets reaching past it are only partly covered (see coverage_of).
     covered_start: pd.Timestamp | None = None
     covered_end: pd.Timestamp | None = None
     anchor: str = "calendar"
@@ -254,9 +208,7 @@ class IntervalPlan:
         }
 
 
-# ---------------------------------------------------------------------------
-# Labels
-# ---------------------------------------------------------------------------
+# --- Labels ---
 
 def _range_key_and_label(start: pd.Timestamp, end: pd.Timestamp
                          ) -> tuple[str, str]:
@@ -304,9 +256,7 @@ def _key_and_label(granularity: Granularity, start: pd.Timestamp,
     return key, label
 
 
-# ---------------------------------------------------------------------------
-# Granularity choice
-# ---------------------------------------------------------------------------
+# --- Granularity choice ---
 
 def _allowed(granularity: Granularity, time_resolution: str) -> bool:
     """Is this unit honest given how precise the underlying timestamps are?"""
@@ -322,20 +272,8 @@ def choose_granularity(span_days: float, time_resolution: str, *,
                        ) -> tuple[Granularity, list[str]]:
     """Pick the unit to split the period by.
 
-    Two things decide it, not one.
-
-    **Span**, as before: the count should land near `target`.
-
-    **Volume**, which is new and matters more. Splitting 172 forms into 14 weeks
-    leaves 12 answers a week. At that size a yes-rate wanders across a 50-point
-    range by chance alone, so all fourteen numbers are noise and any "highest week"
-    read out of them is invented. Splitting the same forms into 7 fortnights leaves
-    25 each, which can at least show a large move. So a candidate whose periods
-    would hold fewer than `min_answers_per_period` answers is penalised in
-    proportion to how far short it falls.
-
-    Preference on a tie: the finer unit, because more periods means more chance of
-    seeing a real change - but only once each period holds enough to be read.
+    The number of periods should land near `target`, and units whose periods would hold fewer
+    than `min_answers_per_period` answers are penalised. On a tie the finer unit wins.
     """
     notes: list[str] = []
     candidates = [g for g in LADDER if _allowed(g, time_resolution)]
@@ -392,9 +330,7 @@ def choose_granularity(span_days: float, time_resolution: str, *,
     return best, notes
 
 
-# ---------------------------------------------------------------------------
-# Plan construction
-# ---------------------------------------------------------------------------
+# --- Plan construction ---
 
 def _calendar_buckets(granularity: Granularity, start: pd.Timestamp,
                       end: pd.Timestamp) -> list[Bucket]:
@@ -420,14 +356,8 @@ def _calendar_buckets(granularity: Granularity, start: pd.Timestamp,
 
 def _anchored_buckets(granularity: Granularity, start: pd.Timestamp,
                       end: pd.Timestamp) -> list[Bucket]:
-    """Buckets that begin at the requested start date and step by the unit.
-
-    The alternative - snapping outwards to calendar boundaries - creates a leading
-    and a trailing period only partly covered by the requested dates. Those two
-    periods then carry a handful of answers each and get quoted as the highest and
-    lowest of the whole range. Anchoring removes them: the first period starts
-    exactly where the caller asked, and the last is clipped to the end, so every
-    period is fully inside the range.
+    """Buckets that start at the requested date and step by the unit, so every period lies fully
+    inside the range (no part-covered periods at the edges).
     """
     offset = granularity.anchored_offset
     edges: list[pd.Timestamp] = [start]
@@ -509,10 +439,7 @@ def build_plan(event_times: pd.Series | None = None, *,
         start, end_inclusive = end_inclusive, start
         notes.append("period_from was after period_to; the two were swapped")
 
-    # The upper bound is exclusive internally, so it has to sit strictly after the
-    # last thing being counted. An inclusive date with no time means "the whole of
-    # that day"; a bound taken from the data itself is nudged past its own last
-    # observation, or that observation falls outside the grid it defined.
+    # The upper bound is exclusive: push it past the last day or observation so that one is counted.
     end = end_inclusive
     if end == end.normalize():
         end = end + pd.Timedelta(days=1)
@@ -542,22 +469,14 @@ def build_plan(event_times: pd.Series | None = None, *,
                 f"report does not invent sub-{time_resolution} detail")
             chosen = finer
 
-    # Anchoring: "calendar" snaps outwards to natural boundaries, which creates a
-    # part-covered period at each end; "period" starts exactly where the caller
-    # asked. "auto" uses the calendar only when the requested start already falls
-    # on a boundary of the chosen unit, so the readable case keeps its readable
-    # labels and every other case avoids the stub periods.
+    # Anchoring: "calendar" snaps to natural boundaries, "period" starts where asked, and "auto"
+    # snaps only when the requested start is already on a boundary of the chosen unit.
     resolved_anchor = str(anchor or "auto").lower()
     if resolved_anchor == "auto":
-        # Snapping only carries meaning for units with named boundaries (weeks,
-        # months, quarters, years) and only when the caller's start is already on
-        # one. Every hour is an hour boundary and every day a day boundary, so
-        # snapping those achieves nothing and only produces a clipped tail period.
+        # Snapping only means something for named units (weeks, months, quarters, years).
         nameable = chosen.freq in ("W-MON", "MS", "QS", "YS")
-        # An explicit request for "week" or "month" is a request for *named* weeks
-        # and months, so it snaps even at the cost of part-covered edges (which are
-        # flagged and excluded from comparisons). Automatic selection prefers whole
-        # periods inside the requested dates over pretty labels.
+        # An explicit "week"/"month" request snaps even with part-covered edges (flagged and excluded);
+        # automatic selection prefers whole periods.
         explicit = requested not in ("auto", "", "none")
         resolved_anchor = (
             "calendar" if nameable and (explicit or chosen.snap(start) == start)

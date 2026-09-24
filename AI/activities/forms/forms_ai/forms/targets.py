@@ -1,25 +1,4 @@
-"""Targets, and the short list of things that actually need attention.
-
-Two jobs, deliberately kept together because the second depends on the first.
-
-**Targets.** A caller can say "at least 80% of forms should answer yes". Until now
-that reached the model as a sentence in its instructions and the model decided,
-in prose, whether a question fell short. That is the wrong place for the decision:
-it is arithmetic, it should be computed once, and the answer should be the same
-every run. `resolve()` finds the target that applies to a question and `status()`
-says whether it is met and - the part a manager can act on - how many forms would
-have to change to meet it.
-
-**Attention.** A report with twelve questions where eight of them say "no real
-change, everyone normal" buries its own findings. `attention()` ranks the
-questions by how much they warrant a decision and returns only those that do, so
-the report can open with them. The ranking is computed from the statistics, not
-asked of the model, for the same reason: a model asked "what matters here?" will
-always find six things.
-
-Nothing here suppresses a question. Every question is still analysed and still
-appears in full further down; this only decides what goes first.
-"""
+"""Targets, and the short list of things that need attention."""
 
 from __future__ import annotations
 
@@ -60,9 +39,7 @@ class Target:
         return float(value) >= self.value
 
 
-# ---------------------------------------------------------------------------
-# Resolving which target applies to which question
-# ---------------------------------------------------------------------------
+# --- Resolving which target applies to which question ---
 
 def _as_target(value: Any, scope: str) -> Target | None:
     try:
@@ -148,9 +125,7 @@ def status(block: dict[str, Any], target: Target | None) -> dict[str, Any] | Non
     }
 
 
-# ---------------------------------------------------------------------------
-# What needs attention
-# ---------------------------------------------------------------------------
+# --- What needs attention ---
 
 def _requirement_never_met(block: dict[str, Any]) -> dict[str, Any] | None:
     """A question that states a minimum which no answer met.

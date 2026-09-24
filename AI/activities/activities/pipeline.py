@@ -1,28 +1,4 @@
-"""Two-agent pipeline over the activity-log statistics.
-
-    metrics ─┬─► [A] Statistics Analyst ──► key points + a note per table
-             │                                        │
-             └─► [B] Situation Writer ────► narrative │
-                        (A and B run concurrently)    │
-                                                      ▼
-                             Orders and revenue by salesperson
-                                    + Activities Distribution
-                                    + Key Analysis
-
-The report is built as sections and the full report is the sections joined, so
-the two views cannot disagree.
-
-Failure policy -- no stage can take the report down:
-  * Statistics Analyst fails   -> tables keep code-written notes and key points.
-  * Situation Writer fails     -> a deterministic narrative is rendered in code.
-  * Both fail                  -> the whole report is rendered in code.
-  * An analytics section fails -> that section is missing, the rest still runs.
-Only an unreadable file produces no report, and `status` says which case it is.
-
-The tables are never sent through a model: they come out of the deterministic
-layer already formatted, so the figures a reader is most likely to copy into a
-spreadsheet cannot drift.
-"""
+"""Two-agent pipeline over the activity-log statistics."""
 
 from __future__ import annotations
 
@@ -39,9 +15,7 @@ from .prompts import prompt_situation_writer, prompt_statistics_analyst
 from ..core.response_format import to_payload
 log = get_log("activity_agents")
 
-# Which rendered tables belong to which section of the report. A table key that
-# is not listed here still reaches the reader: it falls into TABLE_SECTIONS's
-# last group via `_section_keys`.
+# Which rendered tables belong to which report section; unlisted tables fall into the last group.
 TABLE_SECTIONS: list[tuple[str, str, list[str]]] = [
     ("orders_and_revenue_by_salesperson", "Orders and revenue by salesperson",
      ["salesperson_orders"]),
@@ -51,9 +25,7 @@ TABLE_SECTIONS: list[tuple[str, str, list[str]]] = [
 ANALYSIS_SECTION = ("key_analysis", "Key Analysis")
 
 
-# ---------------------------------------------------------------------------
-# 1. Fact sheet
-# ---------------------------------------------------------------------------
+# --- 1. Fact sheet ---
 
 def _verbalise_change(block: dict | None, label: str) -> str | None:
     """Turn a {pct, basis, reliability} block into English once, correctly, here
@@ -74,12 +46,7 @@ def _verbalise_change(block: dict | None, label: str) -> str | None:
 
 
 def build_key_facts(metrics: dict) -> str:
-    """Pre-verbalise the figures the writer is allowed to use.
-
-    Handing over ready-made sentences is far more reliable than saying "do not
-    hallucinate": the fact sheet is also the allow-list the grounding check
-    scores against, so anything absent here is flagged automatically. Every line
-    is individually guarded -- a missing section costs one line."""
+    """Ready-made sentences with the figures the writer may use; also the grounding allow-list."""
     lines: list[str] = []
 
     def add(fmt: str, *args) -> None:
@@ -217,9 +184,7 @@ def build_key_facts(metrics: dict) -> str:
     return "\n".join(f"- {line}" for line in lines)
 
 
-# ---------------------------------------------------------------------------
-# 2. Deterministic fallbacks (no LLM)
-# ---------------------------------------------------------------------------
+# --- 2. Deterministic fallbacks (no LLM) ---
 
 def fallback_table_notes(metrics: dict) -> dict[str, str]:
     """One sentence per table, written in code, so a table is never left without
@@ -361,9 +326,7 @@ def render_fallback_narrative(metrics: dict, reason: str) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# 3. The two agent stages
-# ---------------------------------------------------------------------------
+# --- 3. The two agent stages ---
 
 async def run_statistics_analyst(metrics: dict, table_keys: list[str],
                                  usage: UsageTracker) -> tuple[dict, list[str]]:
@@ -406,9 +369,7 @@ async def run_situation_writer(metrics: dict, key_facts: str, profiles: list[dic
     return (text or None), bad
 
 
-# ---------------------------------------------------------------------------
-# 4. Assembly
-# ---------------------------------------------------------------------------
+# --- 4. Assembly ---
 
 def render_key_points(points: list[dict]) -> str:
     lines = []
@@ -446,20 +407,14 @@ def build_sections(tables: dict[str, dict], stats: dict, narrative: str) -> list
     return sections
 
 
-# ---------------------------------------------------------------------------
-# 5. Orchestration
-# ---------------------------------------------------------------------------
+# --- 5. Orchestration ---
 
 async def build_report(csv_path: str | Path, orders_path: str | Path | None = None,
                        output_dir: str | Path | None = None) -> ReportResult:
-    """Full pipeline. Always returns a ReportResult carrying a report string.
+    """Full pipeline; always returns a ReportResult with a report string.
 
-    `status` is one of:
-      full            -- both agents succeeded
-      statistics_only -- the narrative was written in code
-      analysis_only   -- the key findings and table notes were written in code
-      fallback        -- no usable LLM output; the whole report is code-rendered
-      failed          -- the file itself could not be read
+    `status`: full, statistics_only, analysis_only, fallback (no usable LLM output) or
+    failed (the file could not be read).
     """
     started = time.perf_counter()
     usage = UsageTracker(model=MODEL)

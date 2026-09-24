@@ -1,30 +1,4 @@
-"""Figure-level grounding: every number the model writes must trace back to a
-number it was given.
-
-This is a *compatible* implementation of the `grounding_check(raw, allowed)`
-contract that `llm.py` already calls - if the project already ships one, delete
-this file and keep the original. The semantics assumed by llm.py are:
-
-    grounding_check(model_output, allowed_payload) -> list[str]
-
-returning the numeric tokens in `model_output` that cannot be justified by
-`allowed_payload`. An empty list means "fully grounded".
-
-Design notes
-------------
-* The check is deliberately *lexical*, not semantic. It cannot tell you the
-  model drew the wrong conclusion; it can tell you the model produced a figure
-  nobody gave it, which is the failure mode that destroys trust in a report.
-* Rounding drift is tolerated (0.5% or 0.01, whichever is larger) because the
-  payload is rounded before serialisation.
-* A fraction in the payload (0.42) justifies its percentage form (42, 42.0)
-  because writing rates as percentages is normal prose.
-* Dates, ISO timestamps, UUIDs and version-like tokens are skipped - they are
-  identifiers, not claims.
-* The real defence is upstream: precompute every figure the model might want to
-  derive (deltas, percent changes, ratios) so it never has to do arithmetic.
-  See prompts.build_allowed_payload.
-"""
+"""Figure-level grounding: every number the model writes must trace back to one it was given."""
 
 from __future__ import annotations
 

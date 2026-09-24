@@ -1,8 +1,4 @@
-"""Single place for model, pricing, timeouts and on-disk layout.
-
-Data lives at ``<DATA_ROOT>/<uuid>/<WORK_DIR_NAME>/<file>`` and every report
-writes to ``<DATA_ROOT>/<uuid>/<OUTPUT_DIR_NAME>/``.
-"""
+"""Model, pricing, timeouts and on-disk layout."""
 
 from __future__ import annotations
 

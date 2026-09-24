@@ -1,39 +1,4 @@
-"""Agent instructions and the payloads they read.
-
-Three agents:
-
-* **QuestionInsight** - one short written insight per question, from that
-  question's period-by-period figures. Runs in batches, concurrently.
-* **FormAnalyst** - the whole-form verdict: what stands out, what to do.
-* **WrittenSummary** - the opening paragraph a reader sees first.
-
-Two things drive every decision in this file.
-
-**1. Plain language.** The model reads the reader's view of the data
-(`forms/presentation.py`), not the statistics. Values arrive pre-formatted as
-`"57%"` and `"1,886"`; measures arrive named as `"answered Yes"`, not `yes_rate`.
-The instructions then forbid the vocabulary the payload no longer contains -
-metric keys, question type names, test statistics, spark bars, "erratic",
-"flat (low confidence)". A term the model never sees and is told not to invent is
-a term that cannot reach a user.
-
-**2. A small input.** Input tokens are the whole cost of this pipeline, and the
-statistics payload is large. Four measures, in order of how much they save:
-
-* *Shared period labels.* Period names are listed once and each question sends
-  parallel arrays against them, so a label is never repeated per question.
-* *Digest plus selective detail.* The analyst gets one line per question, and full
-  period detail only for the questions that actually moved or look unusual
-  (`FORMS_ANALYST_DETAIL_LIMIT`). A form where nothing changed is nearly free.
-* *Pre-formatted strings.* `"57%"` is shorter than `0.5714`, and it is also the
-  only form the model can quote - which tightens grounding at the same time.
-* *Compact serialisation and hard omission.* No indentation, no null fields, no
-  people table for a question where everybody answers alike, no examples of
-  written answers beyond a handful of short ones.
-
-`serialise` produces the one string used both as the model's input and as the
-grounding allow-list. They must be identical or the check means nothing.
-"""
+"""Agent instructions and the payloads they read."""
 
 from __future__ import annotations
 
@@ -48,9 +13,7 @@ from .logging_setup import get_log
 log = get_log("prompts")
 
 
-# ---------------------------------------------------------------------------
-# Caller-supplied analysis rules
-# ---------------------------------------------------------------------------
+# --- Caller-supplied analysis rules ---
 
 @dataclass
 class AnalysisRules:
@@ -64,10 +27,8 @@ class AnalysisRules:
     ignore_questions: list[str] = field(default_factory=list)
     domain_notes: list[str] = field(default_factory=list)
     thresholds: dict[str, Any] = field(default_factory=dict)
-    # Per-question targets, keyed by question id or by any fragment of the
-    # question text. `thresholds["yes_rate_floor"]` is the blanket fallback for
-    # every question answered yes or no. Both are resolved and *checked* in code
-    # (forms/targets.py); the model is told the outcome, never asked to judge it.
+    # Per-question targets (by id or text fragment); thresholds["yes_rate_floor"] is the fallback.
+    # They are checked in code (forms/targets.py); the model only sees the outcome.
     targets: dict[str, Any] = field(default_factory=dict)
     max_findings: int = 6
     max_recommendations: int = 5
@@ -93,14 +54,7 @@ class AnalysisRules:
 
     @staticmethod
     def _target_line(name: str, value: Any) -> str:
-        """A target expressed the way the reader should see it.
-
-        The caller's key is an internal field name ("yes_rate_floor"). Echoing it
-        into the report is exactly the notation the writing rules forbid, so the
-        number is rendered in reader form and the label is explicitly off limits.
-        A fraction is written as a percentage: it stops "0.8" reaching the prose,
-        and it puts the percentage form in the grounding allow-list.
-        """
+        """A target in reader form: fractions as percentages, never the internal key name."""
         shown = value
         if isinstance(value, float) and 0.0 < value < 1.0:
             shown = f"{value * 100:g}%"
@@ -163,9 +117,7 @@ class AnalysisRules:
                 f"`keep_in_mind`.\n{chr(10).join(lines)}\n</house_rules>")
 
 
-# ---------------------------------------------------------------------------
-# Shared prompt fragments
-# ---------------------------------------------------------------------------
+# --- Shared prompt fragments ---
 
 _GROUNDING = """\
 <figures>
@@ -290,9 +242,7 @@ row.
 </how_the_periods_work>"""
 
 
-# ---------------------------------------------------------------------------
-# Agent 1: one insight per question
-# ---------------------------------------------------------------------------
+# --- Agent 1: one insight per question ---
 
 def question_insight_instructions(rules: AnalysisRules | None = None) -> str:
     rules = rules or AnalysisRules()
@@ -333,9 +283,7 @@ Return one JSON object and nothing else - no prose around it, no code fence:
 </output_format>"""
 
 
-# ---------------------------------------------------------------------------
-# Agent 2: the whole-form verdict
-# ---------------------------------------------------------------------------
+# --- Agent 2: the whole-form verdict ---
 
 _ANALYST_SCHEMA = """\
 {
@@ -420,9 +368,7 @@ anything the data does not support:
 </output_format>"""
 
 
-# ---------------------------------------------------------------------------
-# Agent 3: the opening summary
-# ---------------------------------------------------------------------------
+# --- Agent 3: the opening summary ---
 
 def written_summary_instructions(rules: AnalysisRules | None = None) -> str:
     rules = rules or AnalysisRules()
@@ -458,9 +404,7 @@ Rules:
 Return the prose only - no JSON, no code fence, no title."""
 
 
-# ---------------------------------------------------------------------------
-# Repair pass (required by llm.write_with_grounding)
-# ---------------------------------------------------------------------------
+# --- Repair pass (required by llm.write_with_grounding) ---
 
 async def prompt_repair_input(bad_figures: list[str], previous_output: str,
                               bad_wording: list[str] | None = None) -> str:
@@ -514,9 +458,7 @@ Your previous answer:
 Return the corrected answer only."""
 
 
-# ---------------------------------------------------------------------------
-# Payload construction
-# ---------------------------------------------------------------------------
+# --- Payload construction ---
 
 def _thin(values: list[Any], labels: list[str], limit: int
           ) -> tuple[list[Any], list[str], bool]:
@@ -610,18 +552,13 @@ def _question_detail(question: dict[str, Any], labels: list[str],
     answers = [int(str(row["answers"]).replace(",", "") or 0) for row in rows]
 
     if question.get("hide_by_period"):
-        # These answers have no middle value, so the per-period middle is an
-        # artefact of which group got one extra answer. Handing it over is
-        # handing over a story to tell about nothing; the band shares are the
-        # figures that actually move here.
+        # These answers have no middle value: send the band shares, not a per-period middle.
         spread = question.get("spread_table") or {}
         detail["by_period"] = {
             "note": "this question has no single typical answer, so no figure "
                     "per period is given - use how_answers_are_spread instead",
         }
-        # Shares only, positionally aligned with the shared `periods` array at the
-        # top of the payload - repeating the period labels once per band table
-        # would undo the saving that array exists for.
+        # Shares only, aligned with the shared `periods` array so labels aren't repeated per table.
         detail["how_answers_are_spread"] = {
             "bands": spread.get("bands"),
             "share_of_all_answers": [row["share"] for row in
@@ -653,10 +590,7 @@ def _question_detail(question: dict[str, Any], labels: list[str],
 
     people = question.get("by_person") or {}
     if people:
-        # The sentence, not the table: it already encodes whether the people
-        # genuinely differ, who cleared a significance test, and how many answered
-        # too few times to be compared. Handing over raw percentages instead is what
-        # let a 1-in-6 figure be quoted as a finding.
+        # Send the sentence, not the table: it already says whether people genuinely differ.
         detail["people"] = {"verdict": people["note"]}
         if people.get("everyone_counted_once"):
             detail["people"]["everyone_counted_once"] = \
@@ -687,10 +621,8 @@ def build_reader_payload(presentation: dict[str, Any], *,
                          ) -> dict[str, Any]:
     """What an agent reads.
 
-    `question_ids` limits which questions appear at all (used for batching);
-    `detail_ids` selects which of those get full period arrays. Pass
-    `detail_ids=[]` for a pure digest, or None to give every included question
-    full detail.
+    `question_ids` limits the questions included (for batching); `detail_ids` picks which
+    get full period arrays ([] for a pure digest, None for all of them).
     """
     labels = [row["period"] for row in presentation["activity"]["by_period"]]
     questions = presentation["questions"]
@@ -705,13 +637,8 @@ def build_reader_payload(presentation: dict[str, Any], *,
         "scope": presentation["scope"],
         "split": presentation["period_split"],
         "periods": labels,
-        # First in the payload, because it is what the write-up should open with.
-        # Computed in code, not asked of the model: a model invited to decide what
-        # matters will always find six things, and will rank the question that
-        # nothing complied with tenth.
-        # Keyed by question number only: the question text and its headline figure
-        # are already in `questions`, and repeating them here was the single
-        # largest avoidable cost in this payload.
+        # First in the payload: what the write-up should open with, chosen in code, not by the model.
+        # Keyed by question number only; the question text is already in `questions`.
         "needs_attention": [
             {"n": row["number"], "issue": row["issue"],
              "what_to_do": row["what_to_do"]}
@@ -736,11 +663,7 @@ def build_reader_payload(presentation: dict[str, Any], *,
     if presentation.get("quality_notes"):
         payload["keep_in_mind"] = presentation["quality_notes"]
     if presentation.get("data_warnings"):
-        # Kept separate from `keep_in_mind`, which is a list of caveats about how
-        # far figures can be pushed. These are stronger than a caveat: they say
-        # parts of the data are not a record of what happened. Every question is
-        # still analysed - the reader asked for statistics on whatever they have -
-        # but the write-up has to lead with this rather than bury it.
+        # Stronger than a caveat: parts of the data are not a record of what happened, so lead with it.
         payload["data_may_not_be_real"] = presentation["data_warnings"]
     return payload
 
@@ -777,9 +700,7 @@ def _sized(name: str, text: str) -> str:
     return text
 
 
-# ---------------------------------------------------------------------------
-# Prompt builders
-# ---------------------------------------------------------------------------
+# --- Prompt builders ---
 
 def _allow(data: str, rules: AnalysisRules | None) -> str:
     """The grounding allow-list: the data payload plus any figure the caller's

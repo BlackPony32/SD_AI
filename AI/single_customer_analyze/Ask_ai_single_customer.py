@@ -694,11 +694,7 @@ def General_notes_statistics_tool(user_id:str) -> str:
     logger1.info(f"Tool 'General_notes_statistics_tool' called")
     data_path = f"data/{user_id}/report_notes.md"
     
-    # List of encodings to try, in order of preference
-    # 1. utf-8: The standard.
-    # 2. cp1252: The default for Windows (likely the culprit for 0xef).
-    # 3. utf-16: Common if the file was created by PowerShell or Windows Notepad.
-    # 4. latin-1: The "catch-all" - it rarely raises errors but might produce symbols.
+    # Encodings to try, in order: utf-8, cp1252 (Windows), utf-16 (PowerShell/Notepad), latin-1 (never fails).
     encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']
 
     try:

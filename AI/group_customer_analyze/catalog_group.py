@@ -85,13 +85,9 @@ _ACTIVE_STATUS_TRUE_VALUES = {'active', 'enabled', 'true', '1', 'yes'}
 
 
 def _resolve_active_ids(catalog_df) -> set:
-    """Returns the set of product ids considered active/sellable in a FULL catalog
-    export (as opposed to the selection-only catalog).
-
-    If the file has a recognizable status-like column, only rows with an active-like
-    value count. Otherwise every id in the file is treated as active — this matches
-    the 'cleaned catalog' convention, where discontinued/inactive products are
-    expected to already be excluded from the export rather than flagged in a column."""
+    """Ids of active products in a full catalog export: filtered by a status-like column
+    when there is one, otherwise every id in the file.
+    """
     lower_map = {str(col).lower(): col for col in catalog_df.columns}
     status_col = None
     for candidate in _ACTIVE_STATUS_CANDIDATES:
@@ -118,14 +114,9 @@ def _detect_cost_column(catalog_df):
 
 
 def _canonical_names(df, cat_dict) -> dict:
-    """Returns {productId: display_name}, one canonical name per productId.
-
-    Prefers the catalog's name (+size/color) since that's deterministic. Falls back
-    to the most common raw order-line 'name' when the catalog has none. This matters
-    because the raw order-line 'name' is inconsistently spelled across lines for the
-    same productId in real data (e.g. 'Coca Cola glass bottle' vs '...bottles') -
-    grouping by that raw name instead of productId would silently split one physical
-    product's revenue across multiple report rows."""
+    """One display name per productId: the catalog name (+size/color), else the most common
+    order-line name. Group by productId, never by raw name, which is spelled inconsistently.
+    """
     names = {}
     for pid, group in df.groupby('productId'):
         cat_item = cat_dict.get(pid, {})
@@ -147,10 +138,7 @@ def _canonical_names(df, cat_dict) -> dict:
             parts.append(str(color))
         display = " ".join(parts)
 
-        # Variants can share the same size/color (e.g. different flavors or designs of
-        # otherwise-identical packaging) and would otherwise render as identical, in-
-        # distinguishable row labels. SKU is usually the true variant differentiator in
-        # that case, so append it when it isn't already reflected in the name.
+        # Variants can share size/color; append the SKU so their labels stay distinct.
         sku = cat_item.get('sku')
         if pd.notna(sku) and str(sku).strip() and str(sku).strip().lower() not in display.lower():
             display = f"{display} ({sku})"
@@ -188,14 +176,9 @@ def _resolve_via_parent(cat_dict, pid, column, default=None):
     return default
 
 def _resolve_with_fallback(preferred_value, fallback_series, default):
-    """Returns `preferred_value` if it's populated; otherwise the most common
-    non-null value in `fallback_series`; otherwise `default`.
-
-    Needed because catalog exports often only populate name/category/manufacturer
-    on the parent product row, not on the sellable variant row that order lines
-    actually reference — so the catalog lookup for a variant can be genuinely
-    empty even though the business clearly has this data (it's just sitting on
-    the order line items instead)."""
+    """`preferred_value` if populated, else the most common value in `fallback_series`, else
+    `default`. Catalog variant rows often lack fields that the order lines carry.
+    """
     if pd.notna(preferred_value):
         return preferred_value
     if fallback_series is not None and len(fallback_series):
@@ -215,40 +198,18 @@ def _fmt_pct(value) -> str:
     return f"{value:.1f}%" if pd.notna(value) else "N/A"
 
 def _log_empty(report_name, message, **context):
-    """Logs the reason a report is returning early with no data — this is NOT an
-    exception path, it's a normal 'nothing to report' outcome (bad selection, no
-    order history, missing columns, etc). Without this, an intentionally-empty
-    report and a silently-broken one look identical from the outside — same short
-    output, nothing in the logs. Every early return in both report functions goes
-    through this so a WARNING line always explains why."""
+    """Log why a report returns early with no data, so an empty report is distinguishable from a broken one."""
     ctx = " | ".join(f"{k}={v}" for k, v in context.items())
     logger2.warning(f"[{report_name}] Empty report — {message}" + (f" | {ctx}" if ctx else ""))
     return [message]
 
 
-# --------------------------------------------------------------------------------- #
-# 1. Revenue & Profitability
-# --------------------------------------------------------------------------------- #
+# --- 1. Revenue & Profitability ---
 def _generate_revenue_profitability_report(catalog_path, orders_path, products_path) -> list:
-    """
-    Revenue & profitability breakdown for the product(s) in the given catalog selection.
+    """Revenue waterfall (gross -> discounts -> net -> collected -> refunded -> outstanding) plus
+    margin or price realization for the selected products.
 
-    For each product in `catalog_path`, shows the full revenue waterfall (gross
-    ordered -> discounts -> net billed -> collected -> refunded -> still outstanding),
-    plus either true gross margin (if the catalog has a real cost column) or price
-    realization vs. list price as a profitability proxy. When the selection contains
-    more than one product, a portfolio total row and per-product action flags are added.
-
-    Args:
-        products_path: path to the order line items csv (cleaned_products.csv schema).
-        orders_path: path to the orders csv (cleaned_orders.csv schema).
-        catalog_path: path to the catalog csv, PRE-FILTERED to the user's selected
-            product(s). Every product id present in this file is treated as selected;
-            there is no separate id-list parameter.
-
-    Returns:
-        list[str]: markdown lines forming the report, or a single-item list with a
-        user-facing error/status message if the report could not be generated.
+    `catalog_path` is pre-filtered to the selection. Returns markdown lines, or a one-item list with a user-facing message when it can't be built.
     """
     try:
         # --- 1. Load Data & Validate ---
@@ -452,32 +413,12 @@ def _generate_revenue_profitability_report(catalog_path, orders_path, products_p
         logger2.error(f"Critical Error in Revenue & Profitability Report: {str(e)}")
         return ["This report is currently unavailable due to a temporary issue. Please check back later or contact support if you need assistance."]
 
-# --------------------------------------------------------------------------------- #
-# 2. Top Performer Deep Dive
-# --------------------------------------------------------------------------------- #
+# --- 2. Top Performer Deep Dive ---
 def _generate_top_performer_deep_dive_report(catalog_path, orders_path, products_path) -> list:
-    """
-    Deep dive on the strongest product among the user's selection.
+    """Deep dive on the strongest selected product (picked by net collected revenue, then unique
+    customers): revenue, trend, concentration, repeat rate, pricing and inventory.
 
-    If the selected catalog contains only one product, it is analyzed directly. If
-    it contains several, they're first compared on net collected revenue (with
-    unique customers as a tiebreaker) to pick a single winner, and that comparison
-    is shown before the deep dive so the choice is transparent rather than a black box.
-
-    The deep dive covers: revenue waterfall, monthly trend, customer concentration,
-    repeat purchase rate, pricing consistency vs. list price, inventory/sell-through,
-    and a directional fulfillment note.
-
-    Args:
-        products_path: path to the order line items csv (cleaned_products.csv schema).
-        orders_path: path to the orders csv (cleaned_orders.csv schema).
-        catalog_path: path to the catalog csv, PRE-FILTERED to the user's selected
-            product(s). Every product id present in this file is treated as selected;
-            there is no separate id-list parameter.
-
-    Returns:
-        list[str]: markdown lines forming the report, or a single-item list with a
-        user-facing error/status message if the report could not be generated.
+    Returns markdown lines, or a one-item list with a user-facing message when it can't be built.
     """
     try:
         # --- 1. Load Data & Validate ---
@@ -609,9 +550,7 @@ def _generate_top_performer_deep_dive_report(catalog_path, orders_path, products
             stock = cat_info.get('inventory_onHand', 0)
             stock = int(stock) if pd.notna(stock) else 0
             sku = cat_info.get('sku', 'N/A')
-            # Category/manufacturer often only live on the catalog's PARENT row, not
-            # the sellable variant row order lines reference — fall back to the order
-            # line data itself (which carries its own copy of these) before giving up.
+            # Category/manufacturer often live only on the catalog's parent row; fall back to the order lines.
             category = _resolve_with_fallback(
                 cat_info.get('productCategory_name'), winner_lines.get('productCategoryName'), 'Uncategorized'
             )
@@ -844,49 +783,13 @@ def _generate_top_performer_deep_dive_report(catalog_path, orders_path, products
         logger2.error(f"Critical Error in Top Performer Deep Dive: {str(e)}")
         return ["This report is currently unavailable due to a temporary issue. Please check back later or contact support if you need assistance."]
 
-# --------------------------------------------------------------------------------- #
-# 3. Cross-Sell & Bundle Actionability
-# --------------------------------------------------------------------------------- #
+# --- 3. Cross-Sell & Bundle Actionability ---
 def _generate_cross_sell_bundle_report(catalog_path, orders_path, products_path, full_catalog_path) -> list:
-    """
-    Market-basket analysis for the selected product(s): what else shows up in the
-    same orders, how much more likely that is than chance, and whether the
-    selection itself already behaves like a natural bundle.
+    """Market-basket analysis for the selected products: attach rate and lift of other products
+    found in the same orders (lift > 1 is the cross-sell signal), and how often the selection
+    is already bought together. Candidates must be active in `full_catalog_path`.
 
-    Methodology:
-    - Looks at every order that contains at least one selected product ("focal
-      orders"), regardless of payment/refund status — this is a behavioral
-      co-purchase signal, not a revenue recognition metric, so it intentionally
-      does NOT exclude refunded orders the way the revenue reports do.
-    - For each other product found in those orders, computes:
-        attach rate = % of focal orders that also contain it
-        lift        = attach rate / that product's normal share of ALL orders
-      Lift > 1 means it shows up with the selection more than its baseline
-      popularity would predict — that's the actual cross-sell signal, not raw
-      co-occurrence count (which just favors generically popular items).
-    - Candidates are restricted to products that are ACTIVE in `full_catalog_path`
-      — recommending a cross-sell of something no longer sellable isn't actionable.
-      Their display names are also resolved against that full catalog (proper
-      name/size/color/sku) rather than the raw order-line text.
-    - If more than one product is selected, also reports how often the selection
-      is *already* being bought as a set — i.e. validates whether a bundle makes
-      sense before recommending one.
-
-    Args:
-        products_path: path to the order line items csv (cleaned_products.csv schema).
-        orders_path: path to the orders csv (cleaned_orders.csv schema).
-        catalog_path: path to the catalog csv, PRE-FILTERED to the user's selected
-            product(s). Every product id present in this file is treated as selected.
-        full_catalog_path: path to the FULL catalog csv (cleaned_catalog.csv schema —
-            all products, not just the selection). Used to (a) resolve proper names
-            for cross-sell candidates and (b) restrict candidates to active/sellable
-            products. If the file has no recognizable status column, every product in
-            it is treated as active (matches the 'cleaned catalog' convention of
-            already excluding discontinued items from the export).
-
-    Returns:
-        list[str]: markdown lines forming the report, or a single-item list with a
-        user-facing error/status message if the report could not be generated.
+    Returns markdown lines, or a one-item list with a user-facing message when it can't be built.
     """
     try:
         # --- 1. Load Data & Validate ---
@@ -1163,38 +1066,13 @@ def _generate_cross_sell_bundle_report(catalog_path, orders_path, products_path,
         logger2.error(f"Critical Error in Cross-Sell & Bundle Actionability: {str(e)}")
         return ["This report is currently unavailable due to a temporary issue. Please check back later or contact support if you need assistance."]
 
-# --------------------------------------------------------------------------------- #
-# 4. Buyer Health
-# --------------------------------------------------------------------------------- #
+# --- 4. Buyer Health ---
 def _generate_buyer_health_report(catalog_path, orders_path, products_path) -> list:
-    """
-    Customer-health analysis for the buyers of the selected product(s): who's core,
-    who's new, who's drifting away, and whether they're paying cleanly.
+    """Buyer health for the selected products: Core (recent, 2+ orders), New (recent, 1 order),
+    At Risk (lapsed repeat buyers, the win-back list) and Lapsed (lapsed one-timers), plus
+    retention and payment health.
 
-    Segments every customer who has bought the selection into one of four buckets
-    using a simple, explainable 2x2 grid (not a black-box score):
-        Core     - ordered recently (<= _STALE_PRODUCT_DAYS_FLAG days ago) AND 2+ orders
-        New      - ordered recently AND exactly 1 order so far
-        At Risk  - hasn't ordered in a while, but used to be a repeat buyer (2+ orders)
-        Lapsed   - hasn't ordered in a while and only ever ordered once
-    "At Risk" is the actionable win-back list: customers who proved they'll reorder,
-    then stopped — the highest-value list to chase, since Lapsed one-timers never
-    demonstrated repeat intent in the first place.
-
-    Also reports period-over-period retention (trailing _MOMENTUM_WINDOW_DAYS vs. the
-    _MOMENTUM_WINDOW_DAYS before that) and payment health (how much of this customer
-    base pays cleanly vs. carries an outstanding balance), so "health" covers both
-    relationship strength and collections risk, not just repeat-buying.
-
-    Args:
-        products_path: path to the order line items csv (cleaned_products.csv schema).
-        orders_path: path to the orders csv (cleaned_orders.csv schema).
-        catalog_path: path to the catalog csv, PRE-FILTERED to the user's selected
-            product(s). Every product id present in this file is treated as selected.
-
-    Returns:
-        list[str]: markdown lines forming the report, or a single-item list with a
-        user-facing error/status message if the report could not be generated.
+    Returns markdown lines, or a one-item list with a user-facing message when it can't be built.
     """
     try:
         # --- 1. Load Data & Validate ---
@@ -1289,9 +1167,7 @@ def _generate_buyer_health_report(catalog_path, orders_path, products_path) -> l
             merged['refunded_amount'] = np.where(merged['paymentStatus'] == 'REFUNDED', merged['totalAmount'], 0)
             as_of_date = orders_scope['_created_dt'].max()
 
-            # Payment-status counts must be per unique ORDER, not per line item — an
-            # order with 4 selected-product lines would otherwise get counted 4x
-            # against a single payment status, badly inflating the percentages.
+            # Count payment statuses per unique order, not per line item (that would inflate them).
             order_level = merged.drop_duplicates(subset='orderId')[['customer_name', 'orderId', 'paymentStatus']]
             payment_counts = order_level.groupby('customer_name', as_index=False).agg(
                 paid_orders=('paymentStatus', lambda s: (s == 'PAID').sum()),
@@ -1461,49 +1337,13 @@ def _generate_buyer_health_report(catalog_path, orders_path, products_path) -> l
         logger2.error(f"Critical Error in Buyer Health: {str(e)}")
         return ["This report is currently unavailable due to a temporary issue. Please check back later or contact support if you need assistance."]
 
-# --------------------------------------------------------------------------------- #
-# 5. Inventory Health & Fulfillment Efficiency
-# --------------------------------------------------------------------------------- #
+# --- 5. Inventory Health & Fulfillment Efficiency ---
 def _generate_inventory_fulfillment_report(catalog_path, orders_path, products_path) -> list:
-    """
-    Two questions for the selected product(s): is there enough stock positioned
-    correctly, and are orders for it actually getting shipped in good time?
+    """Stock and fulfillment for the selected products.
 
-    Inventory Health (per product, portfolio total if multiple selected):
-    - Available to sell = inventory_onHand - inventory_allocated (standard
-      available-to-promise; onHand alone overstates what's actually sellable if
-      units are already reserved against open orders).
-    - Monthly velocity & runway, same methodology as the deep dive's sell-through
-      section, so the two reports agree with each other.
-    - Distinguishes real stockouts from intentional backorder selling: if the
-      catalog's `sellingOutOfStock` is True, a zero/negative available balance is
-      treated as "backorder mode," not a blocking stockout.
-    - Inventory value uses `wholesalePrice` (list price) as a proxy, same caveat as
-      the Revenue & Profitability report: there's no true unit-cost field in this
-      catalog, so this is "capital exposure at list price," not true COGS tied up.
-
-    Fulfillment Efficiency (across orders containing the selection):
-    - Uses `deliveryStatus` as the primary signal (FULFILLED/PARTIALLY_FULFILLED/
-      UNFULFILLED) rather than the line-level `delivered` quantity — cross-checked
-      against real data, deliveryStatus is highly consistent (100% of FULFILLED
-      order lines show delivered >= quantity) while delivered-vs-quantity alone is
-      noisier to interpret in isolation.
-    - Time-to-ship is reported as a median (with the mean shown alongside) because
-      lead times in this kind of data are typically right-skewed by a long tail of
-      delayed orders — a straight average would overstate the typical experience.
-    - Surfaces the actual backlog: currently unfulfilled orders containing the
-      selection, oldest first, capped at _TOP_N_ROWS — the concrete "needs
-      attention now" list, not just an aggregate rate.
-
-    Args:
-        products_path: path to the order line items csv (cleaned_products.csv schema).
-        orders_path: path to the orders csv (cleaned_orders.csv schema).
-        catalog_path: path to the catalog csv, PRE-FILTERED to the user's selected
-            product(s). Every product id present in this file is treated as selected.
-
-    Returns:
-        list[str]: markdown lines forming the report, or a single-item list with a
-        user-facing error/status message if the report could not be generated.
+    Available = onHand - allocated; zero stock with sellingOutOfStock is backorder mode, not a
+    stockout. Fulfillment uses deliveryStatus and median time-to-ship, and lists the oldest
+    unfulfilled orders. Returns markdown lines, or a one-item list with a user-facing message when it can't be built.
     """
     try:
         # --- 1. Load Data & Validate ---
@@ -1965,7 +1805,6 @@ async def process_suggestions_topic(topic, catalog_path, orders_path, products_p
 
         answer = runner.final_output
         answer = f"<div id=\"suggestions-block\">\n\n{answer}\n</div>"
-        #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model=model)
 
@@ -1986,7 +1825,6 @@ async def worker(semaphore, topic, catalog_path, orders_path, products_path, ful
     constrained by the semaphore.
     """
     async with semaphore:
-        #print(f"Processing: {topic}")
         
         if topic == "suggestions_div":
             return await process_suggestions_topic(topic, catalog_path, orders_path, products_path, full_catalog_path, uuid, agent)
@@ -2059,7 +1897,6 @@ async def main_batch_catalog_process(
                 clean_topic_name = topic.replace('_', ' ').title()
                 sectioned_report[topic] = f"\n> **Notice:** We encountered an issue while generating the {clean_topic_name}. Please try again later.\n"
             else:
-                #print(f"Worker succeeded for topic '{topic}' (Agent: {agent}): {str(result)}")
                 sectioned_report[topic] = result
         
         # Compile the Report
@@ -2081,7 +1918,6 @@ async def main_batch_catalog_process(
         clean_sections = await asyncio.to_thread(
             lambda: {k: clean_markdown(str(v)) for k, v in sectioned_report.items()}
         )
-        #print(final_clean_report)
         return final_clean_report, clean_sections
 
     except Exception as e:
@@ -2102,15 +1938,6 @@ async def main_batch_catalog_process(
 
 
 async def main():
-    #report = await group_catalog_statistics(
-    #    products_path = "data/FULL_DIST_TEST/cleaned_products.csv",
-    #    catalog_path = "data/f70070d6-6869-4544-99d7-539f40d7c70b/work_data_folder/raw_file_catalog.csv",
-    #    orders_path = "data/FULL_DIST_TEST/cleaned_orders.csv",
-    #    full_catalog_path = "data/FULL_DIST_TEST/cleaned_catalog.csv",
-    #    agent_type="catalog_agent",
-    #    report_type="inventory_fulfillment"
-    #)
-    #print(report.get("sections", "No full report generated.").get("inventory_fulfillment", "Report section not found."))
     report, sections = await main_batch_catalog_process(
         catalog_path="data\\f70070d6-6869-4544-99d7-539f40d7c70b\\work_data_folder\\raw_file_catalog.csv",
         orders_path="data\\FULL_DIST_TEST\\cleaned_orders.csv",
@@ -2118,7 +1945,7 @@ async def main():
         full_catalog_path="data\\FULL_DIST_TEST\\cleaned_catalog.csv",
         uuid="FULL_DIST_TEST",
         agent="catalog_agent",
-        specific_topic=None) #ange to None for full report
+        specific_topic=None) # None = full report
     print(report)
 
 if __name__ == "__main__":

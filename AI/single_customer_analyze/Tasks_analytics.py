@@ -79,8 +79,6 @@ def load_and_clean_data(filepath):
     try:
         df = convert_to_datetime(df, ["createdAt"])
         df = convert_to_datetime(df, ["dueDate"])
-        #df['dueDate'] = pd.to_datetime(df['dueDate'], errors='coerce', utc=True)
-        #df['createdAt'] = pd.to_datetime(df['createdAt'], errors='coerce', utc=True)
     except Exception as e:
         print(f"Error converting date columns: {e}")
         return None

@@ -1,14 +1,4 @@
-"""Filtering, applied before anything is counted.
-
-Order matters and is fixed: form -> customer -> representative -> completion ->
-period. Every step records how many rows it removed, because "the numbers look
-low" is almost always a filter question, and a report that cannot explain its own
-denominator is not auditable.
-
-v1 filters on date range and `representative_id`. `customer_id` is wired through
-end to end but optional: the current export has no customer column, so passing
-one raises a clear error instead of silently returning zero rows.
-"""
+"""Filtering, applied before anything is counted."""
 
 from __future__ import annotations
 
@@ -135,9 +125,7 @@ def apply_filters(facts: pd.DataFrame, questions: pd.DataFrame,
                               f"Known values include: {known}")
         step("representative_id", mask, representatives)
 
-    # --- excluded people --------------------------------------------------
-    # For dropping test and placeholder accounts. The report flags likely ones
-    # under `presentation["test_accounts"]`; this is how a caller acts on that.
+    # --- Excluded people (test/placeholder accounts, see presentation["test_accounts"]) ---
     excluded = _as_list(spec.exclude_representative_id)
     if excluded:
         by_id = current["representative_id"].astype("string")

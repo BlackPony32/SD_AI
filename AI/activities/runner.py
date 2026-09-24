@@ -1,19 +1,4 @@
-"""One entry point for every topic.
-
-    run_report(uuid, "activities") -> ReportResult
-
-Every topic resolves its inputs the same way -- `data/<uuid>/work_data_folder/`
--- writes to `data/<uuid>/agent_input/`, and returns the same ReportResult, so a
-caller can add a topic without learning a new shape.
-
-Each result carries both views of the report:
-
-    result.report                       # the whole thing
-    result.sections                     # the same content, addressable
-    result.section("action_items")      # one part of it
-
-The legacy `process_*_topic` helpers still return the report string alone.
-"""
+"""One entry point for every topic: run_report(uuid, topic) -> ReportResult."""
 
 from __future__ import annotations
 
@@ -100,9 +85,7 @@ async def run_all(uuid: str, **kwargs) -> dict[str, dict]:
     return dict(zip(topics, payloads))
 
 
-# ---------------------------------------------------------------------------
-# Legacy entry points -- same signatures and return type as before
-# ---------------------------------------------------------------------------
+# --- Legacy entry points (same signatures and return type as before) ---
 
 async def process_activity_topic(uuid: str, filename: str = "raw_file_activities.csv",
                                  orders_filename: str | None = "raw_file_orders.csv") -> str:
@@ -123,9 +106,7 @@ async def process_notes_topic(uuid: str, filename: str = "file_notes.csv") -> st
     return result.report
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+# --- CLI ---
 
 def main() -> None:
     import argparse

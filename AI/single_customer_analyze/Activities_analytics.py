@@ -96,7 +96,6 @@ async def load_data(filepath):
             'NOTE_ADDED': 'Notes Added'
         }
         df['activity_type'] = df['type'].map(activity_names).fillna('Unknown')
-        #df.to_csv('test.csv',index=False)
         return df
     
     except Exception as e:
@@ -279,7 +278,6 @@ async def analyze_activities(file_path_notes: str, file_path_tasks: str, file_pa
             # Attempt to calculate metrics
             metrics = await calculate_metrics(df)
             report = generate_report(metrics)
-            #print(report)
         except Exception as e:
             logging.error(f"Metrics calculation error: {e}")
             report = "# Business Activities Analysis Report\n\nSorry, we were unable to analyze the activity data due to an issue with calculating the metrics."
@@ -291,6 +289,3 @@ async def analyze_activities(file_path_notes: str, file_path_tasks: str, file_pa
     except Exception as e:
         logging.error(f"Error writing report: {e}")
         print("Failed to write the report to file.")
-
-#if __name__ == "__main__":
-#    asyncio.run(main())

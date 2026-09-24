@@ -83,18 +83,9 @@ async def save_customer_data(
     uuid: str,
     customer_names: Dict[str, str]  # Add customer names dictionary
 ) -> Dict[str, str]:
-    """
-    Saves data for each customer ID to a file, adding customer name as a new column.
-    
-    Args:
-        customer_ids: List of customer IDs
-        entity: Entity type (e.g., 'orders')
-        data: Dictionary mapping customer IDs to data bytes
-        uuid: UUID for the folder structure
-        customer_names: Dict mapping customer IDs to names
+    """Save each customer's data to its own file, with the customer name added.
 
-    Returns:
-        Dictionary mapping customer IDs to saved file paths or errors
+    Returns {customer_id: saved path or error}.
     """
     results = {}
     
@@ -115,7 +106,6 @@ async def save_customer_data(
         try:
             # Process CSV data to add customer name column
             csv_bytes = data[customer_id]
-            #csv_text = csv_bytes.decode('utf-8')
 
             def process_csv_sync():
                 df = pd.read_csv(io.BytesIO(csv_bytes))
@@ -186,13 +176,9 @@ async def post_get_exported_data_one_file(customer_ids: List[str], entities: Lis
                 await asyncio.sleep(5 * (2 ** attempt))
     
 async def post_group_orders(order_ids: List[str], entities: List[str] = None) -> dict:
-    """
-    Fetch "sales" export data for a set of order IDs via POST.
- 
-    Mirrors post_get_exported_data_one_file's contract as closely as the
-    different transport allows: returns {"files": {entity_name: (entity_name, bytes)}}
-    so callers (see fetch_strategies.OrderIdFetchStrategy) can treat it the
-    same way regardless of which fetch function produced it.
+    """Fetch the "sales" export for a set of order IDs via POST.
+
+    Returns {"files": {entity: (entity, bytes)}}, the same shape as post_get_exported_data_one_file.
     """
     entities = entities or ["sales"]
  
@@ -221,7 +207,6 @@ async def post_group_orders(order_ids: List[str], entities: List[str] = None) ->
  
                 if response.status_code == 200:
                     data = response.json()
-                    #print(data)
                     
                     file_urls = data.get("fileUrls", {})
                     
@@ -279,7 +264,6 @@ async def post_group_catalog(catalog_ids: List[str], entities: List[str] = None)
  
                 if response.status_code == 200:
                     data = response.json()
-                    #print(data)
                     
                     return data
 

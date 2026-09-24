@@ -504,22 +504,11 @@ def format_month(month: str) -> str:
         return month
 
 def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: pd.DataFrame, uuid) -> str:
-    """Function prepare all the statistics for ai 
+    """Prepare all statistics for the AI.
 
-    Args:
-        orders (pd.DataFrame): orders dataframe
-        products (pd.DataFrame): products dataframe
-        customer_df (pd.DataFrame): some customer data (customer name)
-        uuid : customer group uuid
-    Returns:
-        Return 3 type of reports. \n
-        str: **full_report** -> full main report without sections an for all customers \n
-        str: **sections** -> main report splitted by sections an for all customers \n
-        str: **overall_report** -> full main report without sections and for each customer
+    Returns {"full_report", "sections_main", "customers_Overall_report"}; the last is per customer.
     """
     
-    #orders.to_csv('orders_many.csv', index=False)
-    #products.to_csv('products_many.csv', index=False)
     products['product_variant'] = products['name'].astype(str) + ' - ' + products['sku'].astype(str)
     orders.to_csv(f'data/{uuid}/oorders.csv', index=False)
     products.to_csv(f'data/{uuid}/pproducts.csv', index=False)
@@ -1095,16 +1084,7 @@ def generate_report(orders: pd.DataFrame, products: pd.DataFrame, customer_df: p
     }
 
 async def combine_dicts_async(A, B):
-    """Parse key to get value from statistics and AI dict to get one final result.
-
-    Args:
-        A (dict): section_name + Ai dict answer
-        B (dict): section_name + Statistics 
-
-    Returns:
-        - new_dict (dict): dict that section_name + result of connected statistics and AI response.
-        - result_string (str): full report with statistics and AI.
-    """
+    """Merge the AI answers (A) and the statistics (B) per section. Returns (new_dict, full report)."""
     order = [
         'key_metrics',
         'discount_distribution',
@@ -1141,15 +1121,7 @@ async def combine_dicts_async(A, B):
     return new_dict, result_string
 
 def parse_analysis_response(response: str) -> dict:
-    """
-    Parses agent response in the format:
-        ---
-        ## Section Title
-        Content...
-        ---
-        ## Next Section...
-    Returns a dictionary {section_title: content}
-    """
+    """Parse an agent answer made of `## Section` blocks separated by `---` into {title: content}."""
 
     # Split on lines that consist of only '---'
     sections = re.split(r'^\s*---\s*$', response, flags=re.MULTILINE)
@@ -1160,9 +1132,7 @@ def parse_analysis_response(response: str) -> dict:
         if not section:
             continue
 
-        # Look for the first markdown header in the section
-        # (we use search, not match, so we can find it even if there's
-        #  leading blank lines)
+        # First markdown header in the section (search, not match: allows leading blank lines).
         m = re.search(r'^(#+)\s*(.+)$', section, flags=re.MULTILINE)
         if not m:
             continue
@@ -1250,9 +1220,6 @@ async def statistics_runner(uuid:str):
     )
     answer = runner.final_output 
     calculate_cost(runner, model="gpt-4.1-mini")
-    #for i in range(len(runner.raw_responses)):
-    #    print("Token usage : ", runner.raw_responses[i].usage, '')
-    #print(answer)
     return answer
 
 
@@ -1276,7 +1243,6 @@ async def create_agent_products_state_analysis(USER_ID) -> Agent:
     """Initializes a new Orders agent and session."""
 
     try:
-        #logger.info("✅ Agent run .")
         instructions = await prompt_for_state_agent(USER_ID)
 
         agent = Agent(
@@ -1312,10 +1278,7 @@ async def state_runner(orders, products_df, uuid):
         )
         answer = runner.final_output 
         from pprint import pprint
-        #print(answer)
         calculate_cost(runner, model="gpt-4.1-mini")
-        #for i in range(len(runner.raw_responses)):
-        #    print("Token usage : ", runner.raw_responses[i].usage, '')
     except Exception as e:
         print(f"Error in product_per_state_analysis runner: {e}")
 
@@ -1362,7 +1325,6 @@ async def new_generate_analytics_report_(orders_df, products_df, customer_df, uu
 
         # Wait for both tasks to complete
         ans, product_per_state_analysis = await asyncio.gather(ai_task, state_analysis_task)
-        #print(ans)
         print("Step 3.3 & 3.4 - Concurrent AI and state analysis:", time.perf_counter() - start)
     except Exception as e:
         logger2.error("Error in creating report state or statistic report: ", e)
@@ -1370,12 +1332,9 @@ async def new_generate_analytics_report_(orders_df, products_df, customer_df, uu
     
     raw = str(ans or "")              # answer of model for full report
     sections_answer = parse_analysis_response(raw)  # func that parse answer to section
-    #pprint(sections_answer)
     items = list(sections_answer.items())                                       # tuple of sectioned report
     items.insert(8, ('product_per_state_analysis', product_per_state_analysis)) # add state analysis to sectioned report
-    #print(items)
     new_dict = dict(items)                              # dict in format {section : ai_text}
-    #pprint(new_dict)
     items2 = list(sections.items())
     items2.insert(8, ('product_per_state_analysis', ''))
 
@@ -1430,8 +1389,6 @@ async def process_standard_topic(topic, merged_orders, products_df, customer_df,
         sectioned_answer = await combine_sections(topic, statistics_of_topic, answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model="gpt-4.1-mini")
-        #for i in range(len(runner.raw_responses)):
-        #    print("Token usage : ", runner.raw_responses[i].usage, '')
         if isinstance(sectioned_answer, dict):
             # Try to get the value using the topic as key, otherwise take the first value
             return sectioned_answer.get(topic, list(sectioned_answer.values())[0])
@@ -1460,7 +1417,6 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
 
         answer = runner.final_output
         answer = f"<div id=\"suggestions-block\">\n{answer}\n\n</div>"
-        #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model="gpt-5.4-mini")
 
@@ -1477,9 +1433,7 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
 async def process_state_analysis(topic, merged_orders, products_df, customer_df, uuid):
     """Special logic for 'product_per_state_analysis'."""
     try:
-        # 1. Prepare Data & Save CSVs (Threaded)
-        # Note: Modifying DF here. If multiple tasks read this DF, ensure this doesn't conflict.
-        # Since we are adding a column, it is generally safe but better done once globally if possible.
+        # 1. Prepare data & save CSVs (threaded); this adds a column to the shared DataFrame.
         start = time.perf_counter()
         products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
         
@@ -1573,7 +1527,6 @@ async def main_batch_process(merged_orders, products_df, customer_df, uuid):
 
     raw_full_report = "\n".join(report_parts).strip()
     final_clean_report = await asyncio.to_thread(clean_markdown, raw_full_report)
-    #print(final_clean_report)
     clean_sections = await asyncio.to_thread(
         lambda: {k: clean_markdown(v) for k, v in sectioned_report.items()}
     )

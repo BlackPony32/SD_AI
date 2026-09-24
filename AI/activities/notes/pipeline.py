@@ -1,14 +1,4 @@
-"""Pipeline for turning raw, messy CRM notes into a prioritised report.
-
-    notes CSV -> cleanup -> statistics -> prompt -> agent -> report
-
-Unlike activities and tasks, the model writes this report whole, so the sections
-are carved back out of it by heading rather than assembled from parts. A heading
-the model failed to produce is recorded in `missing_sections`, never faked.
-
-Failure policy: an agent that produces nothing gives a code-rendered report from
-the statistics alone, and `status` says which happened.
-"""
+"""Turn raw CRM notes into a prioritised report."""
 
 from __future__ import annotations
 
@@ -76,13 +66,10 @@ def _with_generated_line(report: str, stats: dict) -> str:
 
 async def build_report(notes: list[Note] | str | Path, output_dir: str | Path | None = None,
                        *, min_score: int = 0, max_notes: int | None = MAX_NOTES) -> ReportResult:
-    """Full pipeline. Always returns a ReportResult carrying a report string.
+    """Full pipeline; always returns a ReportResult with a report string.
 
-    `status` is one of:
-      full     -- the agent wrote the report
-      fallback -- no usable LLM output; the report is rendered from statistics
-      empty    -- no note survived filtering
-      failed   -- the file itself could not be read
+    `status`: full, fallback (rendered from statistics), empty (no note survived filtering)
+    or failed (the file could not be read).
     """
     started = time.perf_counter()
     usage = UsageTracker(model=MODEL)

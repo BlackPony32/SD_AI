@@ -1,28 +1,4 @@
-"""The reader's view of the statistics.
-
-One structure, built once, consumed by both the Markdown renderer and the agent
-payload builder. That is deliberate: if the report and the model read the same
-plain-language view, they cannot disagree, and a jargon term removed here is
-removed from both at once.
-
-Shape:
-
-    {
-      "period": "1 January to 31 March 2025",
-      "scope": "8 team members, 172 forms submitted",
-      "activity": {...},
-      "questions": [ {one block per question, self-contained} ],
-      "quality_notes": [...],
-    }
-
-Each question block carries everything that belongs to that question - its
-headline, how it moved period by period, and which people differ on it - because
-those are one story and were previously three sections apart.
-
-Values are pre-formatted strings ("57%", "1,886"). Two consequences: nothing
-downstream can render `0.5714`, and the model receives short tokens it can only
-quote, which both cuts input size and tightens the grounding check.
-"""
+"""The reader's view of the statistics."""
 
 from __future__ import annotations
 
@@ -35,13 +11,8 @@ from . import phrasing as PH
 log = get_log("forms.presentation")
 
 
-# ---------------------------------------------------------------------------
-# Accounts that are not real people
-# ---------------------------------------------------------------------------
-# The reference export carried "Qwe qwe", "Reps TnC" and a 63-character run of
-# consonants through every table, and the reviewer ended up describing one of them
-# as "the very long-named person". Flagging them is more useful than narrating
-# them, and `exclude_representatives` removes them once the caller agrees.
+# --- Accounts that are not real people ---
+# Test accounts are flagged rather than narrated; `exclude_representatives` removes them.
 
 _KEYBOARD_RUNS = ("qwe", "asdf", "zxc", "qaz", "wsx", "1234", "abcd")
 _TEST_WORDS = ("test", "demo", "sample", "dummy", "example", "tnc", "temp",
@@ -86,9 +57,7 @@ def find_test_accounts(statistics: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Scope, in words rather than a filter dump
-# ---------------------------------------------------------------------------
+# --- Scope, in words rather than a filter dump ---
 
 def _scope_phrase(statistics: dict[str, Any], filters: dict[str, Any] | None) -> str:
     overview = statistics["overview"]
@@ -109,9 +78,7 @@ def _scope_phrase(statistics: dict[str, Any], filters: dict[str, Any] | None) ->
     return "; ".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Activity
-# ---------------------------------------------------------------------------
+# --- Activity ---
 
 def _label_map(statistics: dict[str, Any], unit_key: str) -> dict[str, str]:
     """Internal period label -> the label a reader sees.
@@ -190,19 +157,11 @@ def _activity(statistics: dict[str, Any], unit_key: str,
     }
 
 
-# ---------------------------------------------------------------------------
-# One question, end to end
-# ---------------------------------------------------------------------------
+# --- One question, end to end ---
 
 def _people_for(statistics: dict[str, Any], question_id: str,
                 balanced: float | None) -> dict[str, Any] | None:
-    """Per-person rows, ranked on the sample-size-adjusted figure.
-
-    The table shows the raw figure, the adjusted one, and how many answers it rests
-    on, so a reader can see immediately that "17%" came from six answers. Ranking
-    and any callout use the adjusted figure and a significance test - which is why
-    nobody is singled out on this data any more.
-    """
+    """Per-person rows ranked on the sample-size-adjusted figure (raw, adjusted and answer counts shown)."""
     segments = (statistics.get("segments") or {}).get("by_representative") or []
     entry = next((row for row in segments if row["question_id"] == question_id), None)
     if not entry or not entry.get("rows"):
@@ -256,9 +215,7 @@ def _question(block: dict[str, Any], statistics: dict[str, Any], unit_key: str,
             "short_period": bool(row.get("short")),
             "stands_out": bool(row.get("notable")),
         }
-        # A rate is far easier to act on next to the counts behind it: "54% (15 of
-        # 28)" tells a manager both how bad it is and how much it rests on, and
-        # makes a swing on tiny numbers obvious without any statistical wording.
+        # Show a rate with its counts ("54% (15 of 28)") so small samples are obvious.
         if kind == "rate":
             counts = MET.rate_counts(row.get("summary") or {}, metric_key)
             if counts:
@@ -272,9 +229,7 @@ def _question(block: dict[str, Any], statistics: dict[str, Any], unit_key: str,
         by_period.append(entry)
 
     progress = block.get("progress") or {}
-    # Matches the rule in stats.py: a wide spread *across* periods is a trend and
-    # keeps its per-period figure; a wide spread *within* each period is what
-    # leaves a question with no middle value to report.
+    # Same rule as stats.py: spread across periods is a trend; spread within each period means no middle value.
     representative = not progress.get("nothing_stands_out_because", "").startswith(
         "the answers have no middle value")
     # Wide overall but tight inside each period: the range is the movement, and
@@ -285,11 +240,7 @@ def _question(block: dict[str, Any], statistics: dict[str, Any], unit_key: str,
         and progress.get("middle_value_works_within_a_period") is True)
     level = PH.level_phrase(progress, kind, unit_key, representative)
 
-    # The pooled reading answers the question the reader actually has - is this
-    # figure sitting still or genuinely moving - and answers it with more power
-    # than the period-by-period view. Where it exists it *replaces* the "no real
-    # change here" sentence rather than following it: both said the same thing,
-    # and the pooled one also says what to do about it.
+    # Where the pooled reading exists, it replaces the "no real change here" sentence.
     lines: list[str] = []
     if not (level and trend.get("variation_within_normal_range")):
         lines.append(PH.movement_phrase(trend, kind, unit_key))
@@ -349,10 +300,7 @@ def _question(block: dict[str, Any], statistics: dict[str, Any], unit_key: str,
     spread_table = _spread_table(block, unit_key)
     if spread_table:
         out["spread_table"] = spread_table
-        # The per-period middle value stays in the structure - it is a real
-        # figure and a programmatic caller may want it - but nothing that
-        # *narrates* should use it, because quoting it contradicts the sentence
-        # above it. The report and the model both read the spread table instead.
+        # The per-period middle value stays in the data for callers, but nothing narrative uses it.
         out["hide_by_period"] = True
         out["details"] = [row for row in out["details"]
                           if "distributed" not in row.get("label", "").lower()]
@@ -372,12 +320,8 @@ def _question(block: dict[str, Any], statistics: dict[str, Any], unit_key: str,
 def _spread_table(block: dict[str, Any], unit_key: str) -> dict[str, Any] | None:
     """How the answers are spread across value bands, period by period.
 
-    For a question whose answers do not cluster, a middle value is not a fact
-    about anything - the middle of two groups sits in the empty gap between them,
-    and which group it lands nearer to depends on which one happened to get an
-    extra answer. What *is* a fact, and what does move meaningfully, is the share
-    of answers in each band. The band edges are fixed once over the whole window
-    so the per-period shares can be compared at all.
+    For answers that don't cluster, band shares (edges fixed over the whole window) are the
+    meaningful figure, not a middle value.
     """
     progress = block.get("progress") or {}
     bands = progress.get("bands_overall") or []
@@ -500,9 +444,7 @@ def _options_table(block: dict[str, Any]) -> list[dict[str, str]]:
             for row in rows[:8]]
 
 
-# ---------------------------------------------------------------------------
-# Quality notes, in plain words
-# ---------------------------------------------------------------------------
+# --- Quality notes, in plain words ---
 
 _QUALITY_REWRITES = (
     ("interval(s) have fewer than", "some periods had very few answers, so they "
@@ -525,11 +467,7 @@ def _quality_notes(statistics: dict[str, Any], warnings: list[str]) -> list[str]
         notes.append(sentence if sentence.endswith((".", "!", "?"))
                      else sentence + ".")
 
-    # Generated answers and placeholder accounts used to be described here as
-    # caveats. They are stronger than caveats - they say the data is not a record
-    # of what happened - so they now live in `data_warnings`, which the report
-    # prints above everything and the model is told to lead with. Repeating them
-    # here put the same paragraph in two places.
+    # Generated answers and placeholder accounts go to `data_warnings`, not here.
 
     thin = quality.get("low_n_intervals") or []
     if thin:
@@ -571,9 +509,7 @@ def _quality_notes(statistics: dict[str, Any], warnings: list[str]) -> list[str]
     return unique
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+# --- Entry point ---
 
 def _attention(statistics: dict[str, Any], unit_key: str) -> list[dict[str, Any]]:
     """The short list the report opens with, in reader language.
@@ -645,11 +581,7 @@ def _data_warnings(statistics: dict[str, Any],
                    test_accounts: list[dict[str, str]]) -> list[str]:
     """Signs that parts of this data are not a record of what happened.
 
-    Deliberately *not* a gate. The analysis runs on whatever the caller has, test
-    data included - refusing would make the tool useless on exactly the datasets
-    people try first. What matters is that these get stated at the top, in the
-    write-up, rather than appearing as footnote six where the reference report put
-    them while eleven sections above it drew earnest conclusions.
+    Not a gate: the analysis still runs, but these are stated at the top of the write-up.
     """
     out: list[str] = []
     generated = [block["question"] for block in statistics.get("questions") or []
@@ -673,9 +605,7 @@ def _data_warnings(statistics: dict[str, Any],
             f"placeholder entries ({named}). Their answers are included in every "
             f"figure here.")
 
-    # Values that are suspiciously regular are the clearest tell that a generator
-    # produced them, and the clearest thing to say to a reader wondering whether
-    # to trust the numbers at all.
+    # Suspiciously regular values are the clearest sign that a generator produced them.
     for block in statistics.get("questions") or []:
         outliers = ((block.get("overall") or {}).get("outliers_iqr") or {}).get("values")
         if not outliers or len(outliers) < 4:

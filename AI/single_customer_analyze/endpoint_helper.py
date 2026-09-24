@@ -195,15 +195,8 @@ async def ensure_sales_report(customer_id: str, force: bool = False) -> dict:
 
 
 async def ensure_activities_report(customer_id: str, force: bool = False) -> dict:
-    """
-    Guarantees the activities/tasks/notes source CSVs and all derived
-    reports (including the final AI answer) exist on disk, building them
-    only if missing or `force=True`.
-
-    Note: in the original code, the result of process_ai_activities_request
-    was recomputed on every /st_Ask_ai call and then never actually used by
-    the SSE generator afterward — pure wasted work. Here it's computed once,
-    persisted to report_final_md, and reused from disk on cache hits.
+    """Make sure the activities/tasks/notes CSVs and all derived reports, including the AI
+    answer, exist on disk; build them only if missing or `force=True`.
     """
     paths = _activities_paths(customer_id)
     is_cached = all(

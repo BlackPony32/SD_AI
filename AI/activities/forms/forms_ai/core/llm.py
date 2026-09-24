@@ -1,12 +1,4 @@
-"""Everything that talks to a model. Previously duplicated in full across the
-activity and task pipelines; there is now one copy.
-
-Nothing here raises: a failed call returns None and the caller falls back to
-code-rendered output, which is the whole failure policy of this codebase.
-
-UNCHANGED from the version you supplied apart from un-escaping the `<-` log
-arrows that HTML-escaping had turned into `&lt;-`.
-"""
+"""Everything that talks to a model."""
 
 from __future__ import annotations
 
@@ -35,19 +27,11 @@ except Exception as exc:  # SDK or credentials missing -> every call falls back
     llm_model = None
     log.warning("agents SDK unavailable (%s); reports will be code-rendered", exc)
 
-# ---------------------------------------------------------------------------
-# Token / cost accounting
-# ---------------------------------------------------------------------------
+# --- Token / cost accounting ---
 
 @dataclass
 class UsageTracker:
-    """Accumulates token usage across every call in one report run. Per-stage
-    rows are kept so it is obvious which agent is costing money.
-
-    Cost comes from `cost.calculate_cost` - the project's own function - called
-    once per agent run and summed. Nothing here re-derives a price, so cached-input
-    discounts and the pricing table are handled in exactly one place.
-    """
+    """Accumulates token usage and cost (via cost.calculate_cost) per stage for one report run."""
 
     model: str = MODEL
     calls: list[dict] = field(default_factory=list)
@@ -155,9 +139,7 @@ def extract_usage(result: Any) -> dict[str, int]:
     return dict(_EMPTY_USAGE)
 
 
-# ---------------------------------------------------------------------------
-# Agent runner
-# ---------------------------------------------------------------------------
+# --- Agent runner ---
 
 async def run_agent(name: str, instructions: str, user_input: str, usage: UsageTracker,
                     timeout: int = AGENT_TIMEOUT) -> str | None:
@@ -219,13 +201,7 @@ async def write_with_grounding(name: str, instructions: str, user_input: str, al
                                fallback: Any,
                                wording: Callable[[str], list[str]] | None = None
                                ) -> tuple[Any, list[str]]:
-    """Run one agent, check what it wrote, and give it exactly one chance to repair.
-
-    Two things are checked: every figure must trace back to what the agent was
-    given, and - when a `wording` checker is supplied - the text must be free of
-    internal names and statistical jargon. Both are folded into the same repair
-    pass, so a run with one problem of each still costs one extra call, not two.
-    """
+    """Run one agent, check its figures (and wording, if a checker is given), and allow one repair pass."""
     from .prompts import prompt_repair_input
 
     raw = await run_agent(name, instructions, user_input, usage)

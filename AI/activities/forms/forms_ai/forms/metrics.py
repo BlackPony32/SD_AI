@@ -1,22 +1,4 @@
-"""Per-question-type analysers.
-
-A form is not a fixed schema - the same code has to handle a 12-question stock
-check and a 40-question audit whose builder has since grown three new field
-types. Two mechanisms make that work:
-
-1. **A registry keyed by question type.** Supporting a new type means adding one
-   function and one entry, and nothing else changes.
-2. **Effective typing.** The declared type is a hint, not the truth. A question
-   declared TEXT whose answers are all "Yes"/"No" is a rate question and should
-   be reported as one; a TEXT field holding numbers is a numeric question. The
-   sniffer promotes those cases, records why, and reports both the declared and
-   the effective type so nothing is hidden.
-
-Every analyser returns a flat-ish dict of JSON-safe values, computed over one
-slice of the fact table. The same function computes the whole-period summary and
-each bucket's summary - identical logic on both sides of a comparison is the only
-way the comparison means anything.
-"""
+"""Per-question-type analysers."""
 
 from __future__ import annotations
 
@@ -41,18 +23,14 @@ from . import textual as TX
 log = get_log("forms.metrics")
 
 
-# ---------------------------------------------------------------------------
-# Question context
-# ---------------------------------------------------------------------------
+# --- Question context ---
 
 @dataclass
 class QuestionContext:
     """Everything an analyser needs beyond the rows themselves.
 
-    `reference` carries decisions taken on the full period so that per-bucket
-    numbers stay comparable - most importantly the option a categorical series is
-    tracked against. Without a fixed reference, "top option share" would silently
-    change meaning between buckets.
+    `reference` holds decisions taken over the full period (e.g. the tracked option) so
+    per-bucket numbers stay comparable.
     """
 
     question_id: str
@@ -63,15 +41,11 @@ class QuestionContext:
     options: list[str] = field(default_factory=list)
     required: bool | None = None
     retype_reason: str | None = None
-    # Decisions taken once over the whole period so every period is measured the
-    # same way: the option a categorical series tracks, and - for free text - what
-    # the answers are measured on at all (`content_kind`, `required_minimum`).
+    # Decided once over the whole period so every period is measured the same way.
     reference: dict[str, Any] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# Effective typing
-# ---------------------------------------------------------------------------
+# --- Effective typing ---
 
 _MIN_SNIFF_N = 20
 _SNIFF_CONFIDENCE = 0.95
@@ -122,9 +96,7 @@ def effective_type(declared: str, answers: pd.Series, multi: pd.Series | None = 
                     "type missing from the export; treated as free text")
 
 
-# ---------------------------------------------------------------------------
-# Shared pieces
-# ---------------------------------------------------------------------------
+# --- Shared pieces ---
 
 def _coverage(frame: pd.DataFrame, ctx: QuestionContext) -> dict[str, Any]:
     """Volume and answer coverage - meaningful for every type."""
@@ -146,21 +118,13 @@ def _coverage(frame: pd.DataFrame, ctx: QuestionContext) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Analysers
-# ---------------------------------------------------------------------------
+# --- Analysers ---
 
 def analyse_numeric(frame: pd.DataFrame, ctx: QuestionContext) -> dict[str, Any]:
-    """Robust-first.
+    """Robust-first: the headline is the median with its p25-p75 range, not the mean.
 
-    The headline is the **middle value** (median) with the usual range around it
-    (p25-p75), not the arithmetic mean - and when the answers are too spread out
-    or fall into more than one group, `dispersion.single_value_representative` is
-    False and no single value should be reported at all. Answers of 10 and 100 do
-    not summarise to 55; they summarise to "10 to 100, in two groups".
-
-    The mean and standard deviation are still computed for completeness, but no
-    presentation layer reads them as the headline.
+    When answers are too spread out or form several groups,
+    `dispersion.single_value_representative` is False and no single value is reported.
     """
     raw = _non_empty(frame["answer_text"])
     parsed = raw.map(S.to_number)
@@ -317,12 +281,8 @@ def _tokens(text: str) -> list[str]:
 def analyse_text(frame: pd.DataFrame, ctx: QuestionContext) -> dict[str, Any]:
     """Free-text answers, measured on their content.
 
-    The response rate is still computed but is no longer the headline: for a
-    required field it is 100% by construction and tells a reader nothing. What is
-    reported instead depends on what the answers actually contain - an amount, a
-    list checked against the minimum the question asks for, or whether the answer
-    says anything at all. `content_kind` records which, and is fixed for the whole
-    period in `build_contexts` so every period is measured the same way.
+    Reports what the answers contain (an amount, a list checked against the required minimum,
+    or whether they say anything); `content_kind` is fixed per question in `build_contexts`.
     """
     values = _non_empty(frame["answer_text"])
     answers = values.tolist()
@@ -351,9 +311,7 @@ def analyse_text(frame: pd.DataFrame, ctx: QuestionContext) -> dict[str, Any]:
                       for term, count in tokens.most_common(FORMS_TOP_K_TOKENS)],
         "themes": TX.themes(answers),
         "templating": TX.templating(answers),
-        # Verbatims are the one place raw user text reaches the model, and the
-        # most expensive thing in the payload per unit of insight - so: few,
-        # short, longest first (short answers carry the least signal).
+        # Verbatims are the only raw user text sent to the model: few, short, longest first.
         "sample_verbatims": [t[:FORMS_VERBATIM_CHARS] for t in
                              sorted(set(answers), key=len, reverse=True
                                     )[:FORMS_MAX_VERBATIMS]],
@@ -444,11 +402,7 @@ def analyse(frame: pd.DataFrame, ctx: QuestionContext) -> dict[str, Any]:
         return out
 
 
-# ---------------------------------------------------------------------------
-# Which single number represents this question over time
-# ---------------------------------------------------------------------------
-# The trend engine needs one comparable series per question. The choice per type
-# is the metric that a human would actually argue about in a review meeting.
+# --- Which single number represents this question over time ---
 
 # Free text has no single right measure - it depends what the answers contain.
 # Chosen once per question by `textual.profile`, then fixed for every period.
@@ -461,9 +415,7 @@ TEXT_PRIMARY: dict[str, tuple[str, str, str]] = {
 
 PRIMARY_METRIC: dict[str, tuple[str, str, str]] = {
     #  type            -> (key,                human-facing label,          kind)
-    # NUMERIC and RATING use the middle value, never the average: one absurd
-    # answer must not move the headline, and the average of 10 and 100 is not a
-    # fact about either of them.
+    # NUMERIC and RATING use the median, never the mean.
     S.NUMERIC:         ("median",             "typical answer",             "value"),
     S.RATING:          ("median",             "typical rating",             "value"),
     S.YES_NO:          ("yes_rate",           "answered Yes",               "rate"),
@@ -514,10 +466,7 @@ def primary_metric(ctx: "QuestionContext | str") -> tuple[str, str, str]:
                               ("answered", "answers given", "count"))
 
 
-# Which pair of counts a rate is actually built from. Needed because a rate on
-# its own cannot be tested: "52%" carries no weight, "90 of 172" does. Deriving
-# the counts by multiplying the rate back out would round, and would use the
-# wrong denominator wherever unclear answers are excluded from it.
+# The counts a rate is built from ("90 of 172"), needed to test it; never derived from the rate.
 RATE_COUNTS: dict[str, tuple[str, str | None]] = {
     #  rate key         -> (successes key,    total key or None for "successes+rest")
     "yes_rate":           ("yes",             None),          # yes + no

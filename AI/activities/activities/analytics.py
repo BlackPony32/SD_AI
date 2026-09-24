@@ -1,24 +1,4 @@
-"""Deterministic layer for the activity report.
-
-    analyze_activities_file(csv, orders_csv) -> {
-        "metrics":                 dict,        # -> Statistics Analyst
-        "representative_profiles": list[dict],  # -> Situation Writer
-        "display_tables":          dict,        # title + intro + markdown, code-rendered
-        "analytics_errors":        list[dict],  # a broken section never kills the run
-    }
-
-Design rules:
-  1. Schema-tolerant: nothing hardcodes a name or an activity-type list. Types
-     are discovered from the data and categorised by explicit map first, keyword
-     rule second, so a new INVOICE_VOIDED lands in risk_signal, not "other".
-  2. One pass, vectorised: sections read precomputed boolean window columns and a
-     single groupby/crosstab. Cost is O(rows), not O(rows x types x people).
-  3. Raw enums stay in the metrics as stable keys; every one carries a human
-     `label` for the tables and prompts.
-  4. Numbers stay numbers in `metrics`; formatting happens once, in render_tables.
-  5. pct_change returns None with a `basis` when there is no baseline, so the
-     report can say "up from none" instead of inventing a percentage.
-"""
+"""Deterministic statistics for the activity report."""
 
 from __future__ import annotations
 
@@ -36,9 +16,7 @@ import pandas as pd
 
 from ..core.markdown import md_table, money
 
-# ---------------------------------------------------------------------------
-# Configuration -- tune here, not in the body.
-# ---------------------------------------------------------------------------
+# --- Configuration: tune here, not in the body ---
 
 TYPE_FIELD = "type"
 CREATED_FIELD = "createdAt"
@@ -123,9 +101,7 @@ LABEL_OVERRIDES = {
     "PDF": "PDF",
 }
 
-# (opening type, closing type, label, relation). Cohort ratios, not per-item
-# matching: the log carries no parent id. `relation` keeps the wording honest --
-# only a completion rate implies a backlog.
+# (opening type, closing type, label, relation): cohort ratios, since the log has no parent id.
 WORKFLOW_PAIRS = (
     ("TASK_ADDED", "TASK_COMPLETED", "tasks", "completion"),
     ("ORDER_ADDED", "ORDER_CANCELED", "orders", "cancellation"),
@@ -150,9 +126,7 @@ _JS_DATE_LEN = 33
 _PAREN_RE = re.compile(r"\(.*\)")
 
 
-# ---------------------------------------------------------------------------
-# Small helpers
-# ---------------------------------------------------------------------------
+# --- Small helpers ---
 
 class ErrorLog:
     """Collects section failures so one bad section costs a section, not the run."""
@@ -248,9 +222,7 @@ def categorize(activity_type: str) -> str:
     return "other"
 
 
-# ---------------------------------------------------------------------------
-# Loading
-# ---------------------------------------------------------------------------
+# --- Loading ---
 
 def parse_js_timestamps(series: pd.Series) -> pd.Series:
     """Fast path for JS date strings, with a flexible retry for the stragglers."""
@@ -344,9 +316,7 @@ def _window_frame(df: pd.DataFrame, key: str) -> pd.DataFrame:
     return grouped.sort_values("total", ascending=False)
 
 
-# ---------------------------------------------------------------------------
-# Sections
-# ---------------------------------------------------------------------------
+# --- Sections ---
 
 def overview_section(df: pd.DataFrame, ref: pd.Timestamp) -> dict:
     first, last = df["datetime"].min(), df["datetime"].max()
@@ -539,15 +509,9 @@ def representative_section(df: pd.DataFrame, ref: pd.Timestamp) -> tuple[dict, l
 def salesperson_orders_section(orders_path: str | Path, activity_ref: pd.Timestamp) -> dict:
     """Orders and revenue per salesperson, straight from the order book.
 
-    The activity log cannot supply this: it records only part of all orders and
-    leaves the representative blank on order-creation rows.
-
-    Windows run back from whichever source is more recent, orders or activity --
-    anchoring on orders alone would shrink the trailing windows whenever the
-    order export stops earlier than the log.
-
-    Third-party orders are excluded but their count and revenue are kept in the
-    section, so the exclusion is visible rather than silent."""
+    Windows run back from the more recent of orders and activity; third-party orders are
+    excluded, but their count and revenue stay visible.
+    """
     orders = pd.read_csv(orders_path)
     orders.columns = [str(c).strip().lstrip("\ufeff") for c in orders.columns]
     orders["datetime"] = parse_js_timestamps(orders[CREATED_FIELD])
@@ -950,9 +914,7 @@ def order_crosscheck_section(df: pd.DataFrame, orders_path: str | Path) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Human-facing tables -- rendered in code, so their numbers are always exact.
-# ---------------------------------------------------------------------------
+# --- Human-facing tables, rendered in code so their numbers are exact ---
 
 def _fmt_change(block: dict | None) -> str:
     """One place decides what a change block looks like in a table cell."""
@@ -995,9 +957,7 @@ def render_tables(metrics: dict) -> dict[str, dict]:
     tables: dict[str, dict] = {}
     thin_flag = False
 
-    # A missing salesperson table is the most common "where did my data go"
-    # question this report gets, so it becomes a visible callout rather than an
-    # absence the reader has to notice.
+    # A missing salesperson table becomes a visible callout, not a silent gap.
     for n in metrics.get("data_quality") or []:
         if n.get("code") in ("no_orders_file", "orders_file_failed"):
             tables["_notice"] = {"text": n["message"]}
@@ -1122,14 +1082,10 @@ def _norm_title(title: str | None) -> str:
 def render_tables_markdown(tables: dict[str, dict], notes: dict[str, str] | None = None,
                            keys: list[str] | None = None,
                            hide_title: str | None = None) -> str:
-    """Render some or all tables, each with its intro and the Statistics
-    Analyst's reading of it underneath.
+    """Render some or all tables, each with its intro and the Statistics Analyst's reading.
 
-    `keys` selects which tables to render, which is what lets the report be split
-    into sections without rendering anything twice. `hide_title` drops a table's
-    own heading when the section around it already carries the same words. The
-    missing-orders notice travels with the salesperson table it explains, and the
-    low-sample legend is emitted only when the rendered tables carry a flag.
+    `keys` selects the tables (so sections never render twice); `hide_title` drops a heading
+    that the surrounding section already carries.
     """
     notes = notes or {}
     hidden = _norm_title(hide_title)
@@ -1160,9 +1116,7 @@ def render_tables_markdown(tables: dict[str, dict], notes: dict[str, str] | None
     return "\n".join(parts).rstrip()
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+# --- Entry point ---
 
 def analyze_activities_file(csv_path: str | Path,
                             orders_path: str | Path | None = None,

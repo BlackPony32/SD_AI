@@ -172,7 +172,6 @@ async def process_suggestions_topic(topic, orders_path, products_path, customers
 
         answer = runner.final_output
         answer = f"<div id=\"suggestions-block\">\n\n{answer}\n</div>"
-        #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model=model)
 
@@ -193,7 +192,6 @@ async def worker(semaphore, topic, orders_path, products_path, customers_path, c
     constrained by the semaphore.
     """
     async with semaphore:
-        #print(f"Processing: {topic}")
         
         if topic == "suggestions_div":
             return await process_suggestions_topic(topic, orders_path, products_path, customers_path, catalog_path, uuid, agent)
@@ -285,7 +283,6 @@ async def main_batch_process(
                 clean_topic_name = topic.replace('_', ' ').title()
                 sectioned_report[topic] = f"\n> **Notice:** We encountered an issue while generating the {clean_topic_name}. Please try again later.\n"
             else:
-                #print(f"Worker succeeded for topic '{topic}' (Agent: {agent}): {str(result)}")
                 sectioned_report[topic] = result
         
         # Compile the Report
@@ -321,14 +318,6 @@ async def main_batch_process(
         return user_friendly_error, {"error": user_friendly_error}
 
 if __name__ == "__main__":
-    #report = await generate_analytics_report_sectioned(
-    #    orders_path="data\\FULL_DIST_TEST\\cleaned_real_big_orders.csv",
-    #    products_path="data\\FULL_DIST_TEST\\cleaned_real_big_products.csv",
-    #    customers_path="data\\FULL_DIST_TEST\\work_data_folder\\raw_file_customers.csv",
-    #    catalog_path="data\\FULL_DIST_TEST\\cleaned_catalog.csv",
-    #    agent_type="catalog_agent",
-    #    report_type="full_report"
-    #)
 
     uuid = "FULL_DIST_TEST"
     agent = "orders_agent"
@@ -342,4 +331,3 @@ if __name__ == "__main__":
     specific_topic='sales_trends_report'
 
     report_sectioned_ai = asyncio.run(main_batch_process(orders_path, products_path, customers_path, catalog_path, uuid, agent))
-    #print(report_sectioned_ai[0])
