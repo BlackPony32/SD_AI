@@ -96,7 +96,7 @@ CATALOG_TOOLS_LIST = [
     "get_catalog_main_info",
     "get_executive_inventory_report",
     "get_product_performance_portfolio_report",
-    "get_top_products_customer_insights",
+    "get_product_customer_insights_report",
     "get_cross_sell_bundle_report",
     "get_time_based_product_report",
     "get_sales_prospecting_report",
@@ -542,7 +542,7 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                             "activities_agent": "Your activities review",
                             "faq_agent": "FAQ knowledge checking"
                         }
-                        done_label = TOOL_DONE_LABELS.get(tool_name, "Tool finished.")
+                        done_label = TOOL_DONE_LABELS.get(tool_name, "Tool")
                         yield f"data: {json.dumps({'type': 'status', 'content': f'{done_label} finished with ({duration_str})'})}\n\n"
 
             # 4. FINAL CLEANUP & METADATA

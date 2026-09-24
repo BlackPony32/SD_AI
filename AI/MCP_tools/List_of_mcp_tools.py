@@ -5360,7 +5360,7 @@ def search_orders_by(
         # --- 0. ARGUMENTS (validated before any file work) -------------------
         if search is None or not str(search).strip():
             raise ToolError(
-                "`get_orders_by_product` needs a `search` value - a product name, "
+                "`search_orders_by` needs a `search` value - a product name, "
                 "SKU, category or manufacturer - otherwise it returns every order.",
                 "`get_top_n_orders` for orders with no product filter, "
                 "`get_orders_by_customer` for one customer's history, "
@@ -5788,7 +5788,7 @@ def search_orders_by(
         return expected.render()
  
     except Exception as e:
-        return (f"**Tool error.** `get_orders_by_product` could not complete.\n"
+        return (f"**Tool error.** `search_orders_by` could not complete.\n"
                 f"- Reason: {type(e).__name__} - {e}\n"
                 f"- This is an internal bug in the tool, not a problem with your "
                 f"arguments. Retrying the identical call will fail the same way - "
