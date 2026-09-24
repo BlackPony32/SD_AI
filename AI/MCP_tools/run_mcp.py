@@ -122,7 +122,6 @@ ACTIVITY_TOOLS_LIST = [
 ]
 
 # 2. CONNECTION MANAGEMENT (Using AsyncExitStack)
-import logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
 def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
     """
@@ -279,10 +278,6 @@ def _extract_call_id(item) -> Optional[str]:
     return None
 
 # FASTAPI & STREAMING
-import sys
-import asyncio
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
 
 # 1. Define the startup logic to silence the specific Windows error
 @asynccontextmanager

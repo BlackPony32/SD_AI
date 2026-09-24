@@ -154,12 +154,7 @@ async def combine_sections(title, var1, var2):
 #some functions for create_group_reports endpoint
 from fastapi import Body, HTTPException, status
 from fastapi.responses import JSONResponse
-import asyncio
-import aiofiles
 from uuid import uuid4
-import pandas as pd
-import asyncio
-import aiofiles
 from io import StringIO
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -631,21 +626,14 @@ TOPIC_CONFIG = {
 
 # test for new mcp endpoint redesign
 
-import asyncio
 import importlib
 import json
-import logging
-import os
-import re
-import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, Tuple
 
 import aiohttp
 import httpx
-from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
 
 logger2 = logging.getLogger(__name__)
 

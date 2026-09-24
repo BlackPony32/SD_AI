@@ -7,29 +7,22 @@ from agents.extensions.memory import AdvancedSQLiteSession
 import os
 import json
 import pandas as pd
-from typing import List, Dict, Any, Optional
+from typing import Dict, Optional
 from datetime import datetime
 import time
-from agents.extensions.memory import AdvancedSQLiteSession
 import asyncio
 import aiofiles
-import os
-import time
 from dotenv import load_dotenv
 load_dotenv()
 
 
-from typing import List, AsyncGenerator, Tuple, Any
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report, prompt_agent_create_sectioned, prompt_for_state_agent
-import pandas as pd
 
 from AI.utils import get_logger
 logger1 = get_logger("logger1", "project_log.log", False)
 
 llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
-import os
-import pandas as pd
 
 def get_all_data(customer_id):
     DATA_DIR = os.path.join('data', customer_id)

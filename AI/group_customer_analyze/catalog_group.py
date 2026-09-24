@@ -9,7 +9,7 @@ from AI.utils import get_logger
 from AI.group_customer_analyze.statistics_group_c import format_status, usd, top_new_contact, top_reorder_contact, peak_visit_time, \
   customer_insights, format_percentage
 
-from AI.utils import get_logger, combine_sections, calculate_cost
+from AI.utils import combine_sections, calculate_cost
 from agents import Agent, Runner, function_tool, OpenAIResponsesModel, AsyncOpenAI, OpenAIConversationsSession
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_suggestions, prompt_mcp_topics_customer_agent, prompt_mcp_suggestions, prompt_catalog_grouped
 

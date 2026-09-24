@@ -11,8 +11,7 @@ import os
 import asyncio
 import csv
 import io
-import aiofiles
-from typing import Dict, List
+from typing import List
 import random
 import pandas as pd
 from AI.utils import get_logger

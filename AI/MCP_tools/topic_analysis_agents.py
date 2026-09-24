@@ -200,9 +200,7 @@ async def worker(semaphore, topic, orders_path, products_path, customers_path, c
         else:
             return await process_standard_topic(topic, orders_path, products_path, customers_path, catalog_path, uuid, agent)
 
-import asyncio
 
-import asyncio
 # Assuming logger2 is imported here or passed globally
 
 async def main_batch_process(

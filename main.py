@@ -130,7 +130,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-AllowedEntity = Literal["orders", "activities"]
 origins = [
     "https://simply-depo-staging.web.app",
 
@@ -267,7 +266,6 @@ async def ask_ai_endpoint(request: ChatRequest, customer_id: str = Query(...)):
  
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
-from enum import Enum
 class LogFile(str, Enum):
     """Enumeration for the allowed log file names."""
     project = "project_log.log"
@@ -990,14 +988,9 @@ and ask AI agent for help with platform navigation and order creation, or you ca
 
 # Start of MCP end point
 
-import logging
-import time
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Tuple, get_args
-from uuid import UUID
+from typing import Tuple, get_args
 
-from fastapi import Body, HTTPException, status
-from pydantic import BaseModel, Field
 
 from AI.utils import (
     EMPTY_ORDERS_MESSAGE,
@@ -1014,7 +1007,6 @@ from AI.utils import (
     sync_raw_data,
 )
 
-import asyncio
 
 
 RAW_FILES: Dict[str, str] = {

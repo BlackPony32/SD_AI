@@ -31,10 +31,8 @@ mcp = FastMCP("sd-ai-mcp", json_response=True,port=8001,log_level="WARNING")
 
 # 1. ROBUST LOGGER (UTF-8 FORCED)
 
-import functools
 import time
 import sys
-import traceback
 import uuid
 
 #: Where the log file goes. Overridable so a deployed server can write outside
@@ -5825,10 +5823,7 @@ def look_up_faq(query: Optional[str]) -> str:
 
 # ACtivities Tools
 
-from collections import Counter
-from typing import Any
 
-import pandas as pd
 
 from AI.tools_utils import (
     ACTIVITY_CATEGORY_DESCRIPTIONS, ACTIVITY_CATEGORY_LABELS, ACTIVITY_WORKFLOW_PAIRS,

@@ -1322,7 +1322,6 @@ async def state_runner(orders, products_df, uuid):
     return answer
 
 async def new_generate_analytics_report_(orders_df, products_df, customer_df, uuid):
-    import time
     start = time.perf_counter()
 
         
@@ -1409,7 +1408,6 @@ async def create_agent_suggestions(USER_ID) -> Agent:
 async def process_standard_topic(topic, merged_orders, products_df, customer_df, uuid):
     """Logic for standard analysis topics."""
     try:
-        import time
         start = time.perf_counter()
         # 1. Generate Statistics
         statistics_of_topic = await generate_analytics_report_sectioned(
@@ -1447,7 +1445,6 @@ async def process_suggestions_topic(topic, merged_orders, products_df, customer_
     """Logic for suggestions analysis topics."""
     try:
         # 2. Create Agent
-        import time
         start = time.perf_counter()
         statistics = generate_report(merged_orders, products_df, customer_df, uuid)
         async with aiofiles.open(f"data/{uuid}/full_report.md", "w", encoding="utf-8") as f:
@@ -1483,7 +1480,6 @@ async def process_state_analysis(topic, merged_orders, products_df, customer_df,
         # 1. Prepare Data & Save CSVs (Threaded)
         # Note: Modifying DF here. If multiple tasks read this DF, ensure this doesn't conflict.
         # Since we are adding a column, it is generally safe but better done once globally if possible.
-        import time
         start = time.perf_counter()
         products_df['product_variant'] = products_df['name'].astype(str) + ' - ' + products_df['sku'].astype(str)
         
