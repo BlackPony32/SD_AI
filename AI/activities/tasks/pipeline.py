@@ -1,22 +1,4 @@
-"""Two-agent pipeline over the task-backlog deterministic layer.
-
-    metrics payload ──► [A] Backlog Analyst ─┐
-                                             ├─► render_body() ──► final report
-    pair payload    ──► [B] Task Text Reader ┘        (in code)
-
-A and B run concurrently and never wait on each other, so wall clock is one LLM
-call rather than a chain of them.
-
-The report is returned as a single section: it is one continuous piece of
-reading with no part a caller would want on its own. `ReportResult.sections`
-still carries it, so every topic has the same shape.
-
-Failure policy: no stage can take the whole report down.
-  * Analyst fails     -> the report is written from the text findings alone.
-  * Text reader fails -> the report is written from the metrics alone.
-  * Both fail         -> a deterministic report is rendered in code.
-The user always receives something, and `status` says what it is.
-"""
+"""Two-agent pipeline over the task-backlog statistics."""
 
 from __future__ import annotations
 
@@ -42,9 +24,7 @@ EMPTY_ANALYST = {"bottom_line": "", "findings": [], "actions": [], "takeaway": "
 EMPTY_READER = {"themes": [], "text_quality": [], "actions": [], "takeaway": ""}
 
 
-# ---------------------------------------------------------------------------
-# 1. The two agents
-# ---------------------------------------------------------------------------
+# --- 1. The two agents ---
 
 async def run_backlog_analyst(metrics: dict, usage: UsageTracker) -> dict:
     """Agent A. Metrics in, findings JSON out. Returns the empty shape on any
@@ -77,17 +57,10 @@ async def run_text_reader(metrics: dict, corpus: list[dict], usage: UsageTracker
     return parsed
 
 
-# ---------------------------------------------------------------------------
-# 2. Report body (no LLM -- this is where the editor agent used to be)
-# ---------------------------------------------------------------------------
+# --- 2. Report body (no LLM) ---
 
 def render_body(analyst: dict, reader: dict, metrics: dict) -> str:
-    """Assemble the markdown from both agents' JSON.
-
-    Written in code on purpose: merging two structured blobs into fixed parts
-    needs no judgement, so a third model call bought latency and a chance to
-    hallucinate, and nothing else. Parts whose agent produced nothing are
-    omitted."""
+    """Assemble the markdown from both agents' JSON, in code; parts with no output are omitted."""
     dq = metrics.get("text_pairs") or {}
     ov = metrics.get("overview") or {}
     parts: list[str] = []
@@ -171,20 +144,14 @@ def render_fallback_body(metrics: dict, reason: str) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# 3. Orchestration
-# ---------------------------------------------------------------------------
+# --- 3. Orchestration ---
 
 async def build_report(csv_path: str | Path,
                        output_dir: str | Path | None = None) -> ReportResult:
-    """Full pipeline. Always returns a ReportResult carrying a report string.
+    """Full pipeline; always returns a ReportResult with a report string.
 
-    `status` is one of:
-      full          -- both agents succeeded
-      numbers_only  -- the text reader produced nothing
-      text_only     -- the analyst produced nothing
-      fallback      -- no usable LLM output; report rendered from metrics
-      failed        -- the file itself could not be read
+    `status`: full, numbers_only, text_only, fallback (report rendered from metrics) or
+    failed (the file could not be read).
     """
     started = time.perf_counter()
     usage = UsageTracker(model=MODEL)

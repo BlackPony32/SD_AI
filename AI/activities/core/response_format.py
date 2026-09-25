@@ -1,20 +1,4 @@
-"""Reshape a ReportResult into the delivery payload.
-
-Wire format:
-
-    {
-      "sections": {"<section title slug>_report": "<that section's markdown>", ...},
-      "report":   "<all sections joined, in order>",
-      "uuid":     "<request id>",
-      "metadata": {"topic": ..., "status": ..., "usage": ..., ...}
-    }
-
-`sections` is a flat title -> markdown map so a consumer can pull one block by
-name without walking a list. Everything that is not a section body or the joined
-report is bookkeeping, so it goes under `metadata` rather than sitting beside the
-content. `report` is always the concatenation of `sections.values()`, so the two
-views cannot disagree.
-"""
+"""Reshape a ReportResult into the delivery payload."""
 
 from __future__ import annotations
 
@@ -109,11 +93,7 @@ def to_payload(result: Any, uuid: str | None = None, **extra_metadata: Any) -> d
 
     sections = build_sections_map(data.get("sections") or [])
     if not sections:
-        # A result with no sections is a failure result: `build_report` returns
-        # one carrying only a plain-English explanation, and so does the guard
-        # in `run_all`. Rebuilding `report` from an empty map would throw that
-        # explanation away and hand the caller an empty string, so the message
-        # becomes the single section instead and the invariant still holds.
+        # A failure result has no sections, only an explanation: keep it as the single section.
         message = data.get("report")
         if isinstance(message, str) and message.strip():
             key = (slugify(data.get("topic")) or "report") + SECTION_KEY_SUFFIX

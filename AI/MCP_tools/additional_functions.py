@@ -94,8 +94,7 @@ def _stopped_ordering_report(orders_path: str, customers_path: str, churn_thresh
                  name_col = cust_id_col
             
         # --- 4. Merge Data ---
-        # Left join: Keep all ordering customers, add names where available
-        # Reset index on order_stats to make 'customer_id' a column for merging
+        # Left join: keep every ordering customer, add names where available.
         order_stats_reset = order_stats.reset_index()
         
         merged_stats = order_stats_reset.merge(
@@ -818,8 +817,6 @@ def _generate_executive_inventory_report(catalog_path: str) -> list:
         return ["This report is currently unavailable due to a temporary change. Please check back later or contact support if you need assistance."]
 
     # 1. Macro Health Metrics
-    #total_products = len(df)
-    #missing_critical_data = df[['sku', 'barcode', 'wholesalePrice']].isna().any(axis=1).sum()
     total_capital = df['active_stock_value'].sum()
     total_liability = df['revenue_at_risk'].sum()
     overall_alloc_rate = (df['inventory_allocated'].sum() / df[df['inventory_onHand'] > 0]['inventory_onHand'].sum() * 100) if df[df['inventory_onHand'] > 0]['inventory_onHand'].sum() > 0 else 0
@@ -2362,15 +2359,6 @@ async def generate_analytics_report_sectioned(
 
 
 async def main():
-    # Example usage eb9985d2-3b94-4146-adb5-c0877672be72 GNGR_TEST FULL_DIST_TEST
-    #report = await generate_analytics_report_sectioned(
-    #    orders_path="data\\GNGR_TEST\\oorders.csv",
-    #    products_path="data\\GNGR_TEST\\pproducts.csv",
-    #    customers_path="data\\GNGR_TEST\\ccustomers.csv",
-    #    catalog_path="data\\GNGR_TEST\\cleaned_catalog.csv",
-    #    agent_type="orders_agent",
-    #    report_type="full_report"
-    #)
     report = await generate_analytics_report_sectioned(
         orders_path="data\\FULL_DIST_TEST\\cleaned_orders.csv",
         products_path="data\\FULL_DIST_TEST\\cleaned_products.csv",

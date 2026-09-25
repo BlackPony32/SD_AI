@@ -1,12 +1,4 @@
-"""The single prompt used by the notes report.
-
-One agent, not two: unlike activities and tasks there is no numbers/text split
-to make here -- the notes ARE the material, and the statistics only frame them.
-
-The section headings below are not decoration. The report is carved back into
-`Executive Summary` and `Action Items` by heading, so renaming one here renames
-it in `AI.acti.notes.pipeline.NOTE_SECTIONS` too.
-"""
+"""The prompt used by the notes report."""
 
 from __future__ import annotations
 

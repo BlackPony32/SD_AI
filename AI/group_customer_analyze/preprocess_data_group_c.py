@@ -216,10 +216,6 @@ def data_clean_orders(orders_df: pd.DataFrame):
             return pd.DataFrame()
         # Filter out 'CANCELED' orders and keep archived == False
         try:
-            #orders_df = orders_df[
-            #    (orders_df['orderStatus'] != 'CANCELED') &
-            #    (orders_df['archived'] == False)
-            #]
             archived_mask = orders_df['archived'].astype(str).str.lower().isin(['false', '0', 'no', 'f'])
             status_mask = orders_df['orderStatus'].str.upper() != 'CANCELED'
             orders_df = orders_df[status_mask & archived_mask]
@@ -288,7 +284,6 @@ async def save_df(df, path):
     """Asynchronously saves a DataFrame to a CSV file with error handling."""
     try:
         await asyncio.to_thread(df.to_csv, path, index=False)
-        #logger2.info(f"Saved DataFrame to {path}")
     except Exception as e:
         logger2.error(f"Error saving {path}: {e}")
 
@@ -308,7 +303,6 @@ async def create_group_user_data(orders_df_paths, products_df_paths, folder_to_s
         pair_empty_files = []  # Track empty files for this specific pair
         
         try:
-            #logger2.info(f"Processing pair {index}: {orders_path} and {products_path}")
             
             # Preprocess orders and products concurrently
             (orders_df, orders_path), (products_df, products_path) = await asyncio.gather(
@@ -344,7 +338,6 @@ async def create_group_user_data(orders_df_paths, products_df_paths, folder_to_s
                 save_df(_products_df, products_save_path)
             )
             
-            #logger2.info(f"Completed processing pair {index}")
             return pair_empty_files
         except Exception as e:
             logger2.error(f"Error processing pair {index}: {e}")
@@ -363,25 +356,15 @@ async def create_group_user_data(orders_df_paths, products_df_paths, folder_to_s
         logger2.info("Completed create_user_data for all file pairs")
         
         # Return success status and all empty files found
-        #print('gere')
-        #print(all_empty_files)
         return True, all_empty_files
     except Exception as e:
         logger2.error("Error in create_group_user_data: ", e)
         return False, all_empty_files
 
 async def concat_customer_csv(uuid: str) -> str:
-    """
-    Asynchronously concatenate all customer.csv files within the given UUID folder.
-    
-    Args:
-        uuid (str): The main UUID identifying the root folder.
-    
-    Returns:
-        str: Path to the concatenated CSV file.
-    
-    Raises:
-        ValueError: If no customer CSV files are found.
+    """Concatenate every customer.csv under the UUID folder; returns the output path.
+
+    Raises ValueError when there are none.
     """
     main_path = Path(uuid)
     
@@ -418,15 +401,7 @@ async def concat_customer_csv(uuid: str) -> str:
     return str(new_file_path)
 
 async def read_csv_customer(path):
-    """
-    Asynchronously read a CSV file and return its lines.
-    
-    Args:
-        path: Path to the CSV file.
-    
-    Returns:
-        list: List of lines from the file.
-    """
+    """Read a CSV file asynchronously and return its lines."""
     async with aiofiles.open(path, mode='r', encoding='utf-8') as f:
         content = await f.read()
     return content.splitlines()
@@ -478,7 +453,6 @@ def one_file_preprocess_orders(file_path):
         return df, file_path  # Return tuple with file_path
     
     # Remove duplicate orders based on 'id'
-    #df.drop_duplicates(subset=["id"], inplace=True)
 
     # Convert datetime columns to UTC
     datetime_cols = [
@@ -517,7 +491,7 @@ def one_file_preprocess_orders(file_path):
 def one_file_preprocess_products(file_path):
     """Loads and cleans product data from a CSV file."""
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, low_memory=False)
         logger2.info(f"Loaded products CSV from {file_path}")
         df['sku'] = df['sku'].astype(str)
     except (FileNotFoundError, pd.errors.EmptyDataError, pd.errors.ParserError) as e:
@@ -534,7 +508,6 @@ def one_file_preprocess_products(file_path):
         return df, file_path  # Return tuple with file_path
     
     # Remove duplicates based on 'id' and 'orderId'
-    #df.drop_duplicates(subset=["id", "orderId"], inplace=True)
     
     # Convert 'createdAt' to datetime with UTC
     df = convert_to_datetime(df, ["createdAt"])
@@ -600,13 +573,6 @@ def one_file_preprocess_catalog(filepath: str) -> str:
 
     return df, file_path_catalog
 
-    #df_clean.to_csv(file_path_catalog, index=False)
-    #
-    #return {
-    #    "file_path": file_path_catalog,
-    #    "dropped_columns": dropped_cols,
-    #    "rows_remaining": f'{len(df_clean)} from {original_len}'
-    #}
 
 async def get_cleaned_catalog(filepath: str) -> str:
     """Async wrapper to process the CSV without blocking the event loop."""
@@ -634,7 +600,6 @@ def one_file_preprocess_customers(file_path):
         return df, file_path  # Return tuple with file_path
     
     # Remove duplicate customers based on 'id'
-    #df.drop_duplicates(subset=["id"], inplace=True)
 
     # Convert datetime columns to UTC
     datetime_cols = [

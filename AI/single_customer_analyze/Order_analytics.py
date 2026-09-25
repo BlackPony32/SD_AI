@@ -118,8 +118,6 @@ def get_contact_peak_time(contact_name, orders_df):
     return (best_day, time_window)
 
 def customer_insights(ord_df, products_df):
-    #ord_df = pd.read_csv(file_path)
-    #products_df = pd.read_csv(products_file_path)
     
     # Get unique contacts with their order counts
     contacts = ord_df['contactDuplicate_name'].value_counts().reset_index()
@@ -351,7 +349,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             merged_df['sku'] = merged_df['sku'].fillna('unknown').astype(str)
             merged_df['size'] = merged_df['size'].fillna('unknown size').astype(str)
             merged_df['product'] = merged_df['name'].astype(str) + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
-            #merged_df.to_csv('deleteee.csv')
             # Total sales by payment and delivery status
             total_sales_by_status = orders.groupby(['paymentStatus', 'deliveryStatus'])['totalAmount'].sum().reset_index()
 
@@ -455,7 +452,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             ).sort_values('total_purchases', ascending=False)
 
             # Monthly Trends
-            #merged_df['product'] = merged_df.get('name', 'Product') + ' - ' + merged_df['sku'] + ' - ' + merged_df['size']
             product_sales = merged_df.groupby(['month', 'product'])['item_revenue'].sum().reset_index()
             if not product_sales.empty:
                 top_products = product_sales.loc[
@@ -463,7 +459,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
                 ]
             else:
                 top_products = pd.DataFrame(columns=['month', 'product', 'item_revenue'])
-            #print(product_sales)
             monthly_sales = orders.groupby('month').agg(
                 total_sales=('totalAmount', 'sum'),
                 order_count=('id', 'nunique')
@@ -678,7 +673,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             if payment_rec:
                 lines.append(f"- {payment_rec}")
             lines.append("- **Seasonal analysis**: review patterns over time.")
-            #add_section("suggestions", lines)
 
             # 11) Suggestions (as HTML)
             
@@ -692,7 +686,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             add_section("suggestions", [html_suggestions])
 
             result = sections['suggestions_div'] = "".join(html_suggestions)
-            #print(result)
 
             # Additional reports
             try:
@@ -747,8 +740,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
 
 async def main():
     report = await generate_sales_report("data/aaea5465-b48e-429b-946a-0f6ddc3dd66d/work_ord.csv", "data/aaea5465-b48e-429b-946a-0f6ddc3dd66d/work_prod.csv", 'aaea5465-b48e-429b-946a-0f6ddc3dd66d')
-    #print(report["full_report"])           #  entire report
-    #print(report["sections"])  # just the Key Metrics part
     print(report["full_report"])
 
 if __name__ == "__main__":

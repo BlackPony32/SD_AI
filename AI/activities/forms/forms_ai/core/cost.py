@@ -1,33 +1,10 @@
-"""Cost accounting.
-
-`calculate_cost` below is **your function, verbatim** - it is the single source of
-truth for pricing and token totals in this codebase. `UsageTracker` in `llm.py`
-calls it once per agent run and accumulates what it returns; nothing computes cost
-independently any more.
-
-Two notes on how it is wired in:
-
-* Its `print` output is captured and re-emitted through the logger by
-  `UsageTracker.add`, so a library call does not write to stdout. The function
-  itself is untouched.
-* `PRICING` is re-exported and is what `config.PRICING` points at, so the pricing
-  table exists in exactly one place.
-"""
+"""Cost accounting."""
 
 from __future__ import annotations
 
 
 def calculate_cost(runner, model="gpt-4.1-mini"):
-    """
-    Calculates the estimated cost of an OpenAI Agents SDK session.
-
-    Args:
-        runner: The agent runner instance containing .raw_responses
-        model (str): The model identifier (e.g., "gpt-4.1-mini", "gpt-4o-mini")
-
-    Returns:
-        float: Total estimated cost in USD.
-    """
+    """Estimated USD cost of an Agents SDK run, from the token usage of its raw responses."""
     # Pricing per 1 Million tokens (USD)
     # Based on Dec 2025 standard pricing
     PRICING = {
@@ -102,16 +79,13 @@ def calculate_cost(runner, model="gpt-4.1-mini"):
         total_output += output_tokens
 
         # Optional: Print step detail
-        # print(f"Step {i+1}: ${step_cost:.6f} (In: {input_tokens}, Out: {output_tokens})")
     print(f"Total Tokens: {total_input + total_output} (Input: {total_input}, Output: {total_output})")
     print(f"Total Cost:   ${total_cost:.6f}")
 
     return total_cost
 
 
-# ---------------------------------------------------------------------------
-# Re-exports so the pricing table lives in exactly one place
-# ---------------------------------------------------------------------------
+# --- Re-exports so the pricing table lives in exactly one place ---
 
 #: Same table as inside `calculate_cost`, exposed for `config.PRICING` and for
 #: reporting the per-1M rates alongside a total.

@@ -1,23 +1,4 @@
-"""Plain language. The only module allowed to produce user-facing wording.
-
-Nothing outside this file decides how a number is written, and nothing downstream
-of it is permitted to emit statistical vocabulary. That means no `yes_rate`, no
-`delta 0.5714`, no `tau`, no `p_value`, no `NUMERIC`/`MULTIPLE_ANSWER`, no
-"median"/"standard deviation", no spark bars, and no "erratic"/"flat (low
-confidence)". Those all still exist in `result.statistics` for programmatic
-callers - they just never reach a reader or the model.
-
-The rules:
-
-* A proportion is written as a percentage: `0.5714` -> `"57%"`.
-* A count is written with thousands separators: `9195352` -> `"9,195,352"`.
-* A measured value keeps at most one decimal, and only when it needs one.
-* A movement is a sentence, not a symbol: "rose from 12 to 19 by the end".
-* Statistical confidence becomes ordinary hedging: a rank test that is not
-  significant becomes "no clear change", not "flat (low confidence)".
-* When the answers are too spread out for one number, the wording says so
-  instead of quoting a value that averages 10 and 100 into 55.
-"""
+"""Plain-language wording; the only module that produces user-facing text."""
 
 from __future__ import annotations
 
@@ -45,16 +26,10 @@ BANNED_TERMS: tuple[str, ...] = (
 
 
 def contains_banned(text: str) -> list[str]:
-    """Which banned terms appear in `text`. Empty list is the goal.
+    """Which banned terms appear in `text` (empty is the goal).
 
-    Two matching modes. Form-builder type names ("TEXT", "RATING") and the block
-    characters are matched literally, so "a follow-up text/email" is not a hit.
-    Everything else is matched case-insensitively but must not sit inside a longer
-    word - "tau" does not fire on "Tauranga" - while still catching a longer field
-    name built from it, since `_` is not a letter and "yes_rate_floor" must fail.
-
-    Used both by the test sweep over our own output and at runtime over the
-    model's, where a hit is folded into the one repair pass.
+    Type names and block characters match literally; other terms match case-insensitively as
+    whole words, but still catch field names built from them ("yes_rate_floor").
     """
     haystack = str(text or "")
     found = []
@@ -69,9 +44,7 @@ def contains_banned(text: str) -> list[str]:
     return found
 
 
-# ---------------------------------------------------------------------------
-# Numbers
-# ---------------------------------------------------------------------------
+# --- Numbers ---
 
 def number(value: Any, decimals: int | None = None) -> str:
     """A measured value: thousands separators, at most one decimal unless asked."""
@@ -163,9 +136,7 @@ def person(name: Any, limit: int = MAX_NAME_CHARS) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "\u2026"
 
 
-# ---------------------------------------------------------------------------
-# Dates and periods
-# ---------------------------------------------------------------------------
+# --- Dates and periods ---
 
 def _day(ts: Any) -> str:
     stamp = pd.Timestamp(ts)
@@ -237,9 +208,7 @@ def period_label(bucket: dict[str, Any], unit_key: str) -> str:
     return str(start.year)
 
 
-# ---------------------------------------------------------------------------
-# How a question was answered (never the internal type name)
-# ---------------------------------------------------------------------------
+# --- How a question was answered (never the internal type name) ---
 
 _ANSWER_STYLE = {
     "NUMERIC": "a number",
@@ -264,22 +233,14 @@ def retype_note(declared: str, effective: str, reason: str | None) -> str | None
             f"are actually {answer_style(effective)}, so it is reported that way.")
 
 
-# ---------------------------------------------------------------------------
-# Movement
-# ---------------------------------------------------------------------------
-# `trend.direction` and `trend.confidence` come from a rank-based test. Here they
-# become ordinary English, and a result that is not significant is written as
-# "no clear change" rather than dressed up with a statistic.
+# --- Movement ---
+# Trend direction and confidence in plain English; a non-significant result reads "no clear change".
 
 def movement_phrase(trend: dict[str, Any], kind: str, unit_key: str,
                     suffix: str | None = None) -> str:
-    """How this measure moved - and, first, whether it moved at all.
+    """How this measure moved, and first whether it moved at all.
 
-    The important branch is the second one. When every period sits inside the range
-    its own sample size would produce anyway, the honest sentence is that the
-    differences are ordinary, not that one period was the highest. That is the
-    sentence the old report was missing, and its absence is why "peaked in
-    mid-February" appeared in a summary describing pure noise.
+    When every period sits inside its own chance range, it says the differences are ordinary.
     """
     direction = (trend or {}).get("direction") or "insufficient_data"
     confidence = (trend or {}).get("confidence") or "none"
@@ -364,18 +325,13 @@ def reliability_phrase(answers: int, thin_periods: int, unit_key: str) -> str:
     return base
 
 
-# ---------------------------------------------------------------------------
-# Spread: the answer to the 10-and-100 problem
-# ---------------------------------------------------------------------------
+# --- Spread: the answer to the 10-and-100 problem ---
 
 def spread_phrase(dispersion: dict[str, Any] | None, low: Any, high: Any,
                   kind: str = "value", trending: bool = False) -> str | None:
     """How the answers are spread, and whether one value may stand for them.
 
-    `trending` says the spread is wide only *between* periods, not inside them -
-    a question rising 100 to 600 has a six-month range as wide as a question
-    mixing 30s and 90,000s, and describing the first as "too widely spread for one
-    figure" hides the very thing that makes it interesting.
+    `trending` means the spread is wide only between periods, not inside them.
     """
     if not dispersion:
         return None
@@ -415,13 +371,7 @@ def spread_phrase(dispersion: dict[str, Any] | None, low: Any, high: Any,
 def headline_phrase(measure: str, value: Any, kind: str,
                     dispersion: dict[str, Any] | None,
                     trending: bool = False) -> str:
-    """The one-line answer to "what did people say?".
-
-    When the answers do not cluster, this deliberately does **not** quote a single
-    value - that is the whole point of the change. A question whose spread comes
-    from moving over time is not that case: each period has a perfectly good
-    figure, so one is quoted and the movement sentence explains the range.
-    """
+    """The one-line answer to "what did people say?"; no single value when answers don't cluster."""
     if not trending and dispersion \
             and dispersion.get("single_value_representative") is False \
             and dispersion.get("verdict") not in (None, "tight", "moderate"):
@@ -450,9 +400,7 @@ def bands_phrase(bands: list[dict[str, Any]] | None, kind: str = "value") -> str
     return "; ".join(parts) if parts else None
 
 
-# ---------------------------------------------------------------------------
-# Free-text content
-# ---------------------------------------------------------------------------
+# --- Free-text content ---
 
 def amount_phrase(summary: dict[str, Any]) -> str | None:
     """What the amounts written into a text field add up to.
@@ -515,9 +463,7 @@ def themes_phrase(themes: list[dict[str, Any]] | None) -> str | None:
                      for row in themes[:4])
 
 
-# ---------------------------------------------------------------------------
-# People
-# ---------------------------------------------------------------------------
+# --- People ---
 
 def people_phrase(segment: dict[str, Any] | None, kind: str) -> str:
     """Whether the people genuinely differ, in the terms a reader can act on.
@@ -573,19 +519,11 @@ def test_account_phrase(names: list[str] | None) -> str | None:
             f"to see the real team's numbers.")
 
 
-# ---------------------------------------------------------------------------
-# How the figure has moved: the stronger readings
-# ---------------------------------------------------------------------------
+# --- How the figure has moved: the stronger readings ---
 
 def level_phrase(progress: dict[str, Any], kind: str, unit_key: str,
                  representative: bool = True) -> str | None:
-    """Whether the figure sits at one level or genuinely moves between periods.
-
-    This is the distinction a manager needs and the old wording collapsed. A check
-    steady at 52% every fortnight is a process running at 52%: change the process.
-    A check swinging between fortnights means something differs between them: find
-    out what. "No real change here" was true of both and useful for neither.
-    """
+    """Whether the figure sits at one level or genuinely moves between periods."""
     holds = (progress or {}).get("holds_one_level") or {}
     steady = holds.get("steady")
     if steady is None:
@@ -595,10 +533,7 @@ def level_phrase(progress: dict[str, Any], kind: str, unit_key: str,
     units = unit_word(unit_key, plural=True)
     low, high = swing.get("low"), swing.get("high")
 
-    # Where no single figure represents the answers, the figure's own swing is an
-    # artefact - the middle of two groups lands in the gap between them and jumps
-    # from one to the other on a single extra answer. Quoting that swing as though
-    # it were movement is the thing this whole branch exists to avoid.
+    # Where no single figure represents the answers, its swing is an artefact: never quote it as movement.
     if not representative:
         if steady:
             return (f"The same mix of answers appears in every {unit}. Any middle "
@@ -623,12 +558,8 @@ def level_phrase(progress: dict[str, Any], kind: str, unit_key: str,
 
 def halves_phrase(progress: dict[str, Any], kind: str,
                   unit_key: str = "period") -> str | None:
-    """First half of the window against the second.
-
-    Period-by-period comparison is the weakest test available; pooling into two
-    halves doubles the answers on each side and so detects a shift roughly half
-    the size. Where the halves agree, saying so is a real finding - it rules out
-    a drift that the per-period view is too thin to rule out.
+    """First half of the window against the second; detects a shift about half the size the
+    per-period view can.
     """
     halves = (progress or {}).get("halves") or {}
     first, second = halves.get("first") or {}, halves.get("second") or {}

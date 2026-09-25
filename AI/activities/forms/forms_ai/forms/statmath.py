@@ -1,28 +1,4 @@
-"""The statistics themselves, as small pure functions over plain sequences.
-
-Deliberately dependency-light (numpy only, no scipy) so the analyser can run in
-a slim worker image, and deliberately separate from the pandas plumbing so each
-formula is unit-testable in isolation.
-
-Choices worth defending
------------------------
-* **Mann-Kendall, not just a regression line.** Bucket series are short (4-24
-  points), often skewed and occasionally spiky. A least-squares slope on 6 noisy
-  points reports a confident trend that is not there. Mann-Kendall is
-  rank-based, needs no distributional assumption, and is not dragged around by a
-  single outlier bucket. The OLS slope is still reported, because "+1.8 units per
-  bucket" is what a human wants to read - but the *claim* that a trend exists
-  comes from the non-parametric test.
-* **Wilson intervals for rates, never bare percentages.** "67% said yes" from 3
-  responses and from 300 are different facts. Wilson behaves at small n and at
-  rates near 0 and 1, where the textbook normal interval produces impossible
-  bounds.
-* **Two outlier rules.** The IQR fence is what people expect; the modified
-  z-score (median absolute deviation) is what survives a contaminated sample.
-  Both are reported so a disagreement between them is visible.
-* **Exact p-values.** Student's t and the normal tail are computed here rather
-  than approximated, so a significance claim in the report is a real one.
-"""
+"""Small, pure statistics functions over plain sequences."""
 
 from __future__ import annotations
 
@@ -55,9 +31,7 @@ def _clean(values: Iterable[Any]) -> np.ndarray:
     return array[np.isfinite(array)]
 
 
-# ---------------------------------------------------------------------------
-# Distributions
-# ---------------------------------------------------------------------------
+# --- Distributions ---
 
 def describe(values: Iterable[Any]) -> dict[str, Any]:
     """Location, spread and shape for a numeric sample."""
@@ -113,9 +87,7 @@ def outliers_mad(values: Iterable[Any], threshold: float = 3.5) -> dict[str, Any
             "values": sorted({float(v) for v in flagged})[:20]}
 
 
-# ---------------------------------------------------------------------------
-# Rates
-# ---------------------------------------------------------------------------
+# --- Rates ---
 
 def wilson_interval(successes: int, total: int, z: float = 1.959963985
                     ) -> dict[str, Any]:
@@ -134,9 +106,7 @@ def wilson_interval(successes: int, total: int, z: float = 1.959963985
             "successes": int(successes), "margin": (high - low) / 2}
 
 
-# ---------------------------------------------------------------------------
-# Tail probabilities (no scipy)
-# ---------------------------------------------------------------------------
+# --- Tail probabilities (no scipy) ---
 
 def _norm_sf(z: float) -> float:
     """Upper tail of the standard normal."""
@@ -202,9 +172,7 @@ def t_two_sided_p(t: float, degrees_of_freedom: int) -> float:
     return float(_betai(df / 2.0, 0.5, df / (df + t * t)))
 
 
-# ---------------------------------------------------------------------------
-# Trend
-# ---------------------------------------------------------------------------
+# --- Trend ---
 
 def mann_kendall(values: Sequence[Any]) -> dict[str, Any]:
     """Non-parametric monotonic-trend test with tie correction.
@@ -355,22 +323,9 @@ def moving_average(values: Sequence[Any], window: int = 3) -> list[float | None]
     return pad + [float(v) for v in smoothed]
 
 
-# ---------------------------------------------------------------------------
-# Is one number a fair summary at all?
-# ---------------------------------------------------------------------------
-# The averaging problem: answers of 10 and 100 do not mean 55. They mean the
-# question is being answered about materially different things, and any single
-# central value hides that. So before anything reports a summary value, it asks
-# how dispersed the answers are and whether they form one group or several.
-#
-# The measure is the quartile coefficient of dispersion:
-#
-#     qcd = (p75 - p25) / (p75 + p25)
-#
-# scale-free (comparable between a question answered in units and one answered in
-# thousands), robust (built from quartiles, so one absurd answer cannot move it),
-# and defined for any positive data. The mean and standard deviation are still
-# computed, but they are never the headline.
+# --- Is one number a fair summary at all? ---
+# Uses the quartile coefficient of dispersion, qcd = (p75 - p25) / (p75 + p25): scale-free and
+# robust to single absurd answers. Mean and std are computed but never the headline.
 
 def dispersion(values: Iterable[Any], *, tight: float = 0.15, wide: float = 0.40,
                spread_ratio_wide: float = 10.0) -> dict[str, Any]:
@@ -473,18 +428,8 @@ def value_bands(values: Iterable[Any], bands: int = 4) -> list[dict[str, Any]]:
             for i in range(len(counts))]
 
 
-# ---------------------------------------------------------------------------
-# Is this period actually different, or is it just a small sample?
-# ---------------------------------------------------------------------------
-# The failure this prevents: 172 forms over 14 weeks is ~12 answers a week. At a
-# true yes-rate of 52%, chance alone throws up weekly rates anywhere between 26%
-# and 78%. Reporting "highest in mid-February, lowest in early March" out of that
-# is reading a pattern into a run of coin flips - and a model handed those numbers
-# will build a story on them every time.
-#
-# So before any period is called high or low, it is compared against the range
-# that its own sample size would produce anyway. Only periods outside that range
-# are notable. Everything else is explicitly reported as ordinary variation.
+# --- Is this period actually different, or just a small sample? ---
+# A period is only notable when it falls outside the range its own sample size would produce.
 
 def expected_rate_band(overall_rate: float | None, n: int, z: float = 1.959963985
                        ) -> dict[str, Any]:
@@ -535,9 +480,7 @@ def is_notable(value: float | None, band: dict[str, Any] | None) -> bool:
     return bool(value < band["low"] or value > band["high"])
 
 
-# ---------------------------------------------------------------------------
-# How much data would be needed to see a difference at all
-# ---------------------------------------------------------------------------
+# --- How much data would be needed to see a difference at all ---
 
 def answers_needed_for(difference: float, baseline_rate: float = 0.5,
                        power: float = 0.80, alpha: float = 0.05) -> int:
@@ -565,9 +508,7 @@ def detectable_difference(n: int, baseline_rate: float = 0.5, power: float = 0.8
     return math.sqrt(2 * ((z_alpha + z_beta) ** 2) * p * (1 - p) / n)
 
 
-# ---------------------------------------------------------------------------
-# Comparing one person against the rest
-# ---------------------------------------------------------------------------
+# --- Comparing one person against the rest ---
 
 def two_proportion_p(successes_a: int, total_a: int, successes_b: int,
                      total_b: int) -> float | None:
@@ -592,13 +533,8 @@ def shrink_rates(observations: Sequence[tuple[Any, int, int]]
                  ) -> list[dict[str, Any]]:
     """Empirical-Bayes adjustment of per-person rates towards the group.
 
-    `observations` is (key, successes, total). A person with 1 of 6 answers is
-    mostly noise; a person with 99 is mostly signal. A beta prior fitted from the
-    group by moment matching weights each person accordingly, so the ranking stops
-    being "whoever had the smallest sample".
-
-    Returns raw and adjusted rates plus the prior strength, so the report can show
-    both and say which one the ranking used.
+    `observations` is (key, successes, total). Returns raw and adjusted rates plus the prior
+    strength, so small samples stop dominating the ranking.
     """
     rows = [(key, int(s), int(t)) for key, s, t in observations if t and t > 0]
     if not rows:
@@ -663,9 +599,7 @@ def shrink_values(observations: Sequence[tuple[Any, float | None, int]],
     return out
 
 
-# ---------------------------------------------------------------------------
-# Categorical spread
-# ---------------------------------------------------------------------------
+# --- Categorical spread ---
 
 def entropy(counts: Iterable[float], base: float = 2.0) -> float | None:
     values = [float(c) for c in counts if c and c > 0]
@@ -697,20 +631,8 @@ def gini(counts: Iterable[float]) -> float | None:
     return (2 * cumulative) / (n * total) - (n + 1) / n
 
 
-# ---------------------------------------------------------------------------
-# Is the figure steady, or does it genuinely move?
-# ---------------------------------------------------------------------------
-# A manager needs these apart. A check that sits at 52% every single fortnight is
-# a stable process running at 52%: to change it you change the process. A check
-# that swings 39%-59% between fortnights is an unstable one: something differs
-# between those fortnights and finding out what it is comes first. Both currently
-# read as "no real change here", which is true about the *trend* and useless as
-# guidance.
-#
-# Testing each period against its own band cannot separate them, because it asks
-# a question about one period at a time. Pooling every period into a single
-# homogeneity test is far more powerful: seven fortnights each too thin to flag
-# alone can jointly show that the figure is not sitting still.
+# --- Is the figure steady, or does it genuinely move? ---
+# One pooled homogeneity test across periods separates a stable process from an unstable one.
 
 def _gammln(x: float) -> float:
     """Log of the gamma function (Lanczos)."""

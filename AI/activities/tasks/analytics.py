@@ -1,24 +1,4 @@
-"""Deterministic layer for task-backlog analysis.
-
-Everything that can be counted is counted here, in code. The LLM never counts;
-it only explains. Two payloads come out, deliberately disjoint:
-
-    build_metrics_payload(metrics)        -> AGENT A (numbers)
-    build_pairs_payload(metrics, corpus)  -> AGENT B (title+description text)
-
-Design rules:
-  1. Load everything, completed included: completed tasks are the denominator of
-     every rate that matters. Filtering them out destroys the analysis.
-  2. Never silently drop a row. "Noise" is a flag on a task, not a deletion.
-  3. Compute rates, not just counts. 14 overdue means nothing until you know
-     whether the owner holds 20 tasks or 200.
-  4. Analyse the TASK (status, dates, owner, priority) and the TITLE+DESCRIPTION
-     PAIR separately: different questions, different agents.
-  5. Nothing here raises. A failing section is replaced by a default, logged and
-     recorded in metrics["_errors"], and the rest of the report still ships.
-
-Stdlib only (csv, re, statistics). pandas is not required.
-"""
+"""Deterministic layer for task-backlog analysis."""
 
 from __future__ import annotations
 
@@ -55,9 +35,7 @@ def _make_safe(errors: list[dict], stage: str) -> Callable:
     return safe
 
 
-# ---------------------------------------------------------------------------
-# 1. Loading & parsing
-# ---------------------------------------------------------------------------
+# --- 1. Loading & parsing ---
 
 CLOSED_STATUSES = {"COMPLETED", "DONE", "CANCELLED", "CANCELED", "ARCHIVED"}
 
@@ -122,9 +100,7 @@ def load_tasks(csv_path: str | Path) -> tuple[list[dict], dict]:
     return tasks, report
 
 
-# ---------------------------------------------------------------------------
-# 2. Text normalisation, accounts, title/description quality
-# ---------------------------------------------------------------------------
+# --- 2. Text normalisation, accounts, title/description quality ---
 
 _GENERIC_TOKENS = {
     "check", "checks", "call", "calls", "follow", "followup", "up", "visit", "review",
@@ -223,9 +199,7 @@ def pair_quality(title: str, description: str) -> dict[str, Any]:
             "title_words": len(nt.split()), "desc_words": len(nd.split())}
 
 
-# ---------------------------------------------------------------------------
-# 3. Categories (rule layer -- the LLM widens this, it does not replace it)
-# ---------------------------------------------------------------------------
+# --- 3. Categories (rule layer; the LLM widens it, never replaces it) ---
 
 CATEGORY_RULES: dict[str, list[str]] = {
     "Payment / Collection": [r"\bpayment\b", r"\binvoice\b", r"\bcollect", r"\bbalance\b",
@@ -260,9 +234,7 @@ def categorize(title: str, description: str) -> str:
     return best if scores[best] else "Uncategorized"
 
 
-# ---------------------------------------------------------------------------
-# 4. Metrics -- part A: the TASK (status, dates, owner, priority)
-# ---------------------------------------------------------------------------
+# --- 4. Metrics, part A: the task (status, dates, owner, priority) ---
 
 def _rate(n: int, d: int) -> float | None:
     return round(n / d, 3) if d else None
@@ -413,9 +385,7 @@ def section_accounts(tasks, top_n: int = 10) -> dict[str, Any]:
     return {k: {**v, "categories": dict(v["categories"].most_common(3))} for k, v in ranked}
 
 
-# ---------------------------------------------------------------------------
-# 5. Metrics -- part B: the TITLE + DESCRIPTION PAIR
-# ---------------------------------------------------------------------------
+# --- 5. Metrics, part B: the title + description pair ---
 
 def find_duplicate_pairs(tasks: list[dict], open_only: bool = True) -> list[dict]:
     """Group by (normalised title, normalised description), with ids so the agent
@@ -508,9 +478,7 @@ def build_pair_corpus(tasks: list[dict], max_units: int = 180,
     return ordered
 
 
-# ---------------------------------------------------------------------------
-# 6. Metrics assembly
-# ---------------------------------------------------------------------------
+# --- 6. Metrics assembly ---
 
 def compute_metrics(tasks: list[dict], now: datetime | None = None,
                     min_sample: int = 15) -> dict[str, Any]:
@@ -560,11 +528,8 @@ def compute_metrics(tasks: list[dict], now: datetime | None = None,
                                       "error": str(exc)}]}
 
 
-# ---------------------------------------------------------------------------
-# 7. Prompt payloads -- what each agent actually receives
-# ---------------------------------------------------------------------------
-# Agent A gets numbers with no free text; agent B gets text with no totals.
-# Neither can drift into the other's job.
+# --- 7. Prompt payloads ---
+# Agent A gets numbers without free text; agent B gets text without totals.
 
 _TOP_OWNERS = 6
 _TOP_ACCOUNTS = 6
@@ -572,12 +537,10 @@ _TOP_CATEGORIES = 6
 
 
 def build_metrics_payload(metrics: dict) -> dict:
-    """Compact copy of the metrics for AGENT A. Never mutates the original.
+    """Compact copy of the metrics for agent A (never mutates the original).
 
-    "Uncategorized" is not a business category, it is every task the rules failed
-    to classify -- a legibility problem, not a kind of work. It moves to
-    `data_quality` and out of the ranking, so a real category is never crowded
-    out of the top N by an artifact of the rule engine."""
+    "Uncategorized" moves to data_quality so it never crowds real categories out of the ranking.
+    """
     tp = metrics.get("text_pairs") or {}
     by_category = dict(metrics.get("by_category") or {})
     uncategorized = by_category.pop("Uncategorized", None)
@@ -604,12 +567,7 @@ def build_metrics_payload(metrics: dict) -> dict:
 
 
 def build_pairs_payload(metrics: dict, corpus: list[dict]) -> dict:
-    """Compact copy of the title/description evidence for AGENT B: the pair text
-    and the pair-level quality figures, and nothing about backlog size, owners or
-    completion rates -- those belong to agent A.
-
-    `duplicate_titles` carries title+count rather than the full group, so agent B
-    can name a real repeated task without seeing owners or ids."""
+    """Title/description evidence for agent B: pair text and pair-level quality, no backlog totals."""
     tp = metrics.get("text_pairs") or {}
     quality = {k: tp.get(k) for k in
                ("no_description_pct", "vague_title_count", "unactionable_pair_count",
@@ -626,9 +584,7 @@ def build_pairs_payload(metrics: dict, corpus: list[dict]) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# 8. Entry point
-# ---------------------------------------------------------------------------
+# --- 8. Entry point ---
 
 def analyze_tasks_file(csv_path: str | Path, output_dir: str | None = None,
                        now: datetime | None = None, corpus_size: int = 180) -> dict[str, Any]:

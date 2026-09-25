@@ -1,20 +1,4 @@
-"""The public entry point: `analyze_form`.
-
-One async call takes a user id and a set of filters and returns the finished
-analysis. The shape of the return value is fixed and documented in
-`FormAnalysisResult` so callers can depend on it.
-
-The pipeline, in order:
-
-    load  ->  filter  ->  plan intervals  ->  compute statistics
-          ->  LLM (interval comparison, analysis, summary)  ->  render
-
-Failure policy, inherited from the rest of the codebase: the statistical half
-raises on real problems (no export on disk, an impossible filter) because a
-caller must know; the model half never raises. If any agent fails, times out or
-cannot be grounded, the result still comes back with complete statistics and a
-code-rendered report, and `ai.status` explains what happened.
-"""
+"""Public entry point: `analyze_form`."""
 
 from __future__ import annotations
 
@@ -43,9 +27,7 @@ from .loader import FormDataset, load_dataset
 log = get_log("forms.analysis")
 
 
-# ---------------------------------------------------------------------------
-# Result contract
-# ---------------------------------------------------------------------------
+# --- Result contract ---
 
 @dataclass
 class FormAnalysisResult:
@@ -74,9 +56,7 @@ class FormAnalysisResult:
         return asdict(self)
 
 
-# ---------------------------------------------------------------------------
-# LLM stage
-# ---------------------------------------------------------------------------
+# --- LLM stage ---
 
 def _batches(items: list[Any], size: int) -> list[list[Any]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
@@ -181,9 +161,7 @@ async def _run_llm_stage(presentation: dict[str, Any], rules: P.AnalysisRules,
     }
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
+# --- Public entry point ---
 
 async def analyze_form(
     user_id: str,
@@ -217,76 +195,20 @@ async def analyze_form(
     event_time_field: str | None = None,
     use_cache: bool = True,
 ) -> FormAnalysisResult:
-    """Analyse one form for one user and return the finished result.
+    """Analyse one form for one user from their downloaded export (nothing is fetched).
 
-    Parameters
-    ----------
-    user_id
-        Whose already-downloaded export to read. The files are located on disk;
-        nothing is fetched.
-    period_from, period_to
-        Inclusive bounds, anything `pandas.Timestamp` accepts. Omit both to
-        analyse all time.
-    representative_id
-        One id or a list; a representative's display name is also accepted.
-    exclude_representative_id
-        People to leave out - ids or display names. Use it to drop test and
-        placeholder accounts, which the report flags for you under
-        `presentation["test_accounts"]`.
-    customer_id
-        Reserved. Accepted end to end, but the current export has no customer
-        column, so passing one raises `FilterError` rather than silently
-        returning nothing.
-    granularity
-        `"auto"` (default) picks the unit that yields roughly `target_buckets`
-        equal intervals over whatever period was selected - hours for a single
-        day, months for a year, quarters for several years. Pass `"hour"`,
-        `"day"`, `"week"`, `"month"`, `"quarter"`, `"year"` (or `"3h"`, `"2week"`,
-        `"half_year"`) to force one. A unit finer than the timestamps in the data
-        is refused and stepped up, with a note in the result.
-    interval_mode
-        `"calendar"` snaps intervals to natural boundaries (readable labels,
-        slightly unequal lengths - use the `_per_day` figures for volume).
-        `"uniform"` cuts the span into exactly equal timedeltas.
-    interval_anchor
-        `"auto"` (default) starts the grid on the requested date unless that date
-        already falls on a boundary of the chosen unit, so no period is left only
-        partly inside the range. `"calendar"` always snaps outwards (named months
-        and weeks, at the cost of two part-covered edge periods); `"period"` always
-        starts on the requested date.
-    min_answers_per_period
-        The engine will choose a coarser split rather than leave periods holding
-        fewer answers than this, because below roughly 30 a rate wanders across a
-        wide range by chance and period-to-period comparison means nothing.
-    analysis_rules
-        Extra instructions for the agent: an `AnalysisRules`, a dict, a string or
-        a list of strings. Adds focus, thresholds, audience, language and tone.
-        Cannot relax the grounding or uncertainty rules.
-    use_llm
-        False computes the statistics and renders the report without any model
-        call - the fast, free, fully deterministic path.
-    analyst_detail_limit
-        How many questions get their full period-by-period detail in the reviewer's
-        payload. The rest are sent as one line each. Lower means cheaper; the
-        questions that moved or look unusual are always the ones chosen.
+    - period_from / period_to: inclusive bounds; omit both for all time.
+    - representative_id / exclude_representative_id: ids or display names.
+    - customer_id: reserved; raises FilterError on exports without a customer column.
+    - granularity: "auto" (default) or a unit: "hour", "day", "week", "month", "quarter", "year", "3h", ...
+    - interval_mode: "calendar" (natural boundaries) or "uniform" (equal timedeltas).
+    - interval_anchor: "auto" (default), "calendar" or "period".
+    - min_answers_per_period: splits leaving fewer answers per period are avoided.
+    - analysis_rules: extra agent instructions; they cannot relax the grounding rules.
+    - use_llm: False renders the report without any model call.
+    - analyst_detail_limit: how many questions get full period detail in the model payload.
 
-    Returns
-    -------
-    FormAnalysisResult
-        `.statistics` (technical, for programmatic callers), `.presentation` (the
-        plain-language reader's view, also what the model reads),
-        `.report_markdown` (always a full report) and `.ai` (populated when a model
-        ran). Call `.to_dict()` for a JSON-safe dict.
-
-    Raises
-    ------
-    DatasetNotFound
-        No export on disk for this user.
-    SchemaError
-        The export exists but lacks the columns needed to analyse anything.
-    FilterError
-        The requested filter cannot be applied (unknown form, unknown
-        representative, customer filter on an export without customers).
+    Returns a FormAnalysisResult; raises DatasetNotFound, SchemaError or FilterError.
     """
     started = time.perf_counter()
     rules = P.AnalysisRules.coerce(analysis_rules)
@@ -314,10 +236,7 @@ async def analyze_form(
         return _empty_result(user_id, dataset, spec, filtered, rules, warnings,
                              started)
 
-    # 3. Plan the intervals -------------------------------------------------
-    # The submission count goes in so the engine can refuse a split too fine to
-    # interpret: 172 forms over 14 weeks is 12 answers a week, which cannot
-    # separate a real change from ordinary variation at any confidence.
+    # 3. Plan the intervals (the answer count lets the engine refuse a split too fine to read).
     plan = IV.build_plan(
         filtered.facts["event_time"], period_from=period_from, period_to=period_to,
         granularity=granularity, bucket_count=bucket_count, mode=interval_mode,
@@ -326,9 +245,7 @@ async def analyze_form(
         submissions=int(filtered.facts["progress_id"].nunique()),
         min_answers_per_period=min_answers_per_period)
 
-    # 4. The previous, equal-length window ----------------------------------
-    # Filters are re-applied without the period so the comparison window is not
-    # cut off by the user's date range.
+    # 4. The previous, equal-length window (filters re-applied without the period).
     previous_facts = None
     if compare_previous_period and plan.previous_start is not None:
         base_spec = FilterSpec(
@@ -351,9 +268,7 @@ async def analyze_form(
         previous_facts=previous_facts, include_segments=include_segments,
         rules=rules)
 
-    # 6. The reader's view --------------------------------------------------
-    # Built once and used by both the report and the model, so the wording and
-    # the figures they see cannot diverge.
+    # 6. The reader's view, shared by the report and the model so they can't diverge.
     filters_payload = filtered.to_dict()
     presentation = await asyncio.to_thread(
         PR.build_presentation, statistics, filters=filters_payload,
@@ -455,9 +370,7 @@ def _empty_result(user_id: str, dataset: FormDataset, spec: FilterSpec,
         warnings=warnings)
 
 
-# ---------------------------------------------------------------------------
-# Convenience wrappers
-# ---------------------------------------------------------------------------
+# --- Convenience wrappers ---
 
 async def analyze_form_json(user_id: str, **kwargs: Any) -> dict[str, Any]:
     """`analyze_form` as a plain JSON-safe dict, for an HTTP handler."""

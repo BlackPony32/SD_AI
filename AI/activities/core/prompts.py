@@ -1,16 +1,4 @@
-"""Prompt material shared by every topic.
-
-Two ideas run through all of them:
-  * The model is a WRITER, not a CALCULATOR. It receives figures already
-    computed and is told, in as many words, that inventing or re-deriving a
-    number is the one unrecoverable error.
-  * Each agent may only speak about what it was given. The split is enforced by
-    the payloads, not by good intentions.
-
-The rules are named rather than copied. Each topic composes the ones that apply
-to it with `build_rules`, which numbers them in order, so the sentences every
-agent shares are written once and the topic-specific ones stay local.
-"""
+"""Prompt material shared by every topic."""
 
 from __future__ import annotations
 

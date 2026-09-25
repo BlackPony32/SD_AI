@@ -20,16 +20,7 @@ def extract_customer_id(file_path: str) -> str:
     return None  # or raise ValueError("Customer ID not found in path.")
 
 def calculate_cost(runner, model="gpt-4.1-mini"):
-    """
-    Calculates the estimated cost of an OpenAI Agents SDK session.
-    
-    Args:
-        runner: The agent runner instance containing .raw_responses
-        model (str): The model identifier (e.g., "gpt-4.1-mini", "gpt-4o-mini")
-        
-    Returns:
-        float: Total estimated cost in USD.
-    """
+    """Estimated USD cost of an Agents SDK run, from the token usage of its raw responses."""
     # Pricing per 1 Million tokens (USD)
     # Based on Dec 2025 standard pricing
     PRICING = {
@@ -106,7 +97,6 @@ def calculate_cost(runner, model="gpt-4.1-mini"):
         total_output += output_tokens
         
         # Optional: Print step detail
-        # print(f"Step {i+1}: ${step_cost:.6f} (In: {input_tokens}, Out: {output_tokens})")
 
     print(f"Total Tokens: {total_input + total_output} (Input: {total_input}, Output: {total_output})")
     print(f"Total Cost:   ${total_cost:.6f}")
@@ -154,12 +144,7 @@ async def combine_sections(title, var1, var2):
 #some functions for create_group_reports endpoint
 from fastapi import Body, HTTPException, status
 from fastapi.responses import JSONResponse
-import asyncio
-import aiofiles
 from uuid import uuid4
-import pandas as pd
-import asyncio
-import aiofiles
 from io import StringIO
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -331,13 +316,8 @@ def convert_numpy_types(obj):
     return obj
 
 async def analyze_customer_orders_async(orders_csv_path, customers_csv_path):
-    """
-    Async function to analyze customer orders from CSV files.
-    Identifies:
-    1. Customers with paid payment status and unfulfilled delivery status
-    2. Customers with unpaid payment status and fulfilled delivery status
-    3. Customers who haven't checked in for more than 2 weeks
-    Groups customers by state for each category and includes order IDs
+    """Group customers by state into three lists: paid but unfulfilled, fulfilled but unpaid,
+    and no check-in for over two weeks (with order IDs).
     """
     try:
         # Read orders file asynchronously
@@ -539,7 +519,7 @@ def is_data_ready(user_folder: str, entity: str) -> bool:
         "catalog": ["raw_file_catalog.csv", "raw_file_order_products.csv"],
         "customers": ["raw_file_customers.csv", "raw_file_orders.csv", "raw_file_order_products.csv"],
         "orders": ["raw_file_orders.csv", "raw_file_order_products.csv"],
-        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv"],
+        "ask_ai": ["raw_file_orders.csv", "raw_file_order_products.csv", "raw_file_customers.csv", "raw_file_catalog.csv", "raw_file_activities.csv"],
         "activities": ["raw_file_activities.csv","raw_file_orders.csv"]
     }
     
@@ -590,9 +570,6 @@ TOPIC_CONFIG = {
             "full_report"
         ],
         "catalog": [
-            #"key_metrics_report",
-            #"sales_performance_report",
-            #"fulfillment_report",
             "functional_product_analysis",
             "product_performance",
             "sales_trends_report",
@@ -631,21 +608,14 @@ TOPIC_CONFIG = {
 
 # test for new mcp endpoint redesign
 
-import asyncio
 import importlib
 import json
-import logging
-import os
-import re
-import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, Tuple
 
 import aiohttp
 import httpx
-from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
 
 logger2 = logging.getLogger(__name__)
 
@@ -768,9 +738,7 @@ async def sync_raw_data(
         raise as_http_exception(exc, distributor_id) from exc
 
 
-# ---------------------------------------------------------------------------
-# Stage 2: the orders/products/catalog/customers cleaning pipeline
-# ---------------------------------------------------------------------------
+# --- Stage 2: the orders/products/catalog/customers cleaning pipeline ---
 from AI.MCP_tools.get_SD_data import get_distributor_data, handle_distributor_data
 from AI.group_customer_analyze.preprocess_data_group_c import (
     get_cleaned_catalog,
@@ -783,13 +751,7 @@ async def build_sales_pipeline(
     raw_files: Mapping[str, str],
     t0: float,
 ) -> Tuple[Dict[str, str], bool]:
-    """Clean + persist the four sales CSVs.
-
-    `raw_files` is the dataset -> filename map (RAW_FILES from the endpoint
-    module); this function reads exactly the four keys it needs from it.
-
-    Returns (cleaned_paths, orders_are_empty).
-    """
+    """Clean and save the four sales CSVs. Returns (cleaned_paths, orders_are_empty)."""
 
     orders_df, products_df = await prepared_big_data(
         raw_file_path(distributor_id, raw_files["orders"]),
@@ -867,13 +829,7 @@ def module_runner(
     entity_arg: Optional[str] = None,
     pass_entity: bool = True,
 ) -> ReportRunner:
-    """For activities / forms / tasks: `await mod.run_report(distributor_id, entity)`.
-
-    The import stays lazy (as in the original in-function imports) so a heavy AI
-    module only loads when that entity is actually requested. If a module later
-    changes its signature, adjust func_name / pass_entity here — the endpoint
-    does not change.
-    """
+    """Runner for activities / forms / tasks: `await mod.run_report(distributor_id, entity)`, imported lazily."""
     async def _run(ctx: ReportContext) -> ReportPayload:
         mod = importlib.import_module(module_path)
         fn = getattr(mod, func_name)
@@ -908,9 +864,7 @@ def batch_process_runner(agent_name: Optional[str] = None) -> ReportRunner:
     return _run
 
 
-# ---------------------------------------------------------------------------
-# Responses
-# ---------------------------------------------------------------------------
+# --- Responses ---
 
 EMPTY_ORDERS_MESSAGE = (
     "The report cannot be generated based on empty data (No valid orders found).\n\n"

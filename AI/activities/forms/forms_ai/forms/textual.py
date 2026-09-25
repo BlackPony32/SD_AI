@@ -1,35 +1,4 @@
-"""Getting something out of free-text answers.
-
-Reporting "answered this question: 100%" for a required text field is not
-analysis - it is arithmetic on a field that cannot be anything else. Five of the
-twelve questions in the reference form were reported that way, each with a table
-of fourteen 100%s. Everything in this module exists to replace that with the
-content of the answers.
-
-Four readers, tried in order of how much they tell you:
-
-1. **Amounts.** "Did you secure an order? If so, how much?" is where the revenue
-   is. `extract_amounts` pulls currency and quantities out of prose, which turns a
-   text field into a number series: how often an order was secured, the typical
-   size, the total.
-2. **Requirements.** "List the name & role of the employees you educated (3 people
-   minimum)" states its own pass mark. `parse_requirement` reads the minimum out
-   of the question text and `count_items` checks each answer against it, giving a
-   compliance rate instead of a response rate.
-3. **Substance.** Failing the above, how many answers actually say something -
-   measured against a word floor and against the templating check, not just
-   against emptiness.
-4. **Themes.** What the answers are about: keyword groups with counts and one
-   example each, which is more use than a list of word frequencies.
-
-And one check that runs regardless:
-
-**Templating.** Every answer in the reference export was `"Text answer #N to Q"` -
-all distinct, so duplicate-rate read 0% and nothing flagged it. Replacing digit
-runs with `#` collapses them to one signature covering 100% of answers, which is
-conclusive: these were generated, not written. Real forms show the same pattern
-when people paste boilerplate.
-"""
+"""Analysis of free-text answers."""
 
 from __future__ import annotations
 
@@ -41,9 +10,7 @@ from ..core.logging_setup import get_log
 
 log = get_log("forms.textual")
 
-# ---------------------------------------------------------------------------
-# Amounts
-# ---------------------------------------------------------------------------
+# --- Amounts ---
 
 _CURRENCY = r"[$€£₴]|usd|eur|gbp|uah|dollars?|euros?"
 _MULTIPLIER = {"k": 1_000, "к": 1_000, "m": 1_000_000, "thousand": 1_000,
@@ -122,9 +89,7 @@ def extract_amounts(text: str) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Requirements stated in the question itself
-# ---------------------------------------------------------------------------
+# --- Requirements stated in the question itself ---
 
 _MINIMUM = re.compile(
     r"(?:\(?\s*(?P<n1>\d+)\s*(?:people|persons?|names?|employees?|items?|photos?)?"
@@ -174,22 +139,14 @@ def count_items(text: str) -> int:
     return max(1, len(names) // 2) if len(names) > 2 else 1
 
 
-# ---------------------------------------------------------------------------
-# Templating
-# ---------------------------------------------------------------------------
+# --- Templating ---
 
 _DIGITS = re.compile(r"\d+")
 _SPACE = re.compile(r"\s+")
 
 
 def shape_signature(text: str) -> str:
-    """An answer's shape with the varying parts removed.
-
-    `"Text answer #189 to 7"` and `"Text answer #796 to 6"` both become
-    `"text answer # to #"`. Identical text is caught by a duplicate check; this
-    catches identical *structure*, which is what boilerplate and generated data
-    look like.
-    """
+    """An answer's shape with the varying parts removed: "Text answer #189 to 7" -> "text answer # to #"."""
     body = _SPACE.sub(" ", str(text or "").strip().lower())
     return _DIGITS.sub("#", body)
 
@@ -209,16 +166,12 @@ def templating(answers: Iterable[str], min_answers: int = 10) -> dict[str, Any]:
         "distinct_shapes": len(shapes),
         "shapes_per_answer": len(shapes) / len(values),
         "dominant_example": example[:160],
-        # Distinct text but one shape is the giveaway. 60% is deliberately
-        # cautious: a genuinely repetitive but human field ("Yes, checked") should
-        # not be called generated.
+        # One shape across distinct text gives it away; 60% is cautious so repetitive human answers pass.
         "looks_generated": bool(share >= 0.6 and len(shapes) <= max(3, len(values) // 20)),
     }
 
 
-# ---------------------------------------------------------------------------
-# Substance
-# ---------------------------------------------------------------------------
+# --- Substance ---
 
 _FILLER = re.compile(r"^\s*(n/?a|none|nothing|no|-+|\.+|ok|okay|done|yes)\s*[.!]?\s*$",
                      re.I)
@@ -232,9 +185,7 @@ def is_substantive(text: str, min_words: int = 3) -> bool:
     return len(body.split()) >= min_words
 
 
-# ---------------------------------------------------------------------------
-# Themes
-# ---------------------------------------------------------------------------
+# --- Themes ---
 
 _STOP = {
     "the", "and", "for", "with", "that", "this", "was", "were", "are", "have",
@@ -296,18 +247,12 @@ def themes(answers: Iterable[str], max_themes: int = 5,
             for word, members in groups[:max_themes] if len(members) >= min_group]
 
 
-# ---------------------------------------------------------------------------
-# Deciding what to measure
-# ---------------------------------------------------------------------------
+# --- Deciding what to measure ---
 
 def profile(question_text: str, answers: list[str], *, required: bool | None
             ) -> dict[str, Any]:
-    """Choose what this text question should actually be measured on.
-
-    Order: an amount if the answers carry one, compliance if the question states a
-    minimum, substance if the field is required (where a response rate is 100% by
-    construction and says nothing), and a plain response rate only when the field
-    is optional and none of the above applies.
+    """Choose what this text question is measured on: an amount, compliance with a stated minimum,
+    substance (for required fields), or a plain response rate.
     """
     non_empty = [a for a in answers if str(a or "").strip()]
     minimum = parse_requirement(question_text)

@@ -100,37 +100,36 @@ async def lifespan(app: FastAPI):
     mcp_process = subprocess.Popen(
         [sys.executable, "-m", "AI.MCP_tools.List_of_mcp_tools"]
     )
-    
-    # Block FastAPI startup until MCP is responsive
-    is_ready = False
-    async with httpx.AsyncClient() as client:
-        for attempt in range(15): # 15 seconds
-            try:
-                response = await client.get(MCP_LOCAL_URL)
-                is_ready = True
-                print("MCP Server is up and accepting connections.")
-                break
-            except httpx.RequestError:
-                await asyncio.sleep(1)
-                
-    if not is_ready:
-        print("CRITICAL: MCP Server failed to bind to port in time.")
-
-    yield # Yield control back to FastAPI to handle web requests
-    
-    print("Shutting down MCP Server...")
-    mcp_process.terminate()
     try:
-        mcp_process.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        print("MCP Server didn't terminate in time, killing...")
-        mcp_process.kill()
+        # Block FastAPI startup until MCP is responsive
+        is_ready = False
+        async with httpx.AsyncClient() as client:
+            for _ in range(15): # 15 seconds
+                try:
+                    await client.get(MCP_LOCAL_URL)
+                    is_ready = True
+                    print("MCP Server is up and accepting connections.")
+                    break
+                except httpx.RequestError:
+                    await asyncio.sleep(1)
+
+        if not is_ready:
+            print("CRITICAL: MCP Server failed to bind to port in time.")
+
+        yield # Yield control back to FastAPI to handle web requests
+    finally:
+        print("Shutting down MCP Server...")
+        mcp_process.terminate()
+        try:
+            mcp_process.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            print("MCP Server didn't terminate in time, killing...")
+            mcp_process.kill()
 
 # Attach the lifespan to your app
 app = FastAPI(lifespan=lifespan)
 
 
-AllowedEntity = Literal["orders", "activities"]
 origins = [
     "https://simply-depo-staging.web.app",
 
@@ -267,7 +266,6 @@ async def ask_ai_endpoint(request: ChatRequest, customer_id: str = Query(...)):
  
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
-from enum import Enum
 class LogFile(str, Enum):
     """Enumeration for the allowed log file names."""
     project = "project_log.log"
@@ -381,7 +379,6 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
     pre_prompt = f'Use all the tools you need to answer, following the instructions carefully. Answer the following questions: {prompt} ?'
     try:
         # Use AI function to get response
-        #response = await Ask_ai_many_customers(prompt, user_uuid)
         from AI.group_customer_analyze.Ask_ai_many_customers import create_Ask_ai_many_c_agent
         agent, session = await create_Ask_ai_many_c_agent(user_uuid)
 
@@ -393,7 +390,6 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
 
         answer = runner.final_output 
         from pprint import pprint
-        #print(answer)
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -420,7 +416,7 @@ async def Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
         )
 
 
-from openai.types.responses import ResponseTextDeltaEvent\
+from openai.types.responses import ResponseTextDeltaEvent
 
 @app.post("/st_Ask_ai_many_customers")
 async def st_Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
@@ -467,7 +463,6 @@ async def st_Ask_ai_many_customers_endpoint(request: AI_Request = Body(...)):
                             "type": "token",
                             "content": buffer
                         })
-                        #print(buffer)
                         yield f"data: {chunk_data}\n"
                         buffer = ""  # Reset buffer
 
@@ -600,14 +595,7 @@ class ReportRequest(BaseModel):
 def _sync_comparison_logic(df_1: pd.DataFrame, 
                            df_2: pd.DataFrame, 
                            customer_id_s):
-    """
-    Internal synchronous function to perform blocking Pandas operations.
-    Returns a dictionary with the results.
-    
-    Note:
-    - df_1 is assumed to be the 'orders' DataFrame.
-    - df_2 is assumed to be the 'customers' DataFrame.
-    """
+    """Compare IDs between orders (df_1) and customers (df_2); blocking pandas work."""
     
     # 1. Check for required columns
     required_cols_df1 = ['customerId']
@@ -652,14 +640,7 @@ def _sync_comparison_logic(df_1: pd.DataFrame,
 async def check_customer_ids(df_1: pd.DataFrame, 
                            df_2: pd.DataFrame, 
                            customer_id_s):
-    """
-    Asynchronous wrapper for checking IDs in DataFrames.
-    
-    Note: df_1 represents orders, and df_2 represents customers.
-    
-    Executes blocking Pandas logic in a separate thread and
-    returns a dictionary (dict) ready for JSON serialization.
-    """
+    """Run _sync_comparison_logic in a thread (df_1 = orders, df_2 = customers)."""
     # Running the heavy synchronous function in a separate thread
     result_dict = await asyncio.to_thread(_sync_comparison_logic, df_1, df_2, customer_id_s)
     
@@ -729,7 +710,6 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
         print(f"Step 0 - Starting data fetch for id {uuid}: {time.perf_counter() - start_time:.2f}s")
         try:
             file_paths = await strategy.fetch_and_write(ids, user_folder, distributor_id)
-            #print(file_paths)
         except Exception as e:
             error_message = str(e)
             logger2.error(f"Data processing/fetching error ({id_type.value}): {error_message}")
@@ -799,11 +779,7 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
                 cleaned_paths[products_entity] = cleaned_products_path
                 orders_check_path = cleaned_orders_path
             else:
-                # NEXT STEP: no cleanup_entities configured for this strategy -
-                # raw fetched files would be used downstream as-is. Hasn't come
-                # up yet since both current strategies use the same
-                # ("orders", "order_products") pair; flagging here for when it
-                # does.
+                # TODO: this strategy has no cleanup_entities yet, so raw fetched files are used as-is.
                 logger2.info(
                     f"No cleanup step configured/possible for id_type={id_type.value} "
                     f"(entities={strategy.entities}); skipping prepared_big_data."
@@ -816,7 +792,6 @@ async def create_group_reports_new(request: ReportRequest = Body(...)):
             # Check if customers ids correct but no data in orders
             try:
                 check_if_orders_has_data = pd.read_csv(cleaned_orders_path)
-                #print(check_if_orders_has_data.head(3))
                 if check_if_orders_has_data.empty:
                     logger2.info("Orders data is empty after processing.")
                     message = """The report cannot be generated based on empty data (No valid orders found). \n
@@ -875,7 +850,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
     
                 if check_empty:
                     logger2.error("Empty orders file!")
-                    #incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
                     return JSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,
                     content={
@@ -888,7 +862,6 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             except Exception as e:
                 logger2.error(e)
         
-                #incorrect_ids = await check_customer_ids(merged_orders, customer_df, customer_ids)
                 # Create and return response
                 return JSONResponse(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -950,13 +923,11 @@ and ask AI agent for help with platform navigation and order creation, or you ca
             sections, full_report = await report_generator.generate(
                 report_type, cleaned_orders_path, cleaned_products_path, uuid, start_time
             )
-            #print(sections.get(report_type, "No section generated for this report type."))
         else:  # id_type == AnalysisIdType.CATALOG
             selected_catalog_path = os.path.join('data', distributor_id, 'work_data_folder', 'raw_file_selected_catalog.csv')
             sections, full_report = await report_generator.generate(
                 report_type, selected_catalog_path, cleaned_orders_path, cleaned_products_path, cleaned_catalog_path, uuid, start_time
             )
-            #print(sections.get(report_type, "No section generated for this report type."))
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -990,14 +961,9 @@ and ask AI agent for help with platform navigation and order creation, or you ca
 
 # Start of MCP end point
 
-import logging
-import time
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Tuple, get_args
-from uuid import UUID
+from typing import Tuple, get_args
 
-from fastapi import Body, HTTPException, status
-from pydantic import BaseModel, Field
 
 from AI.utils import (
     EMPTY_ORDERS_MESSAGE,
@@ -1014,7 +980,6 @@ from AI.utils import (
     sync_raw_data,
 )
 
-import asyncio
 
 
 RAW_FILES: Dict[str, str] = {
@@ -1198,9 +1163,6 @@ async def create_mcp_reports(request: MCPRequest = Body(...)):
         except HTTPException:
             raise
         except Exception as exc:
-            # Original code logged here and fell through to
-            # content={"sections": clean_sections} on an unbound name ->
-            # UnboundLocalError -> opaque 500 that hid the real cause.
             logger2.exception("Report generation failed for %s/%s", entity, distributor_id)
             return error_response(
                 status.HTTP_500_INTERNAL_SERVER_ERROR, "report_generation_failed",
@@ -1470,6 +1432,4 @@ async def product_per_state_analysis_func(request: ReportRequest = Body(...)):
 
 if __name__ == '__main__':
     import uvicorn
-    from AI.MCP_tools.List_of_mcp_tools import mcp
-    mcp.mount()
     uvicorn.run(app, port=8000, host='0.0.0.0')

@@ -1,16 +1,4 @@
-"""Deterministic layer for the notes report: cleanup, scoring, statistics.
-
-Raw CRM notes are mostly noise -- keyboard mashing, "test note 3", the same
-sentence pasted twice. Everything countable happens here so the agent only ever
-reads notes worth reading:
-
-    1. Cleanup    -> drop junk, boilerplate and duplicate notes
-    2. Scoring    -> rank what is left so the highest-signal notes go first
-    3. Statistics -> a quantitative summary that grounds the agent's report
-
-A flag never silently deletes a note without counting it: `filter_important_notes`
-returns its own statistics so every run can show how much noise was discarded.
-"""
+"""Deterministic layer for the notes report: cleanup, scoring, statistics."""
 
 from __future__ import annotations
 
@@ -34,9 +22,7 @@ class Note(TypedDict):
     updatedAt: str
 
 
-# ---------------------------------------------------------------------------
-# 1. Loading
-# ---------------------------------------------------------------------------
+# --- 1. Loading ---
 
 _FIELDS = ("id", "distributor_name", "representativeDuplicate_name",
            "text", "createdAt", "updatedAt")
@@ -52,9 +38,7 @@ def load_notes_from_csv(path: str) -> list[Note]:
     return notes
 
 
-# ---------------------------------------------------------------------------
-# 2. Cleanup and scoring
-# ---------------------------------------------------------------------------
+# --- 2. Cleanup and scoring ---
 
 MIN_CHARS = 8                  # catches "d", "Gh", "hjjd"
 MAX_REPEAT_RUN = 6             # catches "kkkgffghjghgf..." mashing
@@ -159,9 +143,7 @@ def filter_important_notes(notes: list[Note], *, min_score: int = 0,
     return kept, stats
 
 
-# ---------------------------------------------------------------------------
-# 3. Statistics
-# ---------------------------------------------------------------------------
+# --- 3. Statistics ---
 
 def compute_notes_statistics(raw_notes: list[Note], kept_notes: list[Note],
                              filter_stats: dict[str, int]) -> dict[str, Any]:

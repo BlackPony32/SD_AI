@@ -1,32 +1,11 @@
-"""The two prompts used by the task-backlog report.
-
-  [A] Backlog Analyst  -- reads the computed metrics (status, dates, owners,
-      priorities) and produces the opening line and the "what's happening"
-      bullets.
-  [B] Task Text Reader -- reads the title+description PAIRS and produces the
-      themes, what the text is too vague to support, and what the wording alone
-      reveals that no count can.
-
-They are independent: neither waits on the other, so wall clock is one call, and
-a failure in one still leaves the report with the other half intact. The markdown
-is assembled in code, so there is no third "editor" call to pay for.
-
-Both prompts end with a `takeaway`: one sentence naming the single most important
-thing that half of the analysis found. Those two sentences become the "Key
-takeaways" section the reader sees last.
-
-Agent A never sees raw task text, so it cannot invent a quote; agent B never sees
-totals, so it cannot invent a percentage. The split is enforced by the payloads.
-"""
+"""Prompts for the task-backlog report."""
 
 from __future__ import annotations
 
 from ..core.prompts import SHARED_RULES, json_payload
 
 
-# ---------------------------------------------------------------------------
-# [A] Backlog Analyst -- metrics only, never raw task text
-# ---------------------------------------------------------------------------
+# --- [A] Backlog Analyst: metrics only, never raw task text ---
 
 PROMPT_ANALYST = """\
 <role>
@@ -99,9 +78,7 @@ async def prompt_backlog_analyst(metrics_payload: dict) -> str:
                                  rules=SHARED_RULES)
 
 
-# ---------------------------------------------------------------------------
-# [B] Task Text Reader -- title+description pairs only, never totals
-# ---------------------------------------------------------------------------
+# --- [B] Task Text Reader: title + description pairs only, never totals ---
 
 PROMPT_READER = """\
 <role>

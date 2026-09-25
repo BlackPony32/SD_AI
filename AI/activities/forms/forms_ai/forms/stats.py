@@ -1,16 +1,4 @@
-"""Assembly: filtered facts + an interval plan -> the statistics payload.
-
-This is the "prepared statistics" the agent later reads. Two rules govern what
-goes in it:
-
-* **Every number the report might state is computed here.** Deltas, percent
-  changes, per-day rates, shares - all of it. The model is then never required to
-  do arithmetic, which is both the main source of hallucinated figures and the
-  thing the grounding check would reject.
-* **Nothing is silently dropped.** Empty buckets, unanswered questions,
-  unparseable values and low-n warnings all appear explicitly. A gap that is
-  visible is a finding; a gap that is removed is a bug.
-"""
+"""Filtered facts + an interval plan -> the statistics payload."""
 
 from __future__ import annotations
 
@@ -32,9 +20,7 @@ from .intervals import IntervalPlan, assign_buckets
 log = get_log("forms.stats")
 
 
-# ---------------------------------------------------------------------------
-# Rounding
-# ---------------------------------------------------------------------------
+# --- Rounding ---
 
 def round_payload(node: Any, places: int = FORMS_ROUND) -> Any:
     """Recursively round every float. Applied once, at the boundary, so the
@@ -62,9 +48,7 @@ def round_payload(node: Any, places: int = FORMS_ROUND) -> Any:
     return node
 
 
-# ---------------------------------------------------------------------------
-# Question contexts
-# ---------------------------------------------------------------------------
+# --- Question contexts ---
 
 def build_contexts(questions: pd.DataFrame, facts: pd.DataFrame
                    ) -> list[MET.QuestionContext]:
@@ -113,18 +97,13 @@ def build_contexts(questions: pd.DataFrame, facts: pd.DataFrame
     return contexts
 
 
-# ---------------------------------------------------------------------------
-# Form-level overview
-# ---------------------------------------------------------------------------
+# --- Form-level overview ---
 
 def _band_for(kind: str, overall: dict[str, Any], overall_value: float | None,
               n: int, days: float) -> dict[str, Any]:
     """The range this period's figure would fall in by chance, given its size.
 
-    This is the guard against the report's worst habit. With ~12 answers a period
-    and a yes-rate near half, chance alone produces anything from 26% to 78%; every
-    "highest period" read out of that is invented. A period is only called high or
-    low if it lands outside its own band.
+    A period is only called high or low when it lands outside its own band.
     """
     if kind == "rate":
         return M.expected_rate_band(overall_value, n, z=FORMS_BAND_Z)
@@ -240,9 +219,7 @@ def _overview(facts: pd.DataFrame, plan: IntervalPlan, contexts: list[MET.Questi
     }
 
 
-# ---------------------------------------------------------------------------
-# Per-question statistics
-# ---------------------------------------------------------------------------
+# --- Per-question statistics ---
 
 def _varies(rows: list[dict[str, Any]]) -> bool:
     """True when the per-interval values are not all identical."""
@@ -253,25 +230,10 @@ def _varies(rows: list[dict[str, Any]]) -> bool:
 def _progress(frame: pd.DataFrame, ctx: MET.QuestionContext, plan: IntervalPlan,
               rows: list[dict[str, Any]], key: str, kind: str,
               overall: dict[str, Any]) -> dict[str, Any]:
-    """How the figure has actually moved, tested three ways.
+    """How the figure has actually moved, beyond period-by-period comparison.
 
-    Period-by-period comparison is the weakest reading available: with 25 answers
-    a fortnight almost nothing clears the noise, which is why the honest answer is
-    so often "no real change here". Three stronger readings are added.
-
-    **Halves.** The first half of the window against the second. Doubling the
-    answers on each side roughly halves the difference that can be detected, so a
-    shift invisible fortnight-to-fortnight can be visible here.
-
-    **Homogeneity.** One pooled test across every period, which answers a
-    different and more useful question than any single period does: is this figure
-    sitting at one level, or does it genuinely move between periods? A steady 52%
-    and a 39%-59% swing need opposite responses from a manager.
-
-    **Bands.** For a question whose answers do not cluster, the trendable figure
-    is not a middle value that represents nothing - it is what share of answers
-    falls in each band, with the band edges fixed once over the whole window so
-    the per-period shares are comparable.
+    Adds halves (first vs second half of the window), homogeneity (one pooled test across
+    periods) and bands (share of answers per fixed value band, for answers that don't cluster).
     """
     usable = [row for row in rows if not row.get("short") and not row.get("partial")]
     out: dict[str, Any] = {"periods_compared": len(usable)}
@@ -332,13 +294,8 @@ def _progress(frame: pd.DataFrame, ctx: MET.QuestionContext, plan: IntervalPlan,
         out["swing"] = {"low": min(seen), "high": max(seen),
                         "periods": len(seen)}
 
-    # --- is the spread inside each period, or only between them? ----------
-    # A question rising 100 -> 600 over six months has a very wide spread overall
-    # and a perfectly good middle value in every single month. A question where
-    # every month mixes 130s and 110,000s is wide *inside* each month and has no
-    # middle value anywhere. Judging that on the whole-period spread alone
-    # confuses the two and suppresses real trends, so the within-period spread is
-    # what decides it.
+    # Judge the spread within each period, not across the window: a steady trend has a wide
+    # overall spread but a good middle value in every period.
     if kind == "value":
         verdicts = []
         for row in usable:
@@ -401,31 +358,18 @@ def _question_block(frame: pd.DataFrame, ctx: MET.QuestionContext, plan: Interva
 
     progress = _progress(frame, ctx, plan, by_interval, key, kind, overall)
 
-    # The pooled test is the gatekeeper for naming any period at all.
-    #
-    # Two failures this closes. First, multiple comparisons: 7 periods x 12
-    # questions is 84 band checks, so at the 5% level four of them come back
-    # "notable" on data where nothing is happening. Second, and worse, the median
-    # band assumes a single cluster - on a question whose answers fall into two
-    # groups the median flips between them depending on which group got one extra
-    # answer, and every flip is flagged as remarkable. Both vanish once a period
-    # must also survive a single test across all periods, which has more power
-    # than any one of them and cannot be gamed by repetition.
+    # The pooled test gates naming any period: it stops multiple-comparison false positives
+    # and median flips on answers that fall into two groups.
     holds_one_level = progress.get("holds_one_level") or {}
-    # Only a question with no middle value *inside its own periods* loses the
-    # per-period figure. Where each period is internally tight, the spread across
-    # periods is the finding, not a reason to stop reporting one.
+    # Only a question with no middle value inside its own periods loses the per-period figure.
     no_middle_value = (
         kind == "value"
         and (overall.get("dispersion") or {}).get("single_value_representative")
         is False
         and progress.get("middle_value_works_within_a_period") is not True)
     if no_middle_value:
-        # Unconditional, and independent of the pooled result. The figure being
-        # compared is a middle value that represents nothing: it sits in the gap
-        # between two groups and moves to whichever one gained an answer. Even
-        # where the periods *do* genuinely differ, this is not the statistic that
-        # shows it - the band shares are, and they are reported instead.
+        # Always, whatever the pooled result: this middle value sits between two groups, so the
+        # band shares are reported instead.
         reason = "the answers have no middle value that could be compared"
     elif holds_one_level.get("steady") is True:
         reason = "every period tests as one level"
@@ -436,9 +380,7 @@ def _question_block(frame: pd.DataFrame, ctx: MET.QuestionContext, plan: Interva
             row["notable"] = False
         progress["nothing_stands_out_because"] = reason
 
-    # Thin and partly-covered periods are shown but excluded from the fit: a
-    # 2-answer week, or a week with one day of data in it, must not decide whether
-    # something is rising.
+    # Thin or partly covered periods are shown but left out of the trend fit.
     fit_rows = _comparable(by_interval)
     fit_values = [row["primary_value"] for row in fit_rows
                   if row["primary_value"] is not None]
@@ -461,9 +403,7 @@ def _question_block(frame: pd.DataFrame, ctx: MET.QuestionContext, plan: Interva
         "largest_shift": M.largest_shift(
             [r["primary_value"] for r in populated],
             [r["label"] for r in populated]),
-        # Only periods outside their own expected range may be named. A flat
-        # series has no best or worst; neither does a series whose spread is
-        # entirely explained by how few answers each period holds.
+        # Only periods outside their own expected range may be named best or worst.
         "best_interval": (max(notable, key=lambda r: r["primary_value"])["label"]
                           if notable and _varies(populated) else None),
         "worst_interval": (min(notable, key=lambda r: r["primary_value"])["label"]
@@ -538,22 +478,11 @@ def _question_block(frame: pd.DataFrame, ctx: MET.QuestionContext, plan: Interva
 
 def _segments(frame: pd.DataFrame, contexts: list[MET.QuestionContext],
               dimension: str) -> list[dict[str, Any]]:
-    """Per-person view of each question, with the small-sample trap closed.
+    """Per-person view of each question, safe on small samples.
 
-    Three things happen here that did not before.
-
-    **Shrinkage.** A person with 1 yes out of 6 answers is not "17%" in any useful
-    sense - the honest reading is "somewhere between 3% and 56%, probably close to
-    the team". Empirical Bayes pulls each figure towards the team in proportion to
-    how little data it rests on, and the ranking uses the adjusted figure. Raw
-    numbers are kept alongside so nothing is hidden.
-
-    **A floor on being named.** Below `FORMS_MIN_PERSON_ANSWERS` a person is marked
-    `too_few_to_compare` and is not eligible to be called highest or lowest.
-
-    **A test before a claim.** `stands_out` now requires a two-proportion test
-    against the rest of the team to clear `FORMS_PERSON_ALPHA`, not merely sitting
-    at the end of a sorted list.
+    Figures are shrunk towards the team (empirical Bayes) for ranking; people below
+    `FORMS_MIN_PERSON_ANSWERS` are not compared; `stands_out` needs a two-proportion test
+    against the rest of the team to clear `FORMS_PERSON_ALPHA`.
     """
     if dimension not in frame.columns or frame[dimension].isna().all():
         return []
@@ -641,13 +570,7 @@ def _segments(frame: pd.DataFrame, contexts: list[MET.QuestionContext],
 
 def _dominance(facts: pd.DataFrame, dimension: str = "representative_label"
                ) -> dict[str, Any]:
-    """Is one person's work standing in for the whole team's figures?
-
-    Mariana submitted 58% of the forms in the reference export, so every "team"
-    number was mostly hers. Reporting that, and a person-balanced figure beside it,
-    is the difference between a team average and one person's average wearing a
-    team's name.
-    """
+    """Is one person's work standing in for the team's figures? Adds a person-balanced figure."""
     submissions = facts.drop_duplicates("progress_id")
     if submissions.empty or dimension not in submissions.columns:
         return {"dominated": False}
@@ -656,10 +579,7 @@ def _dominance(facts: pd.DataFrame, dimension: str = "representative_label"
     top_share = float(counts.max() / total) if total else 0.0
     people = int(len(counts))
     return {
-        # Two conditions, because a large share is only remarkable relative to how
-        # many people there are: half the forms from one of two people is expected,
-        # half from one of eight is not. "More than twice a fair share, and at least
-        # FORMS_DOMINANCE_SHARE of everything."
+        # Dominant = more than twice a fair share, and at least FORMS_DOMINANCE_SHARE of everything.
         "dominated": bool(people >= 3 and top_share >= FORMS_DOMINANCE_SHARE
                           and top_share >= 2.0 / people),
         "top_person": str(counts.idxmax()),
@@ -686,9 +606,7 @@ def _balanced_values(segments: list[dict[str, Any]]) -> dict[str, float | None]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Data quality
-# ---------------------------------------------------------------------------
+# --- Data quality ---
 
 def _data_quality(facts: pd.DataFrame, plan: IntervalPlan,
                   question_blocks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -736,9 +654,7 @@ def _data_quality(facts: pd.DataFrame, plan: IntervalPlan,
     }
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+# --- Entry point ---
 
 def compute_statistics(facts: pd.DataFrame, questions: pd.DataFrame,
                        plan: IntervalPlan, *,
@@ -773,9 +689,7 @@ def compute_statistics(facts: pd.DataFrame, questions: pd.DataFrame,
         payload["overview"]["dominance"] = _dominance(in_period)
         payload["overview"]["balanced_by_question"] = _balanced_values(by_person)
 
-    # Targets are checked, and the short list of things worth a decision is ranked,
-    # after the segments exist: "this person stands out" is one of the reasons a
-    # question earns a place on that list.
+    # Targets and the ranked attention list come after the segments; standing out is one of its reasons.
     TG.apply_targets(payload, rules)
     payload["attention"] = TG.attention(payload, rules)
 

@@ -1,25 +1,4 @@
-"""The report a person reads.
-
-Built from `presentation.build_presentation`, never from the raw statistics, so
-every number arrives already formatted and no statistical vocabulary can leak into
-it. It works with or without model output: without, the blocks are the figures and
-the plain-language descriptions; with, each question block ends with that
-question's written insight.
-
-Layout - one self-contained block per question, which is the point:
-
-    # Form report
-    Scope / period
-    ## Overall activity          (volume, by period, by person)
-    ## Summary                   (written, only when a model ran)
-    ## 1. <question text>
-        headline, spread, movement, comparison with the period before
-        table: period by period
-        who differs
-        > Insight: <written commentary for this question>
-    ## 2. ...
-    ## Things to keep in mind
-"""
+"""The report a person reads."""
 
 from __future__ import annotations
 
@@ -92,13 +71,7 @@ def _activity_section(activity: dict[str, Any]) -> str:
 
 
 def _period_table(question: dict[str, Any]) -> str:
-    """The period-by-period table, with the columns that question type earns.
-
-    A rate gets the counts behind it, because "54% (15 of 28)" is actable where
-    "54%" alone hides whether it rests on 28 answers or 3. Where a target exists
-    it gets a met/missed column, so the reader can see the run of misses without
-    reading seven numbers against a number held in their head.
-    """
+    """The period-by-period table: rates with their counts, plus met/missed when there is a target."""
     rows = question.get("by_period") or []
     if not rows or question.get("hide_by_period"):
         return ""
@@ -133,13 +106,7 @@ def _period_table(question: dict[str, Any]) -> str:
 
 
 def _spread_section(question: dict[str, Any]) -> str:
-    """Bands instead of a middle value, when a middle value means nothing.
-
-    Two tables: how the answers are spread over the whole period, and how that
-    spread shifts period by period. The second is what makes a split question
-    trendable at all - the share in each band moves for real reasons, where the
-    middle value only flips between the groups.
-    """
+    """Band shares instead of a middle value when the middle means nothing: overall and per period."""
     table = question.get("spread_table")
     if not table:
         return ""
@@ -259,9 +226,7 @@ def render_report(presentation: dict[str, Any], *,
     if written:
         parts.append(written)
 
-    # Whether the data is a real record comes before anything computed from it.
-    # The analysis still runs - the caller asked for statistics on what they have -
-    # but a reader who learns this in footnote six has already believed the report.
+    # Whether the data is a real record comes first, before anything computed from it.
     warnings = presentation.get("data_warnings") or []
     if warnings:
         parts.append("## Before reading this\n")
@@ -269,9 +234,7 @@ def render_report(presentation: dict[str, Any], *,
         parts.append("The figures below are still exactly what the answers say. "
                      "Treat them as a description of the data, not of the work.\n")
 
-    # Then the short list of what warrants a decision. Twelve questions given equal
-    # weight is twelve questions with no priority, and the findings that matter get
-    # lost among the ones that say "nothing changed".
+    # Then the short list of what warrants a decision.
     parts.append(_attention_section(presentation.get("attention") or []))
     parts.append("\n---\n")
 
@@ -283,9 +246,7 @@ def render_report(presentation: dict[str, Any], *,
                                        insights.get(question["question_id"])))
         parts.append("\n---\n")
 
-    # The reviewer is told to carry the important caveats into its own output, so
-    # its list overlaps this one almost exactly. Printing both is what produced the
-    # duplicated section; they are merged on a normalised fingerprint instead.
+    # The reviewer's caveats overlap these, so both lists are merged on a normalised fingerprint.
     notes = list(presentation.get("quality_notes") or [])
     notes += [str(caveat) for caveat in
               ((ai_analysis or {}).get("keep_in_mind") or [])]

@@ -733,7 +733,6 @@ async def process_suggestions_topic(topic, orders_path, products_path, uuid, age
 
         answer = runner.final_output
         answer = f"<div id=\"suggestions-block\">\n\n{answer}\n</div>"
-        #print(answer)
         print(f"Topic {topic}", time.perf_counter() - start)
         calculate_cost(runner, model=model)
 
@@ -754,7 +753,6 @@ async def worker(semaphore, topic, orders_path, products_path, uuid, agent):
     constrained by the semaphore.
     """
     async with semaphore:
-        #print(f"Processing: {topic}")
         
         if topic == "suggestions_div":
             return await process_suggestions_topic(topic, orders_path, products_path, uuid, agent)
@@ -826,7 +824,6 @@ async def main_batch_orders_process(
                 clean_topic_name = topic.replace('_', ' ').title()
                 sectioned_report[topic] = f"\n> **Notice:** We encountered an issue while generating the {clean_topic_name}. Please try again later.\n"
             else:
-                #print(f"Worker succeeded for topic '{topic}' (Agent: {agent}): {str(result)}")
                 sectioned_report[topic] = result
         
         # Compile the Report
@@ -848,7 +845,6 @@ async def main_batch_orders_process(
         clean_sections = await asyncio.to_thread(
             lambda: {k: clean_markdown(str(v)) for k, v in sectioned_report.items()}
         )
-        #print(final_clean_report)
         return final_clean_report, clean_sections
 
     except Exception as e:
@@ -867,19 +863,12 @@ async def main_batch_orders_process(
 
 
 async def main():
-    #report = await group_orders_statistics(
-    #    orders_path="data\\testing_2\\work_data_folder\\cleaned_real_big_orders.csv",
-    #    products_path="data\\testing_2\\work_data_folder\\cleaned_real_big_products.csv",
-    #    agent_type="orders_agent",
-    #    report_type="full_report"
-    #)
-    #print(report.get("sections", "No full report generated.").get("sales_trends_report", "Report section not found."))
     report, sections = await main_batch_orders_process(
         orders_path="data\\testing_2\\work_data_folder\\cleaned_real_big_orders.csv",
         products_path="data\\testing_2\\work_data_folder\\cleaned_real_big_products.csv",
         uuid="testing_2",
         agent="orders_agent",
-        specific_topic=None) #ange to None for full report
+        specific_topic=None) # None = full report
     print(report)
 
 if __name__ == "__main__":

@@ -162,7 +162,6 @@ async def process_ai_activities_request(customer_id: str) -> dict:
             'model': 'gpt-4.1-mini',
             'model_answer': answer
         }
-        #print(answer.content)
         section_report = parse_report(response.get('model_answer'))
         return response, section_report
         

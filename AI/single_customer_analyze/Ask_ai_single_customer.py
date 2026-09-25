@@ -7,29 +7,22 @@ from agents.extensions.memory import AdvancedSQLiteSession
 import os
 import json
 import pandas as pd
-from typing import List, Dict, Any, Optional
+from typing import Dict, Optional
 from datetime import datetime
 import time
-from agents.extensions.memory import AdvancedSQLiteSession
 import asyncio
 import aiofiles
-import os
-import time
 from dotenv import load_dotenv
 load_dotenv()
 
 
-from typing import List, AsyncGenerator, Tuple, Any
 from AI.group_customer_analyze.Agents_rules.prompts import prompt_agent_create_full_report, prompt_agent_create_sectioned, prompt_for_state_agent
-import pandas as pd
 
 from AI.utils import get_logger
 logger1 = get_logger("logger1", "project_log.log", False)
 
 llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
 
-import os
-import pandas as pd
 
 def get_all_data(customer_id):
     DATA_DIR = os.path.join('data', customer_id)
@@ -701,11 +694,7 @@ def General_notes_statistics_tool(user_id:str) -> str:
     logger1.info(f"Tool 'General_notes_statistics_tool' called")
     data_path = f"data/{user_id}/report_notes.md"
     
-    # List of encodings to try, in order of preference
-    # 1. utf-8: The standard.
-    # 2. cp1252: The default for Windows (likely the culprit for 0xef).
-    # 3. utf-16: Common if the file was created by PowerShell or Windows Notepad.
-    # 4. latin-1: The "catch-all" - it rarely raises errors but might produce symbols.
+    # Encodings to try, in order: utf-8, cp1252 (Windows), utf-16 (PowerShell/Notepad), latin-1 (never fails).
     encodings_to_try = ['utf-8', 'cp1252', 'utf-16', 'latin-1']
 
     try:

@@ -1,15 +1,4 @@
-"""The shape every topic returns: one full report plus the same report broken
-into named sections.
-
-The two are never written twice. A pipeline either
-
-  * builds its sections and lets `ReportResult.from_sections` join them into the
-    full report (activities, tasks), or
-  * hands over a report the model wrote whole and names the parts to carve out
-    of it with `ReportResult.from_markdown` (notes),
-
-so the full text and the sections cannot drift apart between runs.
-"""
+"""What every topic returns: the full report plus the same report split into named sections."""
 
 from __future__ import annotations
 

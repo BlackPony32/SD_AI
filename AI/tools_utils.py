@@ -13,17 +13,12 @@ from typing import Any, Callable, Iterable, Sequence
 
 import pandas as pd
 
-# ===========================================================================
-# 1. Configuration
-# ===========================================================================
+# --- 1. Configuration ---
 
 #: Where the per-user exports live. Overridable with `set_data_root`.
 DATA_ROOT = Path("data")
 
-#: Logical dataset -> the filenames it may have been exported under, best first.
-#: Resolution is prefix/substring based on top of this, so `raw_file_notes.csv`,
-#: `notes_2026.csv` and `cleaned_notes.csv` all resolve to "notes" without
-#: needing to be listed.
+#: Logical dataset -> the export filenames it may appear under, best first.
 DATASET_FILENAMES: dict[str, tuple[str, ...]] = {
     "notes": ("raw_file_notes.csv", "cleaned_notes.csv"),
     "activities": ("raw_file_activities.csv", "cleaned_activities.csv"),
@@ -53,9 +48,7 @@ NULLISH = {"", "nan", "none", "null", "n/a", "na", "<na>", "nat"}
 
 # --- Activities -----------------------------------------------------------
 
-#: Explicit type -> category. Checked before the keyword rules below, so a type
-#: whose name misleads (CREDIT_MEMO_ADDED reads commercial, behaves like risk)
-#: can be pinned.
+#: Explicit type -> category; checked before the keyword rules below.
 ACTIVITY_CATEGORIES: dict[str, str] = {
     "ORDER_ADDED": "commercial",
     "ORDER_CANCELED": "risk",
@@ -71,9 +64,7 @@ ACTIVITY_CATEGORIES: dict[str, str] = {
     "PHOTO_GROUP_ADDED": "engagement",
 }
 
-#: First matching group wins. Ordered so that reversal words (CANCEL, VOID) beat
-#: the noun they attach to, which is why ORDER_CANCELED lands in "risk" and not
-#: "commercial". A type this file has never seen still lands somewhere sensible.
+#: First matching group wins; reversal words (CANCEL, VOID) are listed first.
 ACTIVITY_CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("CANCEL", "VOID", "DELET", "REFUND", "RETURN", "CREDIT_MEMO", "DISPUTE",
       "FAIL", "REJECT", "CHARGEBACK"), "risk"),
@@ -99,9 +90,7 @@ ACTIVITY_CATEGORY_DESCRIPTIONS = {
     "other": "not classified by the rule engine",
 }
 
-#: (opening type, closing type, plural label, what the ratio means). These are
-#: cohort ratios over the same window, not per-item matching -- the export
-#: carries no parent id linking a completion back to its creation.
+#: (opening type, closing type, plural label, meaning): cohort ratios over one window.
 ACTIVITY_WORKFLOW_PAIRS: tuple[tuple[str, str, str, str], ...] = (
     ("TASK_ADDED", "TASK_COMPLETED", "tasks", "completion"),
     ("ORDER_ADDED", "ORDER_CANCELED", "orders", "cancellation"),
@@ -174,9 +163,7 @@ DATE_MENTION_RE = re.compile(
 
 TASK_CLOSED_STATUSES = {"COMPLETED", "DONE", "CLOSED", "CANCELLED", "CANCELED", "ARCHIVED"}
 
-#: Score-based, not first-match-wins: the category with the most pattern hits
-#: takes the task, so "Collect payment from X - delivery was wrong" lands on the
-#: dominant subject rather than whichever rule happens to be listed first.
+#: Score-based: the category with the most pattern hits takes the task.
 TASK_CATEGORY_RULES: dict[str, tuple[str, ...]] = {
     "Payment / collection": (r"\bpayment\b", r"\binvoice\b", r"\bcollect", r"\bbalance\b",
                              r"\bbilling\b", r"\bpaid\b", r"\bowe[sd]?\b", r"\bcredit\b"),
@@ -236,9 +223,7 @@ _GENERIC_TOKENS = {
 ORDER_SALESPERSON_FIELD = "salesDuplicate_name"
 ORDER_AMOUNT_FIELD = "totalAmount"
 UNASSIGNED_SALESPERSON = "Unassigned / direct"
-#: Third-party orders arrive through an outside channel, so counting them as
-#: team output overstates what the team sold. Excluded by default, but the
-#: exclusion is always reported rather than applied silently.
+#: Third-party orders come through an outside channel: excluded by default, always reported.
 ORDER_TYPES_EXCLUDED = ("THIRD_PARTY",)
 
 
@@ -248,9 +233,7 @@ def set_data_root(path: str | Path) -> None:
     DATA_ROOT = Path(path)
 
 
-# ===========================================================================
-# 2. Failure envelope
-# ===========================================================================
+# --- 2. Failure envelope ---
 
 class ToolError(Exception):
     """A failure the caller can act on: a bad filter, a missing file, an empty
@@ -273,13 +256,7 @@ class ToolError(Exception):
 
 
 def tool_guard(fn: Callable[..., str]) -> Callable[..., str]:
-    """Guarantee a tool returns a readable string.
-
-    A `ToolError` renders as a short, actionable message. Anything else renders
-    as an error block with the exception type and a truncated traceback, because
-    an agent that is told *why* a call failed can usually fix the call, whereas
-    a bare "error" leads it to retry the same thing.
-    """
+    """Guarantee a tool returns a readable string, including when it fails."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> str:
@@ -298,9 +275,7 @@ def tool_guard(fn: Callable[..., str]) -> Callable[..., str]:
     return wrapper
 
 
-# ===========================================================================
-# 3. Loading
-# ===========================================================================
+# --- 3. Loading ---
 
 _CACHE: dict[tuple[str, float, int], pd.DataFrame] = {}
 
@@ -342,13 +317,7 @@ def resolve_path(user_id: str, dataset: str) -> Path:
 
 
 def read_csv_cached(path: Path) -> pd.DataFrame:
-    """Read a CSV once per (path, mtime, size).
-
-    An agent asks four or five questions of the same export in a row; without
-    this, each one re-parses the file and re-runs the timestamp conversion. The
-    key includes mtime and size so a file replaced between calls is re-read.
-    Returns a defensive copy — callers add derived columns freely.
-    """
+    """Read a CSV once per (path, mtime, size); returns a copy that callers may modify."""
     stat = path.stat()
     key = (str(path), stat.st_mtime, stat.st_size)
     if key not in _CACHE:
@@ -377,14 +346,9 @@ def require_columns(df: pd.DataFrame, required: Sequence[str], dataset: str) -> 
             f"columns present: {', '.join(df.columns[:25])}")
 
 
-# ===========================================================================
-# 4. Timestamps
-# ===========================================================================
+# --- 4. Timestamps ---
 
-#: These exports store Node's `Date.toString()`:
-#: "Fri Aug 07 2026 10:42:27 GMT+0000 (Coordinated Universal Time)".
-#: Slicing to the offset keeps pandas on its C parser, which is roughly two
-#: orders of magnitude faster than letting it guess per row.
+#: Exports store JS Date.toString(); slicing at the offset keeps pandas on its fast parser.
 _JS_FORMAT = "%a %b %d %Y %H:%M:%S GMT%z"
 _JS_LEN = 33
 _PAREN_RE = re.compile(r"\(.*\)")
@@ -423,18 +387,13 @@ def fmt_datetime(value: Any) -> str:
     return pd.Timestamp(value).strftime("%Y-%m-%d %H:%M")
 
 
-# ===========================================================================
-# 5. Periods
-# ===========================================================================
+# --- 5. Periods ---
 
 @dataclass
 class Period:
-    """A resolved time window, plus everything needed to explain it.
+    """A resolved time window: `start` inclusive, `end` exclusive.
 
-    `start` is inclusive, `end` exclusive. `anchor` is the date the rolling
-    windows were measured back from — the newest record in the file, not today,
-    because these are exports and "the last 30 days" of a file that stops in
-    August means the 30 days before it stopped.
+    `anchor` is the newest record in the file, not today.
     """
 
     start: pd.Timestamp | None            # None = open-ended (no lower bound)
@@ -561,31 +520,13 @@ def resolve_period(spec: str | None, anchor: pd.Timestamp,
                    *, default: str = DEFAULT_PERIOD) -> Period:
     """Turn whatever the caller wrote into a concrete window.
 
-    The grammar is deliberately forgiving, because the agent is relaying a
-    person's phrasing rather than filling in a form. All of these work:
+    Accepts None / "default" (last month), "all time", "last month", "last 6 weeks", "90d",
+    "this month" / "mtd", "this quarter" / "qtd", "this year" / "ytd", "previous month",
+    "2026-06", "June 2026", "2026", "Q2 2026", "2026-01-01..2026-03-31" (also "to", ":", "--"),
+    "since 2026-01-01" and "before 2026-01-01".
 
-        None, "", "default"      -> the default window (last month)
-        "all", "all time"        -> no bounds at all
-        "last month"             -> trailing 30 days from the anchor
-        "last 6 weeks", "90d"    -> any <number><unit>, with or without "last"
-        "this month", "mtd"      -> calendar month containing the anchor, to date
-        "this quarter", "qtd"    -> calendar quarter containing the anchor
-        "this year", "ytd"       -> calendar year containing the anchor
-        "previous month"         -> the whole calendar month before the anchor's
-        "2026-06", "June 2026"   -> that calendar month
-        "2026", "Q2 2026"        -> that calendar year / quarter
-        "2026-01-01..2026-03-31" -> explicit range (also "to", ":", "--")
-        "since 2026-01-01"       -> open-ended forwards
-        "before 2026-01-01"      -> open-ended backwards
-
-    Rolling windows run back from `anchor`, which is the newest timestamp in the
-    file rather than today. Calendar windows ("this month") are also taken
-    relative to the anchor, so asking an export that ends in August about "this
-    month" returns August and not an empty current month.
-
-    Raises ToolError with the accepted forms if the spec cannot be parsed —
-    never silently falls back, because silently returning the wrong window is
-    the one failure mode an agent cannot detect.
+    Windows are measured from `anchor`, the newest record in the file. Raises ToolError
+    listing the accepted forms when the spec cannot be parsed.
     """
     raw = (spec or "").strip()
     if not raw or raw.lower() in {"default", "auto"}:
@@ -609,9 +550,7 @@ def resolve_period(spec: str | None, anchor: pd.Timestamp,
                             "use YYYY-MM-DD, YYYY-MM, or a month name with a year")
         return build(start, None, f"since {fmt_date(start)}")
 
-    # "before X" excludes X; "until / up to / through X" includes it. The
-    # distinction is the difference between a whole year and a year plus a day,
-    # and an agent relaying a person's phrasing will use both.
+    # "before X" excludes X; "until / through X" includes it.
     m = re.match(r"^(before|until|up to|through)\s+(.+)$", text)
     if m:
         inclusive = m.group(1) != "before"
@@ -762,9 +701,7 @@ def period_coverage_note(period: Period, timestamps: pd.Series,
     return notes
 
 
-# ===========================================================================
-# 6. Fuzzy filters
-# ===========================================================================
+# --- 6. Fuzzy filters ---
 
 def normalize_key(value: Any) -> str:
     """Casefold and strip punctuation so 'Maria  Gonzalez' == 'maria gonzalez'."""
@@ -776,14 +713,8 @@ def resolve_value(requested: str, candidates: Iterable[Any], *, field_name: str,
                   allow_multiple: bool = False) -> list[str]:
     """Match what the caller typed against the values actually in the column.
 
-    Four passes, most precise first: exact, case/punctuation-insensitive,
-    substring, then difflib similarity. This is what lets an agent pass "maria",
-    "ORDER_ADDED", "order added" or "orders" and land on the right value without
-    having had to list the column first.
-
-    Raises ToolError naming the closest real values when nothing matches — an
-    empty result set from a typo is otherwise indistinguishable from a genuine
-    zero, and the agent will report the typo as a finding.
+    Tries exact, case/punctuation-insensitive, substring, then fuzzy matching, and
+    raises ToolError naming the closest values when nothing matches.
     """
     pool = [str(c) for c in candidates if str(c) not in NULLISH]
     uniq = sorted(set(pool))
@@ -857,9 +788,7 @@ def split_multi(value: Any) -> list[str]:
     return [part.strip() for part in re.split(r"[,;|]", str(value)) if part.strip()]
 
 
-# ===========================================================================
-# 7. Domain enrichment
-# ===========================================================================
+# --- 7. Domain enrichment ---
 
 def humanize(value: Any) -> str:
     """TASK_ADDED -> 'Task added'. The reader never sees a database enum.
@@ -897,15 +826,8 @@ def categorize_activity(activity_type: Any) -> str:
 def load_activities(user_id: str) -> tuple[pd.DataFrame, list[str]]:
     """Load and enrich the activity log. Returns (frame, data-quality notes).
 
-    Derived columns: `_ts`, `_type`, `_type_label`, `_category`, `_actor`,
-    `_actor_kind`, `_channel`, `_customer`, `_hour`, `_weekday`, `_is_weekend`.
-
-    `_actor` resolution matters and is easy to get wrong. These exports carry a
-    named representative on only a small minority of rows; everything else
-    records the *channel* that produced the event (DISTRIBUTOR back office,
-    QUICKBOOKS sync). Naming the channel as if it were a person is the single
-    most misleading thing this dataset invites, so `_actor_kind` marks which one
-    each row is and the tools surface the split.
+    Most rows record a channel (back office, QuickBooks sync) rather than a person;
+    `_actor_kind` says which, so a channel is never reported as a person.
     """
     path = resolve_path(user_id, "activities")
     df = read_csv_cached(path)
@@ -1012,11 +934,7 @@ def note_themes(text: str) -> list[str]:
 def load_notes(user_id: str) -> tuple[pd.DataFrame, list[str]]:
     """Load and enrich CRM notes. Returns (frame, data-quality notes).
 
-    Derived columns: `_ts`, `_text`, `_author`, `_author_kind`, `_is_noise`,
-    `_score`, `_themes`, `_has_money`, `_len`, `_dupe_of`.
-
-    Junk is *flagged*, never dropped, so the counts stay reconcilable with the
-    source file and a caller who wants the raw picture can still get it.
+    Junk notes are flagged (`_is_noise`), never dropped, so counts match the source file.
     """
     path = resolve_path(user_id, "notes")
     df = read_csv_cached(path)
@@ -1081,13 +999,7 @@ def categorize_task(title: str, description: str) -> str:
 
 
 def extract_account(text: str) -> str | None:
-    """Pull a store/account name out of a task title or description.
-
-    Handles "Fresh Mart - wrong order", "Fix issue at Northside Pharmacy",
-    "Collect payment from Main St Convenience" and a bare "Green Valley Market".
-    Heuristic by nature: it is a rollup aid, not an authoritative key, and the
-    tools label it as such wherever it is shown.
-    """
+    """Pull a store/account name out of a task title or description (a heuristic, for rollups)."""
     s = re.sub(r"\s+", " ", str(text or "")).strip()
     if not s:
         return None
@@ -1113,13 +1025,7 @@ def extract_account(text: str) -> str | None:
 
 
 def task_quality_flags(title: str, description: str) -> list[str]:
-    """Grade the (title, description) PAIR, not the title alone.
-
-    The question is whether someone who did not write the task could pick it up
-    and act on it. A vague title with a good description is fine; a vague title
-    with no description is a reminder that something exists, and
-    `unactionable_pair` is the flag that says so.
-    """
+    """Grade the (title, description) pair: could someone else pick the task up and act on it?"""
     t = re.sub(r"\s+", " ", str(title or "")).strip()
     d = re.sub(r"\s+", " ", str(description or "")).strip()
     nt, nd = normalize_key(t), normalize_key(d)
@@ -1145,17 +1051,8 @@ def task_quality_flags(title: str, description: str) -> list[str]:
 def load_tasks(user_id: str, *, as_of: pd.Timestamp | None = None) -> tuple[pd.DataFrame, list[str]]:
     """Load and enrich the task backlog. Returns (frame, data-quality notes).
 
-    Derived columns: `_ts` (created), `_due`, `_title`, `_desc`, `_status`,
-    `_priority`, `_owner`, `_owner_kind`, `_is_open`, `_overdue_days`,
-    `_age_days`, `_category`, `_account`, `_flags`, `_dupe_key`.
-
-    Completed tasks are loaded, never filtered out: they are the denominator of
-    every completion rate, and a backlog view that hides them can only report
-    how much work exists, not how much gets done.
-
-    Overdue is measured against `as_of`, which defaults to the newest createdAt
-    in the file. On a stale export that keeps "overdue" meaningful instead of
-    marking the entire backlog late by however long the export has been sitting.
+    Completed tasks are kept: they are the denominator of completion rates. Overdue is
+    measured against `as_of`, which defaults to the newest createdAt in the file.
     """
     path = resolve_path(user_id, "tasks")
     df = read_csv_cached(path)
@@ -1187,10 +1084,7 @@ def load_tasks(user_id: str, *, as_of: pd.Timestamp | None = None) -> tuple[pd.D
                          for r, d in zip(rep, dist)]
 
     df["_is_open"] = ~df["_status"].isin(TASK_CLOSED_STATUSES)
-    # Nullable Int64, not plain int: a task with no due date has *no* overdue
-    # value, and a plain list would make pandas coerce the column to float and
-    # turn "not overdue" into NaN — which compares and formats as a number.
-    # Callers must still guard with pd.isna before int().
+    # Nullable Int64: a task with no due date has no overdue value; check pd.isna before int().
     df["_overdue_days"] = pd.array(
         [int((ref - due).days) if (op and pd.notna(due) and due < ref) else None
          for op, due in zip(df["_is_open"], df["_due"])], dtype="Int64")
@@ -1229,12 +1123,7 @@ def load_orders(user_id: str, *, exclude_third_party: bool = True
                 ) -> tuple[pd.DataFrame, list[str]]:
     """Load the order book. Returns (frame, data-quality notes).
 
-    Derived columns: `_ts`, `_amount`, `_salesperson`, `_qty`, `_status`,
-    `_payment_status`, `_customer`, `_is_third_party`.
-
-    This is the only complete salesperson attribution in the export set — the
-    activity log leaves the representative blank on order-creation rows — which
-    is why the activity statistics tool reaches into it for the revenue table.
+    It is the only complete salesperson attribution in the exports.
     """
     path = resolve_path(user_id, "orders")
     df = read_csv_cached(path)
@@ -1271,9 +1160,7 @@ def load_orders(user_id: str, *, exclude_third_party: bool = True
     return df.sort_values("_ts").reset_index(drop=True), notes
 
 
-# ===========================================================================
-# 8. Markdown
-# ===========================================================================
+# --- 8. Markdown ---
 
 def money(value: Any) -> str:
     try:
@@ -1306,13 +1193,7 @@ def pct(numerator: Any, denominator: Any, *, digits: int = 1) -> str:
 
 def change(current: float | int | None, previous: float | int | None,
            *, sample: int | None = None) -> str:
-    """Period-over-period change with an honest basis rather than a fake 100%.
-
-    A move from zero is not a percentage, and a percentage computed on a handful
-    of records is arithmetic rather than evidence. Both cases are labelled: an
-    agent shown "+340%" with no qualifier will write it into a summary as though
-    it means something.
-    """
+    """Period-over-period change, labelled when the base is zero or too small to mean much."""
     cur = float(current or 0)
     prev = float(previous or 0)
     if prev == 0 and cur == 0:
@@ -1352,13 +1233,7 @@ def truncate(text: Any, width: int = 60) -> str:
 def header_block(title: str, period: Period, *, matched: int, total: int,
                  unit: str = "records", filters: dict[str, Any] | None = None,
                  caveats: Sequence[str] = ()) -> str:
-    """The standard preamble every tool emits.
-
-    It answers, before any number appears, the four things an agent has to know
-    to use the number correctly: what window this is, how many records it covers
-    out of how many exist, which filters were applied, and what is wrong with
-    the data. Reports built on tool output are only as honest as this block.
-    """
+    """The standard preamble every tool emits: window, coverage, filters and data-quality notes."""
     lines = [f"## {title}", ""]
     scope = (f"**Period:** {period.label}" if period.is_all_time
              else f"**Period:** {period.label} — {period.describe()}")
@@ -1415,3 +1290,326 @@ def counter_table(counter: Counter, headers: tuple[str, str, str], total: int,
 def sample_rows_note(n: int, threshold: int = MIN_SAMPLE_PER_PERSON) -> str:
     return (f"Rows covering fewer than {threshold} records are marked `*` — their rates are "
             f"arithmetic, not performance." if n else "")
+
+
+# --- 9. Product search inside line items ---
+
+PRODUCT_MIN_TERM_LEN = 3
+PRODUCT_FUZZY_CUTOFF = 80
+PRODUCT_FUZZY_CUTOFF_SKU = 92
+PRODUCT_AMBIGUITY_GAP = 5
+PRODUCT_SEARCH_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
+    ("sku",          "sku",                 "SKU",          True),
+    ("name",         "name",                "Product",      False),
+    ("category",     "productCategoryName", "Category",     False),
+    ("manufacturer", "manufacturerName",    "Manufacturer", False),
+)
+
+_MATCH_STAGE_NAMES = {3: "exact", 2: "partial", 1: "fuzzy"}
+
+from rapidfuzz import process, fuzz
+
+def parse_date_arg(value: Any, name: str, *, end_of_day: bool = False) -> pd.Timestamp:
+    """Read an MM/DD/YYYY argument, or fail with the format the caller needs.
+
+    Naive (tz-stripped) on purpose: the order exports carry mixed tz-aware and
+    naive `createdAt` values, and comparing the two raises.
+    """
+    try:
+        parsed = pd.to_datetime(value)
+    except Exception:
+        raise ToolError(f"`{name}='{value}'` is not a date.",
+                        "use MM/DD/YYYY, e.g. '01/31/2026'") from None
+    if pd.isna(parsed):
+        raise ToolError(f"`{name}='{value}'` is not a usable date.",
+                        "use MM/DD/YYYY, e.g. '01/31/2026'")
+    if getattr(parsed, "tzinfo", None) is not None:
+        parsed = parsed.tz_localize(None)
+    return parsed.replace(hour=23, minute=59, second=59) if end_of_day else parsed
+
+
+def parse_number_arg(value: Any, name: str) -> float:
+    """Coerce a numeric argument without silently accepting nonsense."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ToolError(f"`{name}` must be a number, got '{value}'.",
+                        "pass a plain number (e.g. 500) or omit it") from None
+    if number != number:  # NaN
+        raise ToolError(f"`{name}='{value}'` is not a number.", "pass a plain number")
+    return number
+
+
+def parse_choice(value: Any, name: str, allowed: dict, default_key: str) -> tuple[Any, str]:
+    """Validate an enum-style argument against `allowed` (key -> internal value).
+
+    Returns (internal value, key). Never silently falls back to the default when
+    the caller passed something wrong - that is how `by_type='banana'` comes to
+    return a revenue ranking that nobody asked for.
+    """
+    if value is None:
+        return allowed[default_key], default_key
+    key = str(value).strip().lower()
+    if key not in allowed:
+        raise ToolError(f"`{name}='{value}'` is not a valid option.",
+                        "one of: " + ", ".join(f"'{k}'" for k in allowed))
+    return allowed[key], key
+
+
+class ProductSearchMiss(ToolError):
+    """A search term matched no live product; the caller may retry against discontinued rows."""
+
+
+def as_text(series: pd.Series) -> pd.Series:
+    """NaN-safe text coercion for a column of unknown dtype (all-empty columns load as float64)."""
+    out = series.where(series.notna(), "").astype(str).str.strip()
+    out = out.replace({v: "" for v in ("nan", "NaN", "None", "<NA>", "NaT", "null")})
+    return out.fillna("").astype(str)
+
+
+def sample_values(text: pd.Series, cap: int = 8) -> str:
+    """The values actually present in a column, for agent self-correction."""
+    values = sorted({v for v in text.unique() if isinstance(v, str) and v})
+    if not values:
+        return "none"
+    shown = ", ".join(f"'{v}'" for v in values[:cap])
+    return shown + (f" … and {len(values) - cap} more" if len(values) > cap else "")
+
+
+def describe_lines(df: pd.DataFrame) -> str:
+    """'12 line(s) ($626.77)' - the size of a matched set of line items."""
+    revenue = pd.to_numeric(df.get("totalAmount", 0), errors="coerce").fillna(0).sum()
+    return f"{len(df)} line(s) ({money(revenue)})"
+
+
+def line_labels(df: pd.DataFrame, cap: int = 3) -> str:
+    """How a matched set is labelled in the export: "'Salted Lime', 'Sauero'"."""
+    if "name" not in df.columns:
+        return ""
+    names = [n for n in as_text(df["name"]).unique() if n][:cap]
+    return ", ".join(f"'{n}'" for n in names)
+
+
+def split_active_products(df_lines: pd.DataFrame,
+                          df_catalog: pd.DataFrame | None) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Split line items into (active, discontinued, notes) against the catalog.
+
+    Call this before resolving a search term. A row is dropped only when its productId
+    is known and missing from the catalog; anything that blocks the split is noted.
+    """
+    empty = df_lines.iloc[0:0]
+    notes: list[str] = []
+
+    if "productId" not in df_lines.columns:
+        return df_lines, empty, notes
+    if df_catalog is None:
+        notes.append("No active-catalog file for this account, so discontinued "
+                     "products were NOT excluded from the results.")
+        return df_lines, empty, notes
+    if df_catalog.empty or "id" not in df_catalog.columns:
+        notes.append("The active-catalog file has no usable 'id' column, so "
+                     "discontinued products were NOT excluded.")
+        return df_lines, empty, notes
+
+    active_ids = set(df_catalog["id"].dropna())
+    inactive = df_lines["productId"].notna() & ~df_lines["productId"].isin(active_ids)
+    return df_lines[~inactive], df_lines[inactive], notes
+
+
+def _match_product_field(text: pd.Series, value: str, sku_mode: bool) -> dict:
+    """Score one field against the search term; never raises or guesses.
+
+    Returns {stage, mask, values, score, ambiguous}; stage is 3 exact, 2 substring,
+    1 fuzzy, 0 no match or too close to call.
+    """
+    blank = {"stage": 0, "mask": None, "values": [], "score": 0.0, "ambiguous": []}
+    lowered = text.str.lower()
+
+    # 3. Exact, case-insensitive.
+    mask = lowered == value.lower()
+    if bool(mask.any()):
+        return {"stage": 3, "mask": mask, "score": 100.0, "ambiguous": [],
+                "values": sorted({v for v in text[mask].unique() if v})}
+
+    # 2. Substring, above the precision floor only.
+    if len(value) >= PRODUCT_MIN_TERM_LEN:
+        mask = text.str.contains(value, case=False, na=False, regex=False)
+        if bool(mask.any()):
+            return {"stage": 2, "mask": mask, "score": 95.0, "ambiguous": [],
+                    "values": sorted({v for v in text[mask].unique() if v})}
+
+    # 1. Fuzzy, against unique values only - also gated by the length floor.
+    if len(value) < PRODUCT_MIN_TERM_LEN:
+        return blank
+    choices = [v for v in text.unique() if isinstance(v, str) and v]
+    if not choices:
+        return blank
+
+    cutoff = PRODUCT_FUZZY_CUTOFF_SKU if sku_mode else PRODUCT_FUZZY_CUTOFF
+    matches = process.extract(value, choices, scorer=fuzz.WRatio, limit=3,
+                              score_cutoff=cutoff)
+    if not matches:
+        return blank
+
+    top_value, top_score, _ = matches[0]
+    candidates = [m[0] for m in matches if top_score - m[1] <= PRODUCT_AMBIGUITY_GAP]
+
+    # WRatio is order-sensitive and can confidently pick the wrong product;
+    # if token_sort_ratio prefers another candidate, treat the match as ambiguous.
+    cross = process.extractOne(value, choices, scorer=fuzz.token_sort_ratio)
+    if cross and cross[0] != top_value:
+        if cross[1] - fuzz.token_sort_ratio(value, top_value) > PRODUCT_AMBIGUITY_GAP:
+            if cross[0] not in candidates:
+                candidates.append(cross[0])
+
+    if len(candidates) > 1:
+        return {"stage": 0, "mask": None, "values": [], "score": top_score,
+                "ambiguous": candidates}
+
+    return {"stage": 1, "mask": lowered == top_value.lower(), "values": [top_value],
+            "score": top_score, "ambiguous": []}
+
+
+def locate_products(df_lines: pd.DataFrame, search: str,
+                    search_in: str = "auto") -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Resolve one free-text term to line items. Returns (frame, filters, notes).
+
+    search_in: 'auto' picks the best field, 'any' unions equally good fields, or force
+    'sku' / 'name' / 'category' / 'manufacturer'. With 'auto', exact beats substring beats
+    fuzzy; on a tie the broadest field wins if it contains the others, otherwise this
+    raises instead of guessing.
+    """
+    filters: list[str] = []
+    notes: list[str] = []
+
+    value = str(search or "").strip()
+    if not value:
+        raise ToolError("`search` is empty.",
+                        "pass the product name, SKU, category or manufacturer "
+                        "the user asked about")
+
+    known = {f[0] for f in PRODUCT_SEARCH_FIELDS} | {"auto", "any"}
+    mode = str(search_in or "auto").strip().lower()
+    if mode not in known:
+        raise ToolError(f"`search_in='{search_in}'` is not a searchable field.",
+                        "one of: 'auto' (default), 'any', 'sku', 'name', "
+                        "'category', 'manufacturer'")
+
+    fields = [f for f in PRODUCT_SEARCH_FIELDS if f[1] in df_lines.columns]
+    if not fields:
+        raise ToolError(
+            "The line-item export has none of the columns products are searched "
+            "by (sku, name, productCategoryName, manufacturerName).",
+            "report the export as broken - no product term can be matched, so "
+            "retrying will not help")
+
+    if mode not in ("auto", "any"):
+        wanted = [f for f in fields if f[0] == mode]
+        if not wanted:
+            column = dict((f[0], f[1]) for f in PRODUCT_SEARCH_FIELDS)[mode]
+            raise ToolError(
+                f"This export has no '{column}' column, so `search_in='{mode}'` "
+                f"cannot be applied.",
+                "use search_in='auto' and tell the user which field was unavailable")
+        fields = wanted
+
+    texts = {key: as_text(df_lines[column]) for key, column, _, _ in fields}
+    labels = {key: label for key, _, label, _ in fields}
+    results = {key: _match_product_field(texts[key], value, sku_mode)
+               for key, _, _, sku_mode in fields}
+
+    best_stage = max((r["stage"] for r in results.values()), default=0)
+
+    # --- nothing matched --------------------------------------------------
+    if best_stage == 0:
+        ambiguous = {k: r["ambiguous"] for k, r in results.items() if r["ambiguous"]}
+        if ambiguous:
+            detail = "; ".join(
+                f"as a {labels[k].lower()}: " + ", ".join(f"'{c}'" for c in cands)
+                for k, cands in ambiguous.items())
+            raise ToolError(
+                f"'{value}' is not an exact value and the matching strategies "
+                f"disagree about what it should resolve to ({detail}).",
+                "ask the user which one they mean, or retry with one of those "
+                "exact values - not guessing between them")
+        available = "; ".join(f"{labels[k]}: {sample_values(texts[k])}" for k in results)
+        if len(value) < PRODUCT_MIN_TERM_LEN:
+            raise ProductSearchMiss(
+                f"'{value}' is shorter than {PRODUCT_MIN_TERM_LEN} characters, so "
+                f"only an exact match was accepted - partial and fuzzy matching on "
+                f"one or two characters would match almost anything - and it is not "
+                f"an exact value.",
+                f"pass a longer term, or one of: {available}")
+        raise ProductSearchMiss(
+            f"Nothing matches '{value}' - checked exact, partial and fuzzy "
+            f"matching against every product field.",
+            f"do not retry the identical term. Values present - {available}. "
+            f"`search_product_catalog` confirms spelling")
+
+    winners = [k for k, r in results.items() if r["stage"] == best_stage]
+    chosen, key = None, None
+
+    if len(winners) == 1:
+        key = winners[0]
+        chosen = results[key]
+    elif mode != "any":
+        # Several fields tie: use the broadest if it contains the others, otherwise ask.
+        sizes = {k: int(results[k]["mask"].sum()) for k in winners}
+        widest = max(sizes, key=sizes.get)
+        widest_mask = results[widest]["mask"]
+        nested = all(int((results[k]["mask"] & ~widest_mask).sum()) == 0
+                     for k in winners if k != widest)
+        if nested:
+            narrower = [k for k in winners if k != widest]
+            others = ", ".join(f"{labels[k].lower()} ({sizes[k]} line(s))" for k in narrower)
+            notes.append(
+                f"'{value}' matches as a {labels[widest].lower()} "
+                f"({sizes[widest]} line(s)) and also as {others}. The narrower "
+                f"matches are a subset of the broader one, so the "
+                f"{labels[widest].lower()} reading was used - pass "
+                f"search_in='{narrower[0]}' to force the narrower one.")
+            key, chosen = widest, results[widest]
+        else:
+            breakdown = "; ".join(
+                f"search_in='{k}' → {labels[k]} "
+                f"{', '.join(repr(v) for v in results[k]['values'][:3])} "
+                f"({sizes[k]} line(s))" for k in winners)
+            corrupt = ""
+            if "sku" in winners and "name" in winners:
+                corrupt = (" A SKU that equals a product NAME normally means "
+                           "mislabelled rows in the export, which is worth reporting.")
+            raise ToolError(
+                f"'{value}' is an {_MATCH_STAGE_NAMES[best_stage]} match in "
+                f"{len(winners)} different fields, on different line items.",
+                f"pick one - {breakdown} - or search_in='any' to combine them.{corrupt}")
+
+    # --- union mode -------------------------------------------------------
+    if chosen is None:
+        mask = results[winners[0]]["mask"]
+        for k in winners[1:]:
+            mask = mask | results[k]["mask"]
+        parts = ", ".join(labels[k].lower() for k in winners)
+        filters.append(f"Search='{value}' (any of: {parts})")
+        notes.append(f"search_in='any': combined the "
+                     f"{_MATCH_STAGE_NAMES[best_stage]} matches from {parts}. The "
+                     f"figures are the COMBINED total across those readings.")
+        return df_lines[mask], filters, notes
+
+    # --- single field -----------------------------------------------------
+    label, values = labels[key], chosen["values"]
+    if len(values) == 1:
+        filters.append(f"{label}='{values[0]}'")
+    else:
+        preview = ", ".join(f"'{v}'" for v in values[:5])
+        more = f" … and {len(values) - 5} more" if len(values) > 5 else ""
+        filters.append(f"{label}~'{value}' → {len(values)} values")
+        notes.append(
+            f"'{value}' is a partial {label.lower()} match covering "
+            f"{len(values)} distinct values ({preview}{more}). The figures are "
+            f"the COMBINED total for all of them, not a single {label.lower()} - "
+            f"pass one of those exact values to isolate one.")
+    if best_stage == 1:
+        notes.append(f"No exact or partial match for '{value}' - using the closest "
+                     f"{label.lower()} '{values[0]}' ({chosen['score']:.0f}% match).")
+    return df_lines[chosen["mask"]], filters, notes
+

@@ -7,9 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
+# --- Rendering ---
 
 
 def md_table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -60,9 +58,7 @@ def dedupe(lines: list[str]) -> list[str]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Heading splitting -- used to carve a model-written report into sections
-# ---------------------------------------------------------------------------
+# --- Heading splitting (carves a model-written report into sections) ---
 
 _ATX_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
 _BOLD_LINE_RE = re.compile(r"^\*\*(.+?)\*\*:?$")

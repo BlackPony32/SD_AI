@@ -39,21 +39,11 @@ def raw_filename_for(entity: str) -> str:
 
 
 class BaseDataFetchStrategy(ABC):
-    """
-    One subclass per AnalysisIdType.
+    """One subclass per AnalysisIdType.
 
-    entities:
-        The canonical entity names this strategy fetches, e.g.
-        ["orders", "order_products", "customer"]. This is the single
-        thing the endpoint reads to know "how many files, and which
-        ones" - nothing else needs updating when this list changes.
-
-    cleanup_entities:
-        Which two of those entities (orders-like, products-like) get fed
-        into the existing prepared_big_data() cleanup step. Defaults to
-        ("orders", "order_products") since that's what both current
-        strategies use. Set to None for a future strategy whose data
-        doesn't go through that cleanup at all.
+    `entities`: the entity names this strategy fetches (all the endpoint needs to know).
+    `cleanup_entities`: the (orders-like, products-like) pair fed to prepared_big_data(),
+    or None to skip that step.
     """
 
     id_type: AnalysisIdType
@@ -188,7 +178,6 @@ class CatalogIdFetchStrategy(BaseDataFetchStrategy):
                     all_orders_data, all_products_data, all_catalog_data = await asyncio.gather(*fetch_tasks)
 
                 # --- STEP 2: DOWNLOAD FILES ---
-                #print(catalog_data)
                 async with aiohttp.ClientSession() as download_session:
                     handle_tasks = [
                         handle_distributor_data(all_orders_data, "orders", distributor_id, download_session),
