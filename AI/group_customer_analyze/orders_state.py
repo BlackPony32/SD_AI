@@ -7,7 +7,6 @@ import os
 
 import numpy as np
 import pandas as pd
-from collections import defaultdict
 
 from AI.utils import get_logger
 logger2 = get_logger("logger2", "project_log_many.log", False)
@@ -88,8 +87,6 @@ def process_data(uuid):
     final_df.to_csv(f'data/{uuid}/customers_state_final.csv', index=False)
 
 
-import pandas as pd
-from collections import defaultdict
 
 def generate_report(uuid):
     """Generate a sales analysis report using pandas with correct revenue calculation"""
@@ -298,12 +295,10 @@ def generate_report(uuid):
     try:
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n".join(report_lines))
-        # print(f"Report generated at {output_path}") # Optional logging
     except Exception as e:
         print(f"Error writing report: {e}")
 
     # Optional: print to console for debugging if needed
-    # print("\n".join(report_lines))
 
 # Asynchronous wrapper functions
 async def async_process_data(uuid):

@@ -31,10 +31,7 @@ import pandas as pd
 class BaseReportGenerator(ABC):
     id_type: AnalysisIdType
 
-    # Which ReportType values this generator knows how to produce.
-    # None = no restriction. Subclasses that only support a subset
-    # should set this explicitly, so an unsupported combo fails with a
-    # clear message instead of a confusing downstream KeyError.
+    # ReportType values this generator supports (None = all); others fail with a clear error.
     supported_report_types: Optional[Set[Any]] = None
 
     def check_supported(self, report_type: Any) -> None:

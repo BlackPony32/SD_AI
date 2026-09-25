@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from agents import Agent, Runner, OpenAIResponsesModel, AsyncOpenAI
 from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 from agents.extensions.memory import AdvancedSQLiteSession
+from openai import APITimeoutError
 from openai.types.responses import ResponseTextDeltaEvent
 from dotenv import load_dotenv
 
@@ -26,7 +27,8 @@ from AI.group_customer_analyze.Agents_rules.prompts import (
     prompt_multi_agent_orders, 
     prompt_multi_agent_customers, 
     prompt_multi_agent_catalog,
-    prompt_multi_agent_FAQ
+    prompt_multi_agent_FAQ,
+    prompt_multi_agent_activities
 )
 
 # 1. SETUP & CONFIGURATION
@@ -34,7 +36,7 @@ load_dotenv()
 
 # Configure Root Logger
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
@@ -61,7 +63,11 @@ def setup_custom_logger(name: str, log_file: str) -> logging.Logger:
 logger2 = setup_custom_logger("agent_server", "project_log_many.log")
 MCP_URL = os.getenv("MCP_URL", "http://localhost:8001/mcp")
 USER_ID_DEFAULT = "FULL_DIST_TEST"
-llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=AsyncOpenAI()) 
+openai_client = AsyncOpenAI(
+    timeout=httpx.Timeout(float(os.getenv("OPENAI_TIMEOUT_S", "90")), connect=10.0),
+    max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "2")),
+)
+llm_model = OpenAIResponsesModel(model='gpt-5.4-mini', openai_client=openai_client)
 
 # --- TOOL DEFINITIONS ---
 ORDER_TOOLS_LIST = [
@@ -72,7 +78,8 @@ ORDER_TOOLS_LIST = [
     "get_discount_distribution_report",
     "get_fulfillment_analysis_report",
     "get_payment_analysis_report",
-    "get_sales_trends_orders_report"
+    "get_sales_trends_orders_report",
+    "search_orders_by"
 ]
 
 CUSTOMER_TOOLS_LIST = [
@@ -94,7 +101,7 @@ CATALOG_TOOLS_LIST = [
     "get_catalog_main_info",
     "get_executive_inventory_report",
     "get_product_performance_portfolio_report",
-    "get_top_products_customer_insights",
+    "get_product_customer_insights_report",
     "get_cross_sell_bundle_report",
     "get_time_based_product_report",
     "get_sales_prospecting_report",
@@ -105,8 +112,17 @@ FAQ_TOOLS_LIST = [
     "look_up_faq"
 ]
 
-# 2. CONNECTION MANAGEMENT (Using AsyncExitStack)
+ACTIVITY_TOOLS_LIST = [
+    "search_notes",
+    "get_notes_statistics",
+    "search_activities",
+    "get_activity_statistics",
+    "search_tasks",
+    "get_task_statistics"
+]
 
+# 2. CONNECTION MANAGEMENT (Using AsyncExitStack)
+logging.getLogger("mcp").setLevel(logging.WARNING)
 def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
     """
     Returns the client OBJECT, but does not connect yet. 
@@ -127,14 +143,16 @@ def create_client_definition(tool_whitelist: list) -> MCPServerStreamableHttp:
 # 3. AGENT FACTORIES
 from datetime import datetime
 
-current_date_str = datetime.now().strftime("%Y-%m-%d (%A)")
+def current_date_str() -> str:
+    """Today's date, computed per call so a long-running server never goes stale."""
+    return datetime.now().strftime("%Y-%m-%d (%A)")
 
 async def create_orders_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_orders(user_id, current_date_str)
+    instructions = await prompt_multi_agent_orders(user_id, current_date_str())
     return Agent(name="orders_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_customer_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_customers(user_id, current_date_str)
+    instructions = await prompt_multi_agent_customers(user_id, current_date_str())
     return Agent(name="customer_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_faq_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
@@ -142,8 +160,12 @@ async def create_faq_agent(mcp_server: MCPServerStreamableHttp, user_id: str) ->
     return Agent(name="faq_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def create_catalog_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
-    instructions = await prompt_multi_agent_catalog(user_id, current_date_str)
+    instructions = await prompt_multi_agent_catalog(user_id, current_date_str())
     return Agent(name="catalog_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
+
+async def create_activity_agent(mcp_server: MCPServerStreamableHttp, user_id: str) -> Agent:
+    instructions = await prompt_multi_agent_activities(user_id, current_date_str())
+    return Agent(name="activities_agent", model=llm_model, instructions=instructions, mcp_servers=[mcp_server])
 
 async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tuple[Agent, AdvancedSQLiteSession]:
     """
@@ -156,18 +178,20 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
     client_def_customers = create_client_definition(CUSTOMER_TOOLS_LIST)
     client_def_catalog = create_client_definition(CATALOG_TOOLS_LIST)
     client_def_faq = create_client_definition(FAQ_TOOLS_LIST)
-
+    client_def_activities = create_client_definition(ACTIVITY_TOOLS_LIST)
     # 2. Enter Contexts (Connect) via the Stack
     order_server = await stack.enter_async_context(client_def_orders)
     customer_server = await stack.enter_async_context(client_def_customers)
     catalog_server = await stack.enter_async_context(client_def_catalog)
     faq_server = await stack.enter_async_context(client_def_faq)
+    activities_server = await stack.enter_async_context(client_def_activities)
 
     # 3. Create Sub-Agents
     sub_agent_orders = await create_orders_agent(order_server, session_id)
     sub_agent_customers = await create_customer_agent(customer_server, session_id)
     sub_agent_catalog = await create_catalog_agent(catalog_server, session_id)
     sub_agent_faq = await create_faq_agent(faq_server, session_id)
+    sub_agent_activities = await create_activity_agent(activities_server, session_id)
 
     # 4 Check if data empty - if true then user cn be new or low data quality
     from AI.utils import _is_csv_empty
@@ -179,7 +203,7 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
         NEW_USER_BOOL = False
 
     # 5. Create Main Agent
-    main_instructions = await prompt_multi_agent_main(session_id,NEW_USER_BOOL)
+    main_instructions = await prompt_multi_agent_main(session_id, NEW_USER_BOOL, current_date_str())
     main_agent = Agent(
         name="Lead_Orchestrator",
         instructions=main_instructions,
@@ -205,6 +229,11 @@ async def build_main_agent_session(session_id: str, stack: AsyncExitStack) -> Tu
                 max_turns=8, 
                 tool_description="Use for STATIC KNOWLEDGE. Routes here for company policies, general business info, FAQ lookups, and SimplyDepo (SD) software documentation."
             ),
+            sub_agent_activities.as_tool(
+                tool_name="activities_agent", 
+                max_turns=8, 
+                tool_description="Use for WHAT is being done. Routes here for top activities, activity details, and activity performance metrics. Tasks, notes, and forms are also handled here."
+            )
         ]
     )
     
@@ -248,10 +277,6 @@ def _extract_call_id(item) -> Optional[str]:
     return None
 
 # FASTAPI & STREAMING
-import sys
-import asyncio
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
 
 # 1. Define the startup logic to silence the specific Windows error
 @asynccontextmanager
@@ -289,11 +314,12 @@ class ChatRequestMCP(BaseModel):
 
 
 from fastapi import Request
+# AI.utils must load before preprocess_data_group_c: the two import each other.
+from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
+    analyze_customer_orders_async, calculate_cost, is_data_ready, lock_for
 from AI.group_customer_analyze.preprocess_data_group_c import (
     save_df, prepared_big_data, get_cleaned_catalog, get_cleaned_customers
 )
-from AI.utils import get_logger, extract_customer_id, process_fetch_results, validate_save_results, generate_file_paths, create_response, \
-    analyze_customer_orders_async, calculate_cost, is_data_ready
 from AI.MCP_tools.get_SD_data import handle_distributor_data, get_distributor_data
 
 
@@ -311,38 +337,60 @@ class DataPreprocessingError(Exception):
     """Error for when pandas/CSV processing fails."""
     pass
 
+CHAT_DATASETS = ("customers", "orders", "order_products", "catalog", "activities", "notes", "tasks")
+REQUIRED_DATASETS = ("customers", "orders", "order_products", "catalog")
+
+
 async def sync_and_process_distributor_data(distributor_id: str) -> bool:
     """
     Checks if data needs to be downloaded, fetches it, and preprocesses it.
     Returns True if a sync occurred, False if data was already ready.
     Raises custom exceptions on failure.
     """
-    # Assuming is_data_ready is imported
-    should_download_files = is_data_ready(distributor_id, 'ask_ai')
-    
-    if should_download_files:
-        return False # Data is already ready, no sync needed
+    # One sync per distributor at a time; a request that waited finds the data ready.
+    async with lock_for(f"{distributor_id}:ask_ai"):
+        return await _sync_and_process(distributor_id)
+
+
+def _check_downloaded_files(distributor_id: str, sync_started: float) -> None:
+    folder = os.path.join('data', distributor_id, 'work_data_folder')
+    missing, stale = [], []
+    for name in CHAT_DATASETS:
+        path = os.path.join(folder, f"raw_file_{name}.csv")
+        if not os.path.exists(path):
+            missing.append(name)
+        elif os.path.getmtime(path) < sync_started - 2:  # allow for coarse mtime resolution
+            stale.append(name)
+
+    missing_required = [name for name in missing if name in REQUIRED_DATASETS]
+    if missing_required:
+        raise DataSyncError(f"Data sync failed: could not download {', '.join(missing_required)}")
+    if missing:
+        logger2.warning(f"Sync for {distributor_id}: no file downloaded for {', '.join(missing)}")
+    if stale:
+        logger2.warning(f"Sync for {distributor_id}: {', '.join(stale)} not refreshed, using the previous copy")
+
+
+async def _sync_and_process(distributor_id: str) -> bool:
+    if is_data_ready(distributor_id, 'ask_ai'):
+        return False
+
+    sync_started = time.time()
 
     # STEP 1: FETCH & DOWNLOAD DATA
     try:
         timeout_config = httpx.Timeout(5.0, read=120.0)
         async with httpx.AsyncClient(timeout=timeout_config) as shared_client:
-            fetch_tasks = [
-                get_distributor_data(distributor_id=distributor_id, entities=["customers"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["orders"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["order_products"], client=shared_client),
-                get_distributor_data(distributor_id=distributor_id, entities=["catalog"], client=shared_client)
-            ]
-            data, data1, data2, data3 = await asyncio.gather(*fetch_tasks)
+            responses = await asyncio.gather(*[
+                get_distributor_data(distributor_id=distributor_id, entities=[name], client=shared_client)
+                for name in CHAT_DATASETS
+            ])
 
         async with aiohttp.ClientSession() as download_session:
-            handle_tasks = [
-                handle_distributor_data(data, "customers", distributor_id, download_session),
-                handle_distributor_data(data1, "orders", distributor_id, download_session),
-                handle_distributor_data(data2, "order_products", distributor_id, download_session),
-                handle_distributor_data(data3, "catalog", distributor_id, download_session)
-            ]
-            await asyncio.gather(*handle_tasks)
+            await asyncio.gather(*[
+                handle_distributor_data(response, name, distributor_id, download_session)
+                for response, name in zip(responses, CHAT_DATASETS)
+            ])
 
     except Exception as e:
         error_msg = str(e)
@@ -357,6 +405,8 @@ async def sync_and_process_distributor_data(distributor_id: str) -> bool:
 
         # Raise generic sync error
         raise DataSyncError(f"Data sync failed: {error_msg}")
+
+    _check_downloaded_files(distributor_id, sync_started)
 
     # STEP 2: PREPROCESS DATA
     file_path_orders = os.path.join('data', distributor_id, 'work_data_folder','raw_file_orders.csv')
@@ -430,7 +480,6 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                 # --- Handle Text Generation ---
                 if event_type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     delta = event.data.delta or ""
-                    #print(delta, end="", flush=True)  # Optional: For debugging in console
                     if capturing_json:
                         # Once triggered, NEVER stream to frontend. Quarantine everything.
                         json_buffer += delta
@@ -485,13 +534,9 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                         logger2.info(f">> START: {tool_name} (ID: {call_id})")
                         TOOL_MESSAGES = {
                             "customer_agent": "Analyzing customer records...",
-                            "get_customer_details": "Querying client database...",
                             "orders_agent": "Processing orders activities...",
-                            "sales_orchestrator": "Evaluating order metrics...",
                             "catalog_agent": "Reviewing product catalog...",
-                            "inventory_lookup": "Analyzing inventory parameters...",
-                            "data_analyzer": "Aggregating data points...",
-                            "calculator_tool": "Compiling performance metrics..."
+                            "activities_agent": "Checking your activities..."
                         }
                         display_message = TOOL_MESSAGES.get(tool_name, "Verifying with the knowledge base...")
                         yield f"data: {json.dumps({'type': 'status', 'content': f'{display_message}'})}\n\n"
@@ -507,7 +552,15 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
                             active_tools.pop(call_id, None)
                          
                         logger2.info(f"<< FINISH: {tool_name} (ID {call_id}) | Duration: {duration_str}")
-                        yield f"data: {json.dumps({'type': 'status', 'content': f'{tool_name} finished ({duration_str})'})}\n\n"
+                        TOOL_DONE_LABELS = {
+                            "customer_agent": "Customer data analysis",
+                            "orders_agent": "Order processing",
+                            "catalog_agent": "Catalog data analysis",
+                            "activities_agent": "Your activities review",
+                            "faq_agent": "FAQ knowledge checking"
+                        }
+                        done_label = TOOL_DONE_LABELS.get(tool_name, "Tool")
+                        yield f"data: {json.dumps({'type': 'status', 'content': f'{done_label} finished with ({duration_str})'})}\n\n"
 
             # 4. FINAL CLEANUP & METADATA
             # Flush any remaining valid text markdown
@@ -576,9 +629,14 @@ async def agent_stream_generator(request: ChatRequestMCP, req: Request) -> Async
         except asyncio.CancelledError:
             logger2.warning(f"Client disconnected session {distributor_id}")
             
+        except APITimeoutError:
+            logger2.warning(f"OpenAI request timed out for {distributor_id}")
+            friendly_msg = "The AI service is taking too long to respond. Please try again in a moment."
+            yield f"data: {json.dumps({'type': 'error', 'content': friendly_msg})}\n\n"
+
         except Exception as e:
             logger2.error(f"Stream Error: {e}", exc_info=True)
-            
+
             error_str = str(e)
 
             if "MCP server" in error_str or "Could not reach" in error_str:
